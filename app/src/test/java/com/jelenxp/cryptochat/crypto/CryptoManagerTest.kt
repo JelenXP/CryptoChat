@@ -3,6 +3,7 @@ package com.jelenxp.cryptochat.crypto
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -62,5 +63,21 @@ class CryptoManagerTest {
         val c2 = CryptoManager.encrypt("same", key)
         // Náhodné IV => stejný text dá pokaždé jiný šifrový výstup.
         assertNotEquals(c1, c2)
+    }
+
+    @Test
+    fun dlouhaZprava_roundTrip() {
+        val key = CryptoManager.generateKey()
+        val message = "Toto je delší zpráva s diakritikou žluťoučký kůň. ".repeat(30)
+        assertEquals(message, CryptoManager.decrypt(CryptoManager.encrypt(message, key), key))
+    }
+
+    @Test
+    fun stlacitelnaZprava_seZmensi() {
+        val key = CryptoManager.generateKey()
+        val message = "A".repeat(1000) // silně stlačitelné
+        val encrypted = CryptoManager.encrypt(message, key)
+        // Díky kompresi je šifrovaný Base64 výstup kratší než původní text.
+        assertTrue(encrypted.length < message.length)
     }
 }

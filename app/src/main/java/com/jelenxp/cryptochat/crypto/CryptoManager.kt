@@ -1,6 +1,9 @@
 package com.jelenxp.cryptochat.crypto
 
+import java.io.ByteArrayOutputStream
 import java.security.SecureRandom
+import java.util.zip.Deflater
+import java.util.zip.Inflater
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -27,6 +30,12 @@ object CryptoManager {
     private const val IV_SIZE_BYTES = 12
     private const val GCM_TAG_BITS = 128
 
+    // První bajt otevřeného textu (uvnitř šifry, chráněný GCM tagem) říká, jestli
+    // je zbytek zkomprimovaný (Deflate). Komprese se použije jen když je výsledek
+    // menší, takže výstup nikdy není větší než dřív o víc než 1 bajt.
+    private const val FLAG_RAW: Byte = 0
+    private const val FLAG_DEFLATE: Byte = 1
+
     /** Vygeneruje nový náhodný AES-256 klíč. */
     fun generateKey(): SecretKey {
         val generator = KeyGenerator.getInstance("AES")
@@ -49,9 +58,9 @@ object CryptoManager {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         val iv = ByteArray(IV_SIZE_BYTES).also { SecureRandom().nextBytes(it) }
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        val cipherBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        val combined = iv + cipherBytes
-        return Base64Util.encode(combined)
+        val payload = pack(plainText.toByteArray(Charsets.UTF_8))
+        val cipherBytes = cipher.doFinal(payload)
+        return Base64Util.encode(iv + cipherBytes)
     }
 
     /**
@@ -67,6 +76,62 @@ object CryptoManager {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
         val plainBytes = cipher.doFinal(cipherBytes)
-        return String(plainBytes, Charsets.UTF_8)
+        return String(unpack(plainBytes), Charsets.UTF_8)
+    }
+
+    /**
+     * Zabalí otevřený text před zašifrováním: zkusí Deflate a použije ho, jen
+     * když je výsledek menší. Vrací `FLAG || data` (příznak je pak uvnitř šifry
+     * a chráněný GCM tagem).
+     */
+    private fun pack(raw: ByteArray): ByteArray {
+        val compressed = deflate(raw)
+        return if (compressed.size < raw.size) {
+            byteArrayOf(FLAG_DEFLATE) + compressed
+        } else {
+            byteArrayOf(FLAG_RAW) + raw
+        }
+    }
+
+    /** Rozbalí to, co vytvořil [pack]. Neznámý příznak = jiný/starší formát -> chyba. */
+    private fun unpack(payload: ByteArray): ByteArray {
+        require(payload.isNotEmpty()) { "Prázdný obsah zprávy." }
+        val flag = payload[0]
+        val data = payload.copyOfRange(1, payload.size)
+        return when (flag) {
+            FLAG_DEFLATE -> inflate(data)
+            FLAG_RAW -> data
+            else -> throw IllegalArgumentException("Neznámý formát zprávy.")
+        }
+    }
+
+    /** Raw Deflate (bez zlib hlavičky, minimální režie). */
+    private fun deflate(input: ByteArray): ByteArray {
+        val deflater = Deflater(Deflater.BEST_COMPRESSION, true)
+        deflater.setInput(input)
+        deflater.finish()
+        val output = ByteArrayOutputStream(maxOf(32, input.size / 2))
+        val buffer = ByteArray(1024)
+        while (!deflater.finished()) {
+            val n = deflater.deflate(buffer)
+            output.write(buffer, 0, n)
+        }
+        deflater.end()
+        return output.toByteArray()
+    }
+
+    /** Raw Inflate (protějšek [deflate]). */
+    private fun inflate(input: ByteArray): ByteArray {
+        val inflater = Inflater(true)
+        inflater.setInput(input)
+        val output = ByteArrayOutputStream(maxOf(32, input.size * 2))
+        val buffer = ByteArray(1024)
+        while (!inflater.finished()) {
+            val n = inflater.inflate(buffer)
+            if (n == 0) break
+            output.write(buffer, 0, n)
+        }
+        inflater.end()
+        return output.toByteArray()
     }
 }
