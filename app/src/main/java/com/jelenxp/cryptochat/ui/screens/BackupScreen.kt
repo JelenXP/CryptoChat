@@ -25,6 +25,9 @@ import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val BACKUP_FILENAME = "cryptochat-backup.ccb"
 
@@ -37,6 +40,7 @@ private const val BACKUP_FILENAME = "cryptochat-backup.ccb"
 fun BackupScreen(navController: NavController, viewModel: ContactsViewModel) {
     val context = LocalContext.current
     val contacts by viewModel.contacts.collectAsState()
+    val scope = rememberCoroutineScope()
 
     // Heslo zadané pro export čeká, než uživatel vybere cílový soubor.
     var pendingExportPassword by remember { mutableStateOf<String?>(null) }
@@ -59,13 +63,21 @@ fun BackupScreen(navController: NavController, viewModel: ContactsViewModel) {
         val password = pendingExportPassword
         pendingExportPassword = null
         if (uri == null || password == null) return@rememberLauncherForActivityResult
-        try {
-            val blob = viewModel.exportBackup(password.toCharArray())
-            context.contentResolver.openOutputStream(uri)?.use { it.write(blob) }
-                ?: throw IllegalStateException("null output stream")
-            Toast.makeText(context, toastExportDone, Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            Toast.makeText(context, errorExportFailed, Toast.LENGTH_LONG).show()
+        scope.launch {
+            // Krypto (PBKDF2 + Keystore) i zápis běží mimo hlavní vlákno, ať UI netrhá.
+            val ok = withContext(Dispatchers.Default) {
+                try {
+                    val blob = viewModel.exportBackup(password.toCharArray())
+                    val stream = context.contentResolver.openOutputStream(uri)
+                    if (stream != null) {
+                        stream.use { it.write(blob) }
+                        true
+                    } else false
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            Toast.makeText(context, if (ok) toastExportDone else errorExportFailed, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -142,16 +154,20 @@ fun BackupScreen(navController: NavController, viewModel: ContactsViewModel) {
                 val bytes = pendingImportBytes
                 pendingImportBytes = null
                 if (bytes == null) return@PasswordDialog
-                try {
-                    val count = viewModel.importBackup(bytes, password.toCharArray())
-                    Toast.makeText(
-                        context,
-                        String.format(toastImportDoneFmt, count),
-                        Toast.LENGTH_LONG
-                    ).show()
-                } catch (e: Exception) {
-                    // Nejčastěji špatné heslo nebo poškozený soubor (GCM).
-                    Toast.makeText(context, errorBackupDecrypt, Toast.LENGTH_LONG).show()
+                scope.launch {
+                    // -1 = chyba (nejčastěji špatné heslo / poškozený soubor - GCM).
+                    val count = withContext(Dispatchers.Default) {
+                        try {
+                            viewModel.importBackup(bytes, password.toCharArray())
+                        } catch (e: Exception) {
+                            -1
+                        }
+                    }
+                    if (count >= 0) {
+                        Toast.makeText(context, String.format(toastImportDoneFmt, count), Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, errorBackupDecrypt, Toast.LENGTH_LONG).show()
+                    }
                 }
             },
             onDismiss = { showImportDialog = false }

@@ -145,7 +145,6 @@ private fun StepIndicator(currentStep: Int) {
                         .padding(horizontal = 6.dp)
                         .padding(bottom = 16.dp)
                         .height(2.dp)
-                        .then(Modifier)
                 ) {
                     Surface(
                         color = if (index < currentStep) MaterialTheme.colorScheme.primary

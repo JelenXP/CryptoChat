@@ -71,10 +71,9 @@ class ContactRepository(context: Context) {
     /** Vrátí true, pokud se uložení povedlo. Nikdy nevyhodí výjimku. */
     fun addOrUpdate(contact: Contact): Boolean {
         return try {
-            val current = getContacts().toMutableList()
-            val index = current.indexOfFirst { it.id == contact.id }
-            if (index >= 0) current[index] = contact else current.add(contact)
-            persist(current)
+            val array = readArray()
+            upsert(array, contact)
+            writeArray(array)
             true
         } catch (e: Exception) {
             Log.e(TAG, "Nepodařilo se uložit kontakt", e)
@@ -82,12 +81,33 @@ class ContactRepository(context: Context) {
         }
     }
 
+    /**
+     * Hromadně přidá/aktualizuje víc kontaktů jedním zápisem - důležité při
+     * importu zálohy, kde by opakované volání [addOrUpdate] bylo kvadratické.
+     * Vrátí počet zpracovaných kontaktů, nebo 0 při selhání (zápis je atomický).
+     */
+    fun addOrUpdateAll(contacts: List<Contact>): Int {
+        return try {
+            val array = readArray()
+            contacts.forEach { upsert(array, it) }
+            writeArray(array)
+            contacts.size
+        } catch (e: Exception) {
+            Log.e(TAG, "Hromadné uložení kontaktů selhalo", e)
+            0
+        }
+    }
+
     /** Vrátí true, pokud se smazání povedlo. Nikdy nevyhodí výjimku. */
     fun delete(id: String): Boolean {
         return try {
-            val current = getContacts().toMutableList()
-            current.removeAll { it.id == id }
-            persist(current)
+            val array = readArray()
+            val kept = JSONArray()
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                if (obj.optString("id") != id) kept.put(obj)
+            }
+            writeArray(kept)
             true
         } catch (e: Exception) {
             Log.e(TAG, "Nepodařilo se smazat kontakt", e)
@@ -95,26 +115,51 @@ class ContactRepository(context: Context) {
         }
     }
 
-    /**
-     * Zapíše celý seznam na disk. Může vyhodit výjimku (např. selhání
-     * Android Keystore při šifrování klíče) - proto se volá vždy z bloků
-     * výše, které ji odchytí. Pokud šifrování jednoho klíče selže, celý
-     * zápis se zruší a na disku zůstanou beze změny předchozí data (žádný
-     * napůl zapsaný/poškozený stav).
-     */
-    private fun persist(list: List<Contact>) {
-        val array = JSONArray()
-        list.forEach { c ->
-            val obj = JSONObject()
-            obj.put("id", c.id)
-            // Jméno se ukládá zašifrované (stejný Keystore klíč jako sdílený klíč).
-            obj.put("name", KeystoreCryptoHelper.encryptForStorage(c.name))
-            if (c.keyBase64 != null) {
-                obj.put("key", KeystoreCryptoHelper.encryptForStorage(c.keyBase64))
-            }
-            array.put(obj)
-        }
+    // --- Cílené úpravy uloženého JSONu ---
+    // Zápisové operace mění jen dotčené záznamy; ostatní zůstávají tak, jak jsou
+    // uložené (v původní zašifrované podobě). Nezměněné kontakty se tedy nikdy
+    // nedešifrují ani znovu nešifrují - je to rychlejší a hlavně to zabraňuje
+    // ztrátě dat: dřívější „přepiš celý seznam" by při přechodném selhání
+    // dešifrování cizího klíče uložil ten klíč prázdný.
+
+    private fun readArray(): JSONArray = try {
+        JSONArray(prefs.getString(KEY_LIST, "[]") ?: "[]")
+    } catch (e: Exception) {
+        JSONArray()
+    }
+
+    private fun writeArray(array: JSONArray) {
         prefs.edit().putString(KEY_LIST, array.toString()).apply()
+    }
+
+    /**
+     * Zašifruje kontakt a vloží/nahradí jeho záznam v [array] podle id. Může
+     * vyhodit výjimku (selhání Keystore) - volá se z bloků výše, které ji
+     * odchytí, takže se na disk nic napůl nezapíše.
+     */
+    private fun upsert(array: JSONArray, contact: Contact) {
+        val index = indexOfId(array, contact.id)
+        val obj = JSONObject()
+        obj.put("id", contact.id)
+        // Jméno i klíč se ukládají zašifrované (stejný Keystore klíč).
+        obj.put("name", KeystoreCryptoHelper.encryptForStorage(contact.name))
+        when {
+            contact.keyBase64 != null ->
+                obj.put("key", KeystoreCryptoHelper.encryptForStorage(contact.keyBase64))
+            // Klíč v paměti chybí (nešel dešifrovat) - zachovej původní
+            // zašifrovaný klíč ze stávajícího záznamu, ať se o něj kvůli
+            // přechodnému selhání Keystore nepřijde.
+            index >= 0 -> array.optJSONObject(index)?.optString("key")
+                ?.takeIf { it.isNotEmpty() }?.let { obj.put("key", it) }
+        }
+        if (index >= 0) array.put(index, obj) else array.put(obj)
+    }
+
+    private fun indexOfId(array: JSONArray, id: String): Int {
+        for (i in 0 until array.length()) {
+            if (array.optJSONObject(i)?.optString("id") == id) return i
+        }
+        return -1
     }
 
     companion object {

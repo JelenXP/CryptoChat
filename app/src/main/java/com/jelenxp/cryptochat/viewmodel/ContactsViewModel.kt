@@ -49,8 +49,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
      */
     fun importBackup(blob: ByteArray, password: CharArray): Int {
         val imported = ContactBackup.import(blob, password)
-        var count = 0
-        imported.forEach { if (repository.addOrUpdate(it)) count++ }
+        val count = repository.addOrUpdateAll(imported)
         refresh()
         return count
     }
