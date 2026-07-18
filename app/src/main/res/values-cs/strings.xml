@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CryptoChat</string>
+
+    <!-- Common -->
+    <string name="content_desc_copy">Zkopírovat</string>
+    <string name="error_copy_failed">Nepodařilo se zkopírovat do schránky.</string>
+
+    <!-- Main screen -->
+    <string name="content_desc_add_user">Přidat uživatele</string>
+    <string name="content_desc_settings">Nastavení</string>
+    <string name="main_empty_title">Zatím žádné kontakty</string>
+    <string name="main_empty_state">Tlačítkem + přidejte prvního člověka, se kterým chcete bezpečně psát.</string>
+    <string name="key_set">Připraveno k psaní</string>
+    <string name="key_not_set">Zatím bez klíče</string>
+
+    <!-- Add user screen -->
+    <string name="new_user_title">Nový uživatel</string>
+    <string name="add_user_instructions">Zadejte jméno člověka, se kterým chcete komunikovat.</string>
+    <string name="label_username">Jméno uživatele</string>
+    <string name="btn_create_key">Vytvořit klíč</string>
+    <string name="btn_accept_key">Přijmout klíč</string>
+
+    <!-- Create key screen -->
+    <string name="title_key_for">Klíč pro %1$s</string>
+    <string name="create_key_instructions">Tento klíč pošlete uživateli \"%1$s\" (naskenováním QR kódu nebo zkopírováním textu jinou cestou). Uchovejte ho v tajnosti.</string>
+    <string name="qr_content_desc">QR kód klíče</string>
+    <string name="label_key_base64">Klíč (Base64)</string>
+    <string name="btn_copy_key">Zkopírovat klíč</string>
+    <string name="toast_key_copied">Klíč zkopírován</string>
+    <string name="btn_continue">Pokračovat</string>
+
+    <!-- Accept key screen -->
+    <string name="title_accept_key_from">Přijmout klíč od %1$s</string>
+    <string name="accept_key_instructions">Naskenujte QR kód s klíčem od uživatele \"%1$s\", nebo ho vložte ručně.</string>
+    <string name="btn_scan_qr">Naskenovat QR kód</string>
+    <string name="scan_prompt">Naskenujte QR kód s klíčem</string>
+    <string name="error_invalid_key_length">Neplatný klíč - očekávána délka 256 bitů.</string>
+    <string name="error_invalid_key_format">Neplatný formát klíče.</string>
+
+    <!-- User detail screen -->
+    <string name="user_fallback_title">Uživatel</string>
+    <string name="user_not_found">Uživatel nenalezen.</string>
+    <string name="user_no_key">Tento uživatel nemá nastavený klíč.</string>
+    <string name="btn_send">Poslat</string>
+    <string name="btn_receive">Přijmout</string>
+    <string name="btn_delete_contact">Smazat kontakt</string>
+    <string name="dialog_delete_title">Smazat kontakt?</string>
+    <string name="dialog_delete_text">Opravdu chcete smazat uživatele \"%1$s\" a jeho klíč? Tuto akci nelze vzít zpět - pro další komunikaci by bylo nutné znovu vyměnit klíč.</string>
+    <string name="btn_delete_confirm">Smazat</string>
+    <string name="btn_cancel">Zrušit</string>
+
+    <!-- Send screen -->
+    <string name="title_send_to">Poslat: %1$s</string>
+    <string name="label_message">Zpráva</string>
+    <string name="btn_encrypt">Zašifrovat</string>
+    <string name="error_encrypt_failed">Šifrování se nezdařilo.</string>
+    <string name="label_encrypted_message">Zašifrovaná zpráva</string>
+    <string name="btn_copy_encrypted">Zkopírovat zašifrovanou zprávu</string>
+    <string name="toast_copied">Zkopírováno</string>
+
+    <!-- Receive screen -->
+    <string name="title_receive_from">Přijmout od: %1$s</string>
+    <string name="btn_decrypt">Dešifrovat</string>
+    <string name="error_decrypt_failed">Zprávu se nepodařilo dešifrovat. Zkontrolujte, že jste vložili celý text a že klíč tohoto uživatele odpovídá tomu, kdo zprávu poslal.</string>
+    <string name="label_original_message">Původní zpráva:</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Nastavení</string>
+    <string name="settings_language_label">Jazyk</string>
+    <string name="lang_system">Podle systému</string>
+    <string name="lang_czech">Čeština</string>
+    <string name="lang_english">English</string>
+    <string name="content_desc_back">Zpět</string>
+    <string name="settings_app_lock_label">Zámek aplikace</string>
+    <string name="settings_app_lock_description">Při spuštění appky vyžadovat PIN/otisk prstu.</string>
+    <string name="settings_app_lock_unavailable">Nedostupné: zařízení nemá nastavený zámek obrazovky (PIN, vzor ani otisk prstu).</string>
+    <string name="error_app_lock_unavailable">Zařízení nemá nastavený PIN, vzor ani otisk prstu - zámek nelze zapnout.</string>
+
+    <string name="settings_key_copy_label">Povolit kopírování klíče do schránky</string>
+    <string name="settings_key_copy_description">Tajný klíč se normálně sdílí jen QR kódem. Schránku můžou číst jiné aplikace, takže tohle je rizikovější — zapni jen když opravdu potřebuješ klíč někam vložit.</string>
+
+    <!-- Lock screen -->
+    <string name="lock_screen_title">Aplikace je uzamčena</string>
+    <string name="lock_screen_subtitle">Pro pokračování se ověřte.</string>
+    <string name="btn_unlock">Odemknout</string>
+    <string name="biometric_prompt_title">Odemknout CryptoChat</string>
+    <string name="error_cannot_show_auth">Nelze zobrazit ověření.</string>
+    <string name="error_auth_failed_generic">Ověření se nezdařilo.</string>
+
+    <!-- Edit contact name -->
+    <string name="btn_edit_name">Upravit</string>
+    <string name="dialog_edit_name_title">Upravit jméno</string>
+    <string name="label_new_name">Nové jméno</string>
+    <string name="btn_save">Uložit</string>
+
+    <!-- Generic error / crash-hardening messages -->
+    <string name="error_save_failed">Nepodařilo se bezpečně uložit data. Zkuste to znovu.</string>
+    <string name="error_delete_failed">Kontakt se nepodařilo smazat. Zkuste to znovu.</string>
+    <string name="error_camera_permission">Bez oprávnění ke kameře nelze QR kód naskenovat.</string>
+
+    <!-- Add user screen: sections -->
+    <string name="section_in_person">Osobně (QR / kopírování)</string>
+    <string name="section_in_person_description">Jste u sebe: jeden klíč vytvoří a ukáže, druhý ho naskenuje nebo vloží.</string>
+    <string name="section_remote">Na dálku (post-kvantově bezpečné)</string>
+    <string name="section_remote_description">Server není potřeba - stačí si vyměnit dva kousky textu libovolným kanálem (SMS, e-mail, jiná appka...). Používá se ML-KEM, post-kvantový algoritmus bezpečný i proti kvantovým počítačům.</string>
+    <string name="btn_remote_init">Zahájit výměnu na dálku</string>
+    <string name="btn_remote_complete">Dokončit výměnu na dálku</string>
+
+    <!-- Remote init screen (initiator) -->
+    <string name="title_remote_init">Výměna na dálku: %1$s</string>
+    <string name="remote_init_generating">Generuji post-kvantový klíčový pár…</string>
+    <string name="remote_init_instructions">Tento veřejný klíč pošlete uživateli \"%1$s\" libovolným kanálem (nemusí být bezpečný - chrání ho post-kvantový algoritmus). Pak počkejte na jeho odpověď.</string>
+    <string name="label_public_key">Veřejný klíč</string>
+    <string name="btn_copy_public_key">Zkopírovat veřejný klíč</string>
+    <string name="remote_init_await_response">Jakmile vám \"%1$s\" pošle odpověď, naskenujte ji nebo vložte sem:</string>
+    <string name="label_remote_response">Odpověď od druhé strany</string>
+    <string name="error_invalid_remote_response">Neplatná nebo poškozená odpověď. Zkontrolujte ji a zkuste to znovu.</string>
+    <string name="btn_finish_exchange">Dokončit výměnu</string>
+
+    <!-- Remote complete screen (responder) -->
+    <string name="title_remote_complete">Výměna na dálku: %1$s</string>
+    <string name="remote_complete_instructions">Naskenujte nebo vložte veřejný klíč, který jste obdrželi od uživatele \"%1$s\".</string>
+    <string name="btn_process_key">Zpracovat klíč</string>
+    <string name="error_invalid_remote_public_key">Neplatný nebo poškozený veřejný klíč. Zkontrolujte ho a zkuste to znovu.</string>
+    <string name="remote_complete_send_response">Tuto odpověď pošlete zpět uživateli \"%1$s\" - jakmile ji zpracuje, výměna klíče je dokončená.</string>
+    <string name="btn_copy_response">Zkopírovat odpověď</string>
+
+    <!-- Verification code (SAS) -->
+    <string name="verification_code_title">Ověřovací kód</string>
+    <string name="verification_code_instructions">Porovnejte tento kód s uživatelem \"%1$s\" jiným kanálem, než kterým proběhla samotná výměna (např. si ho přečtěte nahlas po telefonu).</string>
+    <string name="verification_code_warning">Pokud kódy nesedí, tento kontakt NEUKLÁDEJTE - výměnu mohl někdo cestou podvrhnout.</string>
+    <string name="btn_codes_match">Kódy sedí, uložit kontakt</string>
+    <string name="btn_codes_dont_match">Kódy nesedí, zrušit</string>
+</resources>

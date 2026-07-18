@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CryptoChat</string>
+
+    <!-- Common -->
+    <string name="content_desc_copy">Copy</string>
+    <string name="error_copy_failed">Couldn\'t copy to clipboard.</string>
+
+    <!-- Main screen -->
+    <string name="content_desc_add_user">Add user</string>
+    <string name="content_desc_settings">Settings</string>
+    <string name="main_empty_title">No contacts yet</string>
+    <string name="main_empty_state">Add the first person you want to message securely with the + button.</string>
+    <string name="key_set">Ready to message</string>
+    <string name="key_not_set">No key yet</string>
+
+    <!-- Add user screen -->
+    <string name="new_user_title">New user</string>
+    <string name="add_user_instructions">Enter the name of the person you want to communicate with.</string>
+    <string name="label_username">User name</string>
+    <string name="btn_create_key">Create key</string>
+    <string name="btn_accept_key">Accept key</string>
+
+    <!-- Create key screen -->
+    <string name="title_key_for">Key for %1$s</string>
+    <string name="create_key_instructions">Send this key to \"%1$s\" (by scanning the QR code or copying the text some other way). Keep it secret.</string>
+    <string name="qr_content_desc">Key QR code</string>
+    <string name="label_key_base64">Key (Base64)</string>
+    <string name="btn_copy_key">Copy key</string>
+    <string name="toast_key_copied">Key copied</string>
+    <string name="btn_continue">Continue</string>
+
+    <!-- Accept key screen -->
+    <string name="title_accept_key_from">Accept key from %1$s</string>
+    <string name="accept_key_instructions">Scan the QR code with the key from \"%1$s\", or paste it manually.</string>
+    <string name="btn_scan_qr">Scan QR code</string>
+    <string name="scan_prompt">Scan the QR code with the key</string>
+    <string name="error_invalid_key_length">Invalid key - expected 256-bit length.</string>
+    <string name="error_invalid_key_format">Invalid key format.</string>
+
+    <!-- User detail screen -->
+    <string name="user_fallback_title">User</string>
+    <string name="user_not_found">User not found.</string>
+    <string name="user_no_key">This user has no key set.</string>
+    <string name="btn_send">Send</string>
+    <string name="btn_receive">Receive</string>
+    <string name="btn_delete_contact">Delete contact</string>
+    <string name="dialog_delete_title">Delete contact?</string>
+    <string name="dialog_delete_text">Are you sure you want to delete \"%1$s\" and their key? This cannot be undone - you would need to exchange a key again to communicate.</string>
+    <string name="btn_delete_confirm">Delete</string>
+    <string name="btn_cancel">Cancel</string>
+
+    <!-- Send screen -->
+    <string name="title_send_to">Send: %1$s</string>
+    <string name="label_message">Message</string>
+    <string name="btn_encrypt">Encrypt</string>
+    <string name="error_encrypt_failed">Encryption failed.</string>
+    <string name="label_encrypted_message">Encrypted message</string>
+    <string name="btn_copy_encrypted">Copy encrypted message</string>
+    <string name="toast_copied">Copied</string>
+
+    <!-- Receive screen -->
+    <string name="title_receive_from">Receive from: %1$s</string>
+    <string name="btn_decrypt">Decrypt</string>
+    <string name="error_decrypt_failed">Could not decrypt the message. Check that you pasted the whole text and that this user\'s key matches the sender\'s.</string>
+    <string name="label_original_message">Original message:</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_language_label">Language</string>
+    <string name="lang_system">System default</string>
+    <string name="lang_czech">Čeština</string>
+    <string name="lang_english">English</string>
+    <string name="content_desc_back">Back</string>
+    <string name="settings_app_lock_label">App lock</string>
+    <string name="settings_app_lock_description">Require PIN/fingerprint when opening the app.</string>
+    <string name="settings_app_lock_unavailable">Not available: your device has no screen lock (PIN, pattern, or fingerprint) set up.</string>
+    <string name="error_app_lock_unavailable">Your device has no PIN, pattern, or fingerprint set up - app lock can\'t be enabled.</string>
+
+    <string name="settings_key_copy_label">Allow copying the key to clipboard</string>
+    <string name="settings_key_copy_description">The secret key is normally shared only via QR code. The clipboard can be read by other apps, so enabling this is riskier — turn it on only if you really need to paste the key elsewhere.</string>
+
+    <!-- Lock screen -->
+    <string name="lock_screen_title">App is locked</string>
+    <string name="lock_screen_subtitle">Authenticate to continue.</string>
+    <string name="btn_unlock">Unlock</string>
+    <string name="biometric_prompt_title">Unlock CryptoChat</string>
+    <string name="error_cannot_show_auth">Could not show authentication.</string>
+    <string name="error_auth_failed_generic">Authentication failed.</string>
+
+    <!-- Edit contact name -->
+    <string name="btn_edit_name">Edit</string>
+    <string name="dialog_edit_name_title">Edit name</string>
+    <string name="label_new_name">New name</string>
+    <string name="btn_save">Save</string>
+
+    <!-- Generic error / crash-hardening messages -->
+    <string name="error_save_failed">Failed to save data securely. Please try again.</string>
+    <string name="error_delete_failed">Failed to delete the contact. Please try again.</string>
+    <string name="error_camera_permission">Camera permission is required to scan a QR code.</string>
+
+    <!-- Add user screen: sections -->
+    <string name="section_in_person">In person (QR / copy)</string>
+    <string name="section_in_person_description">You\'re next to each other: one creates the key and shows it, the other scans or pastes it.</string>
+    <string name="section_remote">Remote (post-quantum secure)</string>
+    <string name="section_remote_description">No server needed - exchange two pieces of text over any channel (SMS, email, another app...). Uses ML-KEM, a post-quantum algorithm safe against quantum computers.</string>
+    <string name="btn_remote_init">Start remote exchange</string>
+    <string name="btn_remote_complete">Finish remote exchange</string>
+
+    <!-- Remote init screen (initiator) -->
+    <string name="title_remote_init">Remote exchange: %1$s</string>
+    <string name="remote_init_generating">Generating a post-quantum key pair…</string>
+    <string name="remote_init_instructions">Send this public key to \"%1$s\" over any channel (it doesn\'t need to be secure - a quantum-safe algorithm protects it). Then wait for their reply.</string>
+    <string name="label_public_key">Public key</string>
+    <string name="btn_copy_public_key">Copy public key</string>
+    <string name="remote_init_await_response">Once \"%1$s\" sends their reply, scan or paste it here:</string>
+    <string name="label_remote_response">Reply from the other side</string>
+    <string name="error_invalid_remote_response">Invalid or corrupted reply. Please check it and try again.</string>
+    <string name="btn_finish_exchange">Finish exchange</string>
+
+    <!-- Remote complete screen (responder) -->
+    <string name="title_remote_complete">Remote exchange: %1$s</string>
+    <string name="remote_complete_instructions">Scan or paste the public key you received from \"%1$s\".</string>
+    <string name="btn_process_key">Process key</string>
+    <string name="error_invalid_remote_public_key">Invalid or corrupted public key. Please check it and try again.</string>
+    <string name="remote_complete_send_response">Send this reply back to \"%1$s\" - once they process it, the key exchange is complete.</string>
+    <string name="btn_copy_response">Copy reply</string>
+
+    <!-- Verification code (SAS) -->
+    <string name="verification_code_title">Verification code</string>
+    <string name="verification_code_instructions">Compare this code with \"%1$s\" over a different channel than the one you used for the exchange (e.g. read it out on a phone call).</string>
+    <string name="verification_code_warning">If the codes don\'t match, do NOT save this contact - someone may have tampered with the exchange.</string>
+    <string name="btn_codes_match">Codes match, save contact</string>
+    <string name="btn_codes_dont_match">Codes don\'t match, cancel</string>
+</resources>

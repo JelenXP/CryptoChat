@@ -1,0 +1,23 @@
+# --- Podpisové klíče a hesla (NIKDY do gitu!) ---
+keystore.properties
+*.jks
+*.keystore
+
+# --- Gradle / build ---
+.gradle/
+build/
+app/build/
+local.properties
+
+# --- Android Studio / IntelliJ ---
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Claude Code (lokální nastavení: cesty, IP, sériák telefonu) ---
+.claude/
+
+# --- Různé ---
+*.log
