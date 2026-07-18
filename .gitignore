@@ -16,8 +16,9 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# --- Claude Code (lokální nastavení: cesty, IP, sériák telefonu) ---
+# --- Claude Code (lokální nastavení + instrukce, nepatří na GitHub) ---
 .claude/
+CLAUDE.md
 
 # --- Různé ---
 *.log
