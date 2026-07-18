@@ -1,5 +1,7 @@
 package com.jelenxp.cryptochat
 
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
@@ -23,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +45,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
@@ -54,6 +58,7 @@ import com.jelenxp.cryptochat.ui.screens.RemoteCompleteScreen
 import com.jelenxp.cryptochat.ui.screens.RemoteInitScreen
 import com.jelenxp.cryptochat.ui.screens.SendScreen
 import com.jelenxp.cryptochat.ui.screens.SettingsScreen
+import com.jelenxp.cryptochat.ui.screens.UpdateScreen
 import com.jelenxp.cryptochat.ui.screens.UserDetailScreen
 import com.jelenxp.cryptochat.ui.theme.CryptoChatTheme
 import com.jelenxp.cryptochat.ui.theme.DesignController
@@ -61,6 +66,8 @@ import com.jelenxp.cryptochat.ui.theme.LocalDesign
 import com.jelenxp.cryptochat.ui.theme.LocalUiSpacing
 import com.jelenxp.cryptochat.ui.theme.spacing
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        AppLockGate { CryptoChatApp(design) }
+                        AppLockGate { UpdateGate { CryptoChatApp(design) } }
                     }
                 }
             }
@@ -148,6 +155,94 @@ private fun AppLockGate(content: @Composable () -> Unit) {
                 LockScreen(onUnlocked = { needsUnlock = false })
             }
         }
+    }
+}
+
+/** Jak dlouho po „Později" se stejná verze znovu nepřipomíná (týden). */
+private const val UPDATE_REMIND_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
+
+/**
+ * Po startu (a po odemčení) na pozadí zkontroluje GitHub Releases a když je
+ * novější verze, překryje appku celoobrazovkovým [UpdateScreen].
+ *
+ * Zobrazí se, pokud: je novější verze označená jako důležitá (vždy), nebo je
+ * nejnovější verze jiná než ta naposledy odložená ("při dalším updatu"), nebo
+ * od odložení uplynul týden. Selhání kontroly (offline) nic neukáže.
+ */
+@Composable
+private fun UpdateGate(content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val settings = remember { SettingsRepository(context) }
+    val currentVersion = remember { currentVersionName(context) }
+
+    var info by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var showUpdate by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
+            ?: return@LaunchedEffect
+        val shouldShow = when {
+            result.important -> true
+            result.latestVersion != settings.getUpdateDismissedVersion() -> true
+            else -> System.currentTimeMillis() - settings.getUpdateDismissedAt() >= UPDATE_REMIND_INTERVAL_MS
+        }
+        if (shouldShow) {
+            info = result
+            showUpdate = true
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        content()
+        val i = info
+        if (showUpdate && i != null) {
+            // Overlay pohltí doteky, ať nejde ovládat obsah pod ním.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent().changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+            ) {
+                UpdateScreen(
+                    currentVersion = currentVersion,
+                    latestVersion = i.latestVersion,
+                    important = i.important,
+                    onGetLatest = {
+                        openUrl(context, i.latestUrl)
+                        showUpdate = false
+                    },
+                    onLater = {
+                        // Důležitou verzi nejde odložit - ukáže se zas po startu.
+                        if (!i.important) {
+                            settings.setUpdateDismissed(i.latestVersion, System.currentTimeMillis())
+                        }
+                        showUpdate = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** Verze nainstalované appky (versionName, např. „2.2"). */
+private fun currentVersionName(context: Context): String =
+    try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0"
+    } catch (e: Exception) {
+        "0"
+    }
+
+/** Otevře URL v prohlížeči; při chybě tiše nic (appka nespadne). */
+private fun openUrl(context: Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (e: Exception) {
+        // Bez prohlížeče apod. - ignorovat.
     }
 }
 

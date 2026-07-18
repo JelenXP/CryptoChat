@@ -187,4 +187,11 @@
     <string name="error_import_failed">Couldn\'t read the file. Please try again.</string>
     <string name="toast_export_done">Backup exported.</string>
     <string name="toast_import_done">Imported %1$d contacts.</string>
+    <!-- Update available -->
+    <string name="update_title">New version available</string>
+    <string name="update_intro">A newer version of CryptoChat is available. Updating gets you the latest fixes and keeps you compatible with the people you message.</string>
+    <string name="update_versions">Installed: %1$s  ·  Latest: %2$s</string>
+    <string name="update_important_warning">This is an important update. Until you install it, some features may not work correctly.</string>
+    <string name="btn_update_get">Get the latest version</string>
+    <string name="btn_update_later">Later</string>
 </resources>

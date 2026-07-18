@@ -51,6 +51,17 @@ class SettingsRepository(context: Context) {
     fun getAnimSpeed(): AnimSpeed = readEnum(KEY_ANIM_SPEED, AnimSpeed.NORMAL)
     fun setAnimSpeed(v: AnimSpeed) = writeEnum(KEY_ANIM_SPEED, v)
 
+    // --- Upozornění na aktualizaci ---
+    // Verze naposledy „odložená" tlačítkem Později + kdy, aby se stejná verze
+    // nepřipomínala hned zas (viz UpdateGate v MainActivity).
+
+    fun getUpdateDismissedVersion(): String? = prefs.getString(KEY_UPD_VERSION, null)
+    fun getUpdateDismissedAt(): Long = prefs.getLong(KEY_UPD_AT, 0L)
+
+    fun setUpdateDismissed(version: String, atMillis: Long) {
+        prefs.edit().putString(KEY_UPD_VERSION, version).putLong(KEY_UPD_AT, atMillis).apply()
+    }
+
     private inline fun <reified T : Enum<T>> readEnum(key: String, default: T): T {
         val name = prefs.getString(key, null) ?: return default
         return runCatching { enumValueOf<T>(name) }.getOrDefault(default)
@@ -70,5 +81,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_CORNERS = "design_corners"
         private const val KEY_ANIM_STYLE = "design_anim_style"
         private const val KEY_ANIM_SPEED = "design_anim_speed"
+        private const val KEY_UPD_VERSION = "update_dismissed_version"
+        private const val KEY_UPD_AT = "update_dismissed_at"
     }
 }

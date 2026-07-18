@@ -187,4 +187,11 @@
     <string name="error_import_failed">Soubor se nepodařilo načíst. Zkus to znovu.</string>
     <string name="toast_export_done">Záloha vyexportována.</string>
     <string name="toast_import_done">Naimportováno %1$d kontaktů.</string>
+    <!-- Dostupná aktualizace -->
+    <string name="update_title">Dostupná nová verze</string>
+    <string name="update_intro">Je k dispozici novější verze CryptoChatu. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
+    <string name="update_versions">Nainstalováno: %1$s  ·  Nejnovější: %2$s</string>
+    <string name="update_important_warning">Tohle je důležitá aktualizace. Dokud ji nenainstaluješ, některé funkce nemusí fungovat správně.</string>
+    <string name="btn_update_get">Získat nejnovější verzi</string>
+    <string name="btn_update_later">Později</string>
 </resources>

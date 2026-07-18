@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # kvůli čtení zprávy anotovaného tagu (viz značka [important])
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -60,15 +62,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          TAG="${{ github.ref_name }}"
           # APK pojmenujeme podle verze, ať je ve stažení jasně vidět, o co jde.
-          cp app/build/outputs/apk/release/app-release.apk "CryptoChat-${{ github.ref_name }}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "CryptoChat-$TAG.apk"
           # Idempotentně: pokud release pro tenhle tag už existuje, smažeme ho
           # (jen release, ne tag) a vytvoříme znovu - aby re-run vždy prošel a
           # nikdy nezůstalo staré/špatné APK.
-          gh release delete "${{ github.ref_name }}" --yes || true
-          gh release create "${{ github.ref_name }}" "CryptoChat-${{ github.ref_name }}.apk" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          gh release delete "$TAG" --yes || true
+          gh release create "$TAG" "CryptoChat-$TAG.apk" --title "$TAG" --generate-notes
+          # Důležité vydání: když zpráva anotovaného tagu obsahuje [important],
+          # přidáme tuto značku na začátek poznámek. In-app kontrola aktualizací
+          # podle ní pozná, že jde o důležitou verzi.
+          if git tag -l --format='%(contents)' "$TAG" | grep -qi '\[important\]'; then
+            BODY=$(gh release view "$TAG" --json body -q .body)
+            printf '[important]\n\n%s' "$BODY" | gh release edit "$TAG" --notes-file -
+          fi
 
       # Úklid citlivých souborů (runner je stejně efemérní, ale pro jistotu).
       - name: Cleanup secrets
