@@ -165,4 +165,26 @@
     <string name="speed_fast">Rychlá</string>
     <string name="speed_normal">Normální</string>
     <string name="speed_slow">Pomalá</string>
+    <!-- Záloha / import-export -->
+    <string name="settings_section_data">Data</string>
+    <string name="settings_backup_label">Záloha</string>
+    <string name="settings_backup_desc">Export/import kontaktů, chráněný heslem</string>
+    <string name="backup_intro">Vyexportuj kontakty i jejich klíče do souboru chráněného heslem a naimportuj je zpátky — na tomto nebo jiném telefonu. Soubor je zašifrovaný; bez hesla ho nikdo nepřečte.</string>
+    <string name="backup_export_title">Export</string>
+    <string name="backup_export_desc">Uloží všechny kontakty do zašifrovaného souboru zálohy.</string>
+    <string name="btn_export">Exportovat zálohu</string>
+    <string name="backup_import_title">Import</string>
+    <string name="backup_import_desc">Načte kontakty ze souboru zálohy.</string>
+    <string name="btn_import">Importovat zálohu</string>
+    <string name="dialog_export_password_title">Nastav heslo zálohy</string>
+    <string name="dialog_import_password_title">Zadej heslo zálohy</string>
+    <string name="label_password">Heslo</string>
+    <string name="label_password_confirm">Potvrzení hesla</string>
+    <string name="backup_password_warning">Heslo si dobře pamatuj — bez něj zálohu neobnovíš a nedá se nijak získat zpět.</string>
+    <string name="error_passwords_dont_match">Hesla se neshodují.</string>
+    <string name="error_backup_decrypt">Špatné heslo, nebo soubor není platná záloha.</string>
+    <string name="error_export_failed">Export se nezdařil. Zkus to znovu.</string>
+    <string name="error_import_failed">Soubor se nepodařilo načíst. Zkus to znovu.</string>
+    <string name="toast_export_done">Záloha vyexportována.</string>
+    <string name="toast_import_done">Naimportováno %1$d kontaktů.</string>
 </resources>

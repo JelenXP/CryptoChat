@@ -15,6 +15,8 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -42,6 +45,7 @@ import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
+import com.jelenxp.cryptochat.ui.screens.BackupScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
 import com.jelenxp.cryptochat.ui.screens.DesignScreen
 import com.jelenxp.cryptochat.ui.screens.MainScreen
@@ -120,7 +124,31 @@ private fun AppLockGate(content: @Composable () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    if (needsUnlock) LockScreen(onUnlocked = { needsUnlock = false }) else content()
+    // Obsah appky je VŽDY složený; zámek se jen překryje přes něj (overlay).
+    // Díky tomu se při zamčení nezahodí NavHost ani stav obrazovek - po
+    // odemčení uživatel skončí přesně tam, kde byl (důležité u rozdělané
+    // výměny klíče na dálku, kdy na pár sekund odejde z appky).
+    Box(modifier = Modifier.fillMaxSize()) {
+        content()
+        if (needsUnlock) {
+            // Neprůhledný celoobrazovkový překryv, který navíc pohltí doteky,
+            // aby nešlo omylem ovládat skrytý obsah pod zámkem.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                awaitPointerEvent().changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+            ) {
+                LockScreen(onUnlocked = { needsUnlock = false })
+            }
+        }
+    }
 }
 
 // --- Přechody mezi obrazovkami řízené volbou v Nastavení → Vzhled ---
@@ -175,6 +203,8 @@ fun CryptoChatApp(design: DesignController) {
         composable("settings") { SettingsScreen(navController) }
 
         composable("design") { DesignScreen(navController) }
+
+        composable("backup") { BackupScreen(navController, viewModel) }
 
         composable(
             route = "create_key/{name}",

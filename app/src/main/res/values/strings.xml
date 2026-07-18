@@ -165,4 +165,26 @@
     <string name="speed_fast">Fast</string>
     <string name="speed_normal">Normal</string>
     <string name="speed_slow">Slow</string>
+    <!-- Backup / import-export -->
+    <string name="settings_section_data">Data</string>
+    <string name="settings_backup_label">Backup</string>
+    <string name="settings_backup_desc">Export/import contacts, protected by a password</string>
+    <string name="backup_intro">Export your contacts and their keys into a password-protected file, and import them back — on this or another phone. The file is encrypted; without the password it can\'t be read.</string>
+    <string name="backup_export_title">Export</string>
+    <string name="backup_export_desc">Save all contacts into an encrypted backup file.</string>
+    <string name="btn_export">Export backup</string>
+    <string name="backup_import_title">Import</string>
+    <string name="backup_import_desc">Load contacts from a backup file.</string>
+    <string name="btn_import">Import backup</string>
+    <string name="dialog_export_password_title">Set a backup password</string>
+    <string name="dialog_import_password_title">Enter the backup password</string>
+    <string name="label_password">Password</string>
+    <string name="label_password_confirm">Confirm password</string>
+    <string name="backup_password_warning">Keep this password safe — without it the backup can\'t be restored, and there\'s no way to recover it.</string>
+    <string name="error_passwords_dont_match">Passwords don\'t match.</string>
+    <string name="error_backup_decrypt">Wrong password, or the file is not a valid backup.</string>
+    <string name="error_export_failed">Export failed. Please try again.</string>
+    <string name="error_import_failed">Couldn\'t read the file. Please try again.</string>
+    <string name="toast_export_done">Backup exported.</string>
+    <string name="toast_import_done">Imported %1$d contacts.</string>
 </resources>
