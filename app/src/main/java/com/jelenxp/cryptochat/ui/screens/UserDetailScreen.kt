@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoveToInbox
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -79,6 +80,15 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                             Icon(Icons.Default.MoveToInbox, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.btn_receive))
+                        }
+
+                        OutlinedButton(
+                            onClick = { navController.navigate("verify/$id") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.VerifiedUser, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.btn_verify_key))
                         }
                     }
 

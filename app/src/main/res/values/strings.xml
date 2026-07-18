@@ -194,4 +194,18 @@
     <string name="update_important_warning">This is an important update. Until you install it, some features may not work correctly.</string>
     <string name="btn_update_get">Get the latest version</string>
     <string name="btn_update_later">Later</string>
+    <string name="settings_update_check_label">Check for updates</string>
+    <string name="settings_update_check_desc">Check GitHub for a new version on start. Turn off to avoid any network access.</string>
+
+    <!-- Verify contact (key fingerprint) -->
+    <string name="verify_title">Verify contact</string>
+    <string name="btn_verify_key">Verify key</string>
+    <string name="verify_intro">Compare this code with %1$s over a different channel than the one you used for the key exchange. If it matches on both sides, you share the same key and nobody has swapped it.</string>
+    <string name="verify_hint">The code is derived from your shared key and reveals nothing about it.</string>
+    <string name="btn_done">Done</string>
+
+    <!-- What\'s new (changelog) -->
+    <string name="changelog_title">What\'s new in %1$s</string>
+    <string name="changelog_body">• Verify a contact anytime — open a contact and tap \"Verify key\" to compare a short code and confirm nobody swapped the key.\n• This \"What\'s new\" screen now appears after an update.\n• You can turn update checking off in Settings.</string>
+    <string name="btn_changelog_ok">Got it</string>
 </resources>

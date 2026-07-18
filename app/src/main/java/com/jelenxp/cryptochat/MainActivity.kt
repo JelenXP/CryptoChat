@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -50,6 +51,7 @@ import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
+import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
 import com.jelenxp.cryptochat.ui.screens.DesignScreen
 import com.jelenxp.cryptochat.ui.screens.MainScreen
@@ -60,6 +62,7 @@ import com.jelenxp.cryptochat.ui.screens.SendScreen
 import com.jelenxp.cryptochat.ui.screens.SettingsScreen
 import com.jelenxp.cryptochat.ui.screens.UpdateScreen
 import com.jelenxp.cryptochat.ui.screens.UserDetailScreen
+import com.jelenxp.cryptochat.ui.screens.VerifyContactScreen
 import com.jelenxp.cryptochat.ui.theme.CryptoChatTheme
 import com.jelenxp.cryptochat.ui.theme.DesignController
 import com.jelenxp.cryptochat.ui.theme.LocalDesign
@@ -90,7 +93,7 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        AppLockGate { UpdateGate { CryptoChatApp(design) } }
+                        AppLockGate { StartupGate { CryptoChatApp(design) } }
                     }
                 }
             }
@@ -162,23 +165,32 @@ private fun AppLockGate(content: @Composable () -> Unit) {
 private const val UPDATE_REMIND_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
 
 /**
- * Po startu (a po odemčení) na pozadí zkontroluje GitHub Releases a když je
- * novější verze, překryje appku celoobrazovkovým [UpdateScreen].
+ * Startovní upozornění (po odemčení). Nejdřív jednorázové „Novinky" po
+ * aktualizaci ([ChangelogScreen]), pak kontrola nové verze na GitHub Releases
+ * ([UpdateScreen]). Vždy jen jedno okno naráz.
  *
- * Zobrazí se, pokud: je novější verze označená jako důležitá (vždy), nebo je
- * nejnovější verze jiná než ta naposledy odložená ("při dalším updatu"), nebo
- * od odložení uplynul týden. Selhání kontroly (offline) nic neukáže.
+ * Update se ukáže, pokud: novější verze je důležitá (vždy), nebo je nejnovější
+ * verze jiná než ta naposledy odložená ("při dalším updatu"), nebo od odložení
+ * uplynul týden. Selhání kontroly (offline) nic neukáže.
  */
 @Composable
-private fun UpdateGate(content: @Composable () -> Unit) {
+private fun StartupGate(content: @Composable () -> Unit) {
     val context = LocalContext.current
     val settings = remember { SettingsRepository(context) }
     val currentVersion = remember { currentVersionName(context) }
+    val currentVersionCode = remember { currentVersionCode(context) }
 
-    var info by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
-    var showUpdate by remember { mutableStateOf(false) }
+    // Novinky: dřív viděná verze byla nižší než aktuální = právě se aktualizovalo.
+    var showChangelog by remember {
+        mutableStateOf(settings.getLastSeenVersionCode() in 1 until currentVersionCode)
+    }
+    LaunchedEffect(Unit) { settings.setLastSeenVersionCode(currentVersionCode) }
 
+    // Kontrola nové verze na pozadí.
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var updateEligible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
+        if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
             ?: return@LaunchedEffect
         val shouldShow = when {
@@ -187,41 +199,34 @@ private fun UpdateGate(content: @Composable () -> Unit) {
             else -> System.currentTimeMillis() - settings.getUpdateDismissedAt() >= UPDATE_REMIND_INTERVAL_MS
         }
         if (shouldShow) {
-            info = result
-            showUpdate = true
+            updateInfo = result
+            updateEligible = true
         }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         content()
-        val i = info
-        if (showUpdate && i != null) {
-            // Overlay pohltí doteky, ať nejde ovládat obsah pod ním.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                awaitPointerEvent().changes.forEach { it.consume() }
-                            }
-                        }
-                    }
-            ) {
+        val info = updateInfo
+        when {
+            // Novinky mají přednost; teprve po jejich zavření se případně ukáže update.
+            showChangelog -> BlockingOverlay {
+                ChangelogScreen(version = currentVersion, onDismiss = { showChangelog = false })
+            }
+            updateEligible && info != null -> BlockingOverlay {
                 UpdateScreen(
                     currentVersion = currentVersion,
-                    latestVersion = i.latestVersion,
-                    important = i.important,
+                    latestVersion = info.latestVersion,
+                    important = info.important,
                     onGetLatest = {
-                        openUrl(context, i.latestUrl)
-                        showUpdate = false
+                        openUrl(context, info.latestUrl)
+                        updateEligible = false
                     },
                     onLater = {
                         // Důležitou verzi nejde odložit - ukáže se zas po startu.
-                        if (!i.important) {
-                            settings.setUpdateDismissed(i.latestVersion, System.currentTimeMillis())
+                        if (!info.important) {
+                            settings.setUpdateDismissed(info.latestVersion, System.currentTimeMillis())
                         }
-                        showUpdate = false
+                        updateEligible = false
                     }
                 )
             }
@@ -229,12 +234,38 @@ private fun UpdateGate(content: @Composable () -> Unit) {
     }
 }
 
-/** Verze nainstalované appky (versionName, např. „2.2"). */
+/** Celoobrazovkový překryv, který pohltí doteky (nejde ovládat obsah pod ním). */
+@Composable
+private fun BlockingOverlay(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            }
+    ) { content() }
+}
+
+/** Verze nainstalované appky (versionName, např. „2.3"). */
 private fun currentVersionName(context: Context): String =
     try {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0"
     } catch (e: Exception) {
         "0"
+    }
+
+/** versionCode nainstalované appky (0 při chybě). */
+private fun currentVersionCode(context: Context): Int =
+    try {
+        PackageInfoCompat.getLongVersionCode(
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        ).toInt()
+    } catch (e: Exception) {
+        0
     }
 
 /** Otevře URL v prohlížeči; při chybě tiše nic (appka nespadne). */
@@ -339,6 +370,14 @@ fun CryptoChatApp(design: DesignController) {
         ) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id") ?: ""
             UserDetailScreen(id = id, navController = navController, viewModel = viewModel)
+        }
+
+        composable(
+            route = "verify/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            VerifyContactScreen(id = id, navController = navController, viewModel = viewModel)
         }
 
         composable(

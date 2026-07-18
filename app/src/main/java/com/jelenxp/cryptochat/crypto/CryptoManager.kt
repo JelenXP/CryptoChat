@@ -1,6 +1,7 @@
 package com.jelenxp.cryptochat.crypto
 
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.zip.Deflater
 import java.util.zip.Inflater
@@ -51,6 +52,22 @@ object CryptoManager {
         val bytes = Base64Util.decode(base64Key)
         require(bytes.size == 32) { "Klíč musí mít 256 bitů (32 bajtů)." }
         return SecretKeySpec(bytes, "AES")
+    }
+
+    /**
+     * Krátký ověřovací otisk sdíleného klíče. Obě strany mají stejný AES klíč,
+     * takže spočítají stejný otisk - můžou si ho kdykoli porovnat jiným kanálem
+     * a ověřit, že mají opravdu tentýž klíč (odhalí podvržení/záměnu). Je to
+     * SHA-256 z klíče (s doménovým prefixem) zkrácená na 8 bajtů, takže z otisku
+     * nejde klíč zpětně odvodit.
+     */
+    fun fingerprint(keyBase64: String): String {
+        val keyBytes = Base64Util.decode(keyBase64)
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update("CryptoChat-key-fingerprint-v1".toByteArray(Charsets.UTF_8))
+        val hash = digest.digest(keyBytes)
+        val hex = hash.take(8).joinToString("") { "%02x".format(it) }
+        return hex.uppercase().chunked(4).joinToString(" ")
     }
 
     /** Zašifruje text a vrátí Base64 řetězec (IV + ciphertext + tag). */

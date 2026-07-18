@@ -194,4 +194,18 @@
     <string name="update_important_warning">Tohle je důležitá aktualizace. Dokud ji nenainstaluješ, některé funkce nemusí fungovat správně.</string>
     <string name="btn_update_get">Získat nejnovější verzi</string>
     <string name="btn_update_later">Později</string>
+    <string name="settings_update_check_label">Kontrolovat aktualizace</string>
+    <string name="settings_update_check_desc">Při startu ověřit na GitHubu novější verzi. Vypnutím zabráníš jakémukoli přístupu k síti.</string>
+
+    <!-- Ověření kontaktu (otisk klíče) -->
+    <string name="verify_title">Ověřit kontakt</string>
+    <string name="btn_verify_key">Ověřit klíč</string>
+    <string name="verify_intro">Porovnej tento kód s %1$s jiným kanálem, než kterým proběhla výměna klíče. Když se na obou stranách shoduje, máte stejný klíč a nikdo ho nepodvrhl.</string>
+    <string name="verify_hint">Kód je odvozený ze sdíleného klíče a nic o něm neprozrazuje.</string>
+    <string name="btn_done">Hotovo</string>
+
+    <!-- Novinky (changelog) -->
+    <string name="changelog_title">Novinky ve verzi %1$s</string>
+    <string name="changelog_body">• Ověření kontaktu kdykoli — otevři kontakt a klepni na „Ověřit klíč", porovnej krátký kód a potvrď, že klíč nikdo nepodvrhl.\n• Tato obrazovka „Novinky" se teď ukáže po aktualizaci.\n• Kontrolu aktualizací můžeš vypnout v Nastavení.</string>
+    <string name="btn_changelog_ok">Rozumím</string>
 </resources>

@@ -80,4 +80,26 @@ class CryptoManagerTest {
         // Díky kompresi je šifrovaný Base64 výstup kratší než původní text.
         assertTrue(encrypted.length < message.length)
     }
+
+    @Test
+    fun otisk_deterministicky_stejnyKlicStejnyOtisk() {
+        val key = CryptoManager.keyToBase64(CryptoManager.generateKey())
+        assertEquals(CryptoManager.fingerprint(key), CryptoManager.fingerprint(key))
+    }
+
+    @Test
+    fun otisk_ruzneKliceRuznyOtisk() {
+        val k1 = CryptoManager.keyToBase64(CryptoManager.generateKey())
+        val k2 = CryptoManager.keyToBase64(CryptoManager.generateKey())
+        assertNotEquals(CryptoManager.fingerprint(k1), CryptoManager.fingerprint(k2))
+    }
+
+    @Test
+    fun otisk_format() {
+        val key = CryptoManager.keyToBase64(CryptoManager.generateKey())
+        assertTrue(
+            CryptoManager.fingerprint(key)
+                .matches(Regex("[0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4}"))
+        )
+    }
 }

@@ -52,14 +52,31 @@ class SettingsRepository(context: Context) {
     fun setAnimSpeed(v: AnimSpeed) = writeEnum(KEY_ANIM_SPEED, v)
 
     // --- Upozornění na aktualizaci ---
+
+    /**
+     * Kontrolovat při startu na GitHubu novější verzi? Výchozí `true`. Vypnutím
+     * appka při startu nedělá vůbec žádný síťový dotaz.
+     */
+    fun isUpdateCheckEnabled(): Boolean = prefs.getBoolean(KEY_UPD_CHECK, true)
+    fun setUpdateCheckEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_UPD_CHECK, enabled).apply()
+    }
+
     // Verze naposledy „odložená" tlačítkem Později + kdy, aby se stejná verze
-    // nepřipomínala hned zas (viz UpdateGate v MainActivity).
+    // nepřipomínala hned zas (viz StartupGate v MainActivity).
 
     fun getUpdateDismissedVersion(): String? = prefs.getString(KEY_UPD_VERSION, null)
     fun getUpdateDismissedAt(): Long = prefs.getLong(KEY_UPD_AT, 0L)
 
     fun setUpdateDismissed(version: String, atMillis: Long) {
         prefs.edit().putString(KEY_UPD_VERSION, version).putLong(KEY_UPD_AT, atMillis).apply()
+    }
+
+    // Naposledy „viděná" verze appky (versionCode) - pro zobrazení novinek po
+    // aktualizaci. 0 = ještě nezaznamenáno (čerstvá instalace).
+    fun getLastSeenVersionCode(): Int = prefs.getInt(KEY_LAST_SEEN_VC, 0)
+    fun setLastSeenVersionCode(code: Int) {
+        prefs.edit().putInt(KEY_LAST_SEEN_VC, code).apply()
     }
 
     private inline fun <reified T : Enum<T>> readEnum(key: String, default: T): T {
@@ -81,7 +98,9 @@ class SettingsRepository(context: Context) {
         private const val KEY_CORNERS = "design_corners"
         private const val KEY_ANIM_STYLE = "design_anim_style"
         private const val KEY_ANIM_SPEED = "design_anim_speed"
+        private const val KEY_UPD_CHECK = "update_check_enabled"
         private const val KEY_UPD_VERSION = "update_dismissed_version"
         private const val KEY_UPD_AT = "update_dismissed_at"
+        private const val KEY_LAST_SEEN_VC = "last_seen_version_code"
     }
 }

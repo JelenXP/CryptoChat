@@ -58,6 +58,7 @@ fun SettingsScreen(navController: NavController) {
     var selectedLanguage by remember { mutableStateOf(currentLanguageChoice()) }
     var appLockEnabled by remember { mutableStateOf(settingsRepository.isAppLockEnabled()) }
     var keyCopyAllowed by remember { mutableStateOf(settingsRepository.isKeyCopyAllowed()) }
+    var updateCheckEnabled by remember { mutableStateOf(settingsRepository.isUpdateCheckEnabled()) }
 
     val lockAvailable = remember { isDeviceSecureAuthAvailable(context) }
 
@@ -181,13 +182,22 @@ fun SettingsScreen(navController: NavController) {
                 }
             }
 
-            // 4) DATA (záloha kontaktů)
+            // 4) DATA (záloha kontaktů + kontrola aktualizací)
             SectionHeader(stringResource(R.string.settings_section_data))
             NavCard(
                 icon = Icons.Default.SettingsBackupRestore,
                 title = stringResource(R.string.settings_backup_label),
                 description = stringResource(R.string.settings_backup_desc),
                 onClick = { navController.navigate("backup") }
+            )
+            ToggleSettingCard(
+                title = stringResource(R.string.settings_update_check_label),
+                description = stringResource(R.string.settings_update_check_desc),
+                checked = updateCheckEnabled,
+                onCheckedChange = {
+                    updateCheckEnabled = it
+                    settingsRepository.setUpdateCheckEnabled(it)
+                }
             )
         }
     }
