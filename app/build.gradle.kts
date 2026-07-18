@@ -6,15 +6,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.cryptochat"
+    namespace = "com.jelenxp.cryptochat"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.cryptochat"
+        applicationId = "com.jelenxp.cryptochat"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0"
     }
 
     // Podpis release buildu vlastním klíčem. Cesty a hesla se čtou ze souboru
