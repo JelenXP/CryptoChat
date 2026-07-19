@@ -30,6 +30,7 @@ import androidx.navigation.NavController
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.RelaySync
+import com.jelenxp.cryptochat.chat.TorController
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
@@ -68,6 +69,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // Pravidelné vyzvedávání nových zpráv, dokud je obrazovka aktivní.
     LaunchedEffect(id, canChat) {
         if (contact == null || !canChat) return@LaunchedEffect
+        // Pro .onion relay nastartuj zabudovaný Tor (idempotentní).
+        if (relayUrl.contains(".onion")) TorController.ensureStarted(context)
         while (true) {
             withContext(Dispatchers.IO) { RelaySync.poll(context, contact) }
             messages = repo.getMessages(id)

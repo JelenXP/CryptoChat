@@ -2,6 +2,8 @@ package com.jelenxp.cryptochat
 
 import android.app.Application
 import android.util.Log
+import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.data.SettingsRepository
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -43,6 +45,16 @@ class CryptoChatApplication : Application() {
                 Log.e("CryptoChatApp", "Failed to write crash log", loggingError)
             }
             defaultHandler?.uncaughtException(thread, throwable)
+        }
+
+        // Když je pro chat nastavený .onion relay, nastartuj zabudovaný Tor už
+        // při startu appky, ať je do doby otevření chatu nabootovaný.
+        try {
+            if (SettingsRepository(this).getRelayUrl().contains(".onion")) {
+                TorController.ensureStarted(this)
+            }
+        } catch (e: Exception) {
+            Log.e("CryptoChatApp", "Nepodařilo se nastartovat Tor", e)
         }
     }
 }

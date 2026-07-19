@@ -88,6 +88,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // kmp-tor (resource-exec-tor) spouští tor binárku z nativeLibraryDir -
+        // ta musí být rozbalená na disk (ne načtená přímo z APK).
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -117,6 +122,12 @@ dependencies {
 
     // Post-quantum key exchange (ML-KEM / FIPS 203)
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+
+    // Zabudovaný Tor (kmp-tor) - aby appka došla na .onion relay bez Orbotu.
+    // Pozn.: 'resource-exec-tor' (tor binárka) má vlastní verzování (408.x),
+    // odlišné od 'runtime' (2.x).
+    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
+    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:408.22.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
