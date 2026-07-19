@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -10,9 +11,10 @@ android {
     compileSdk = 34
 
     // Chatová verze má jiné applicationId, aby šla nainstalovat vedle staré
-    // (offline) appky na jeden telefon. Kód (namespace) zůstává stejný.
+    // (offline) appky na jeden telefon. Kód (namespace) zůstává stejný -
+    // applicationId (identita appky) a namespace (balíček kódu) se lišit můžou.
     defaultConfig {
-        applicationId = "com.jelenxp.cryptochat.chat"
+        applicationId = "com.jelenxp.cryptochatonline"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -80,9 +82,6 @@ android {
         compose = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
 
     packaging {
         resources {
