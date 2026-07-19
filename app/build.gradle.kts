@@ -15,6 +15,9 @@ android {
         targetSdk = 34
         versionCode = 6
         versionName = "3.0"
+
+        // Runner pro instrumentované UI testy (androidTest) - spouští se na emulátoru v CI.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // Podpis release buildu vlastním klíčem. Cesty a hesla se čtou ze souboru
@@ -118,4 +121,13 @@ dependencies {
     // Unit testy (běží na čistém JVM - krypto používá java.util.Base64, ne
     // android.util.Base64, takže není potřeba Robolectric ani emulátor).
     testImplementation("junit:junit:4.13.2")
+
+    // Instrumentované UI testy (androidTest) - ověří, že se appka spustí a projde
+    // základní obrazovka. Běží na emulátoru v CI (workflow ui-tests.yml), lokálně
+    // offline se nestahují ani nespouští (assembleDebug/Release je nepotřebuje).
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
