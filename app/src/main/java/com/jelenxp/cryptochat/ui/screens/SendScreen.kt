@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,6 +19,7 @@ import com.jelenxp.cryptochat.ui.components.CopyableField
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
 import com.jelenxp.cryptochat.ui.util.copyToClipboard
+import com.jelenxp.cryptochat.ui.util.shareText
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 
 @Composable
@@ -31,6 +33,7 @@ fun SendScreen(id: String, navController: NavController, viewModel: ContactsView
 
     val errorEncryptFailed = stringResource(R.string.error_encrypt_failed)
     val copyToast = stringResource(R.string.toast_copied)
+    val shareChooserTitle = stringResource(R.string.share_encrypted_chooser)
     val title = stringResource(R.string.title_send_to, contact?.name ?: "")
     val key = contact?.keyBase64
 
@@ -87,6 +90,16 @@ fun SendScreen(id: String, navController: NavController, viewModel: ContactsView
                     onCopy = { context.copyToClipboard("encrypted", encrypted, copyToast) },
                     minHeight = 150.dp
                 )
+
+                // Rovnou předat zašifrovaný text do jiné appky (SMS, e-mail…).
+                FilledTonalButton(
+                    onClick = { context.shareText(encrypted, shareChooserTitle) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_share_encrypted))
+                }
             }
         }
     }

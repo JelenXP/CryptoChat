@@ -54,7 +54,9 @@ class ContactRepository(context: Context) {
                             // Pokud dešifrování selže (např. neplatný Keystore klíč po
                             // obnově zařízení), vrátí se null - kontakt zůstane bez
                             // klíče a jde znovu spárovat, aplikace nespadne.
-                            keyBase64 = encryptedKey?.let { KeystoreCryptoHelper.decryptFromStorage(it) }
+                            keyBase64 = encryptedKey?.let { KeystoreCryptoHelper.decryptFromStorage(it) },
+                            // Cesta k fotce - necitlivá, ukládá se v plaintextu.
+                            avatarPath = obj.optString("avatar", "").takeIf { it.isNotEmpty() }
                         )
                     )
                 } catch (e: Exception) {
@@ -143,6 +145,8 @@ class ContactRepository(context: Context) {
         obj.put("id", contact.id)
         // Jméno i klíč se ukládají zašifrované (stejný Keystore klíč).
         obj.put("name", KeystoreCryptoHelper.encryptForStorage(contact.name))
+        // Cesta k fotce (necitlivá) - plaintext; null = fotku nemá (pole se vynechá).
+        contact.avatarPath?.takeIf { it.isNotEmpty() }?.let { obj.put("avatar", it) }
         when {
             contact.keyBase64 != null ->
                 obj.put("key", KeystoreCryptoHelper.encryptForStorage(contact.keyBase64))

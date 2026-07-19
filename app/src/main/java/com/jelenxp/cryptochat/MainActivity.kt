@@ -8,6 +8,7 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
@@ -55,8 +56,11 @@ import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
 import com.jelenxp.cryptochat.ui.screens.DesignScreen
 import com.jelenxp.cryptochat.ui.screens.MainScreen
+import com.jelenxp.cryptochat.ui.screens.ReceiveFileScreen
 import com.jelenxp.cryptochat.ui.screens.ReceiveScreen
+import com.jelenxp.cryptochat.ui.screens.ReceiveSharedScreen
 import com.jelenxp.cryptochat.ui.screens.RemoteCompleteScreen
+import com.jelenxp.cryptochat.ui.screens.SendFileScreen
 import com.jelenxp.cryptochat.ui.screens.RemoteInitScreen
 import com.jelenxp.cryptochat.ui.screens.SendScreen
 import com.jelenxp.cryptochat.ui.screens.SettingsScreen
@@ -73,12 +77,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
+
+    // Text sdílený do appky přes „Sdílet do CryptoChat" (ACTION_SEND). Čte se
+    // z intentu při startu i za běhu (onNewIntent); composable ho sleduje.
+    private val sharedTextState = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Blokování screenshotů/náhledu v přepínači aplikací - drží klíče a
+        // dešifrované zprávy mimo snímky obrazovky.
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+        sharedTextState.value = extractSharedText(intent)
         setContent {
             val context = LocalContext.current
             val settingsRepository = remember { SettingsRepository(context) }
@@ -93,12 +105,32 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        AppLockGate { StartupGate { CryptoChatApp(design) } }
+                        AppLockGate {
+                            StartupGate {
+                                CryptoChatApp(
+                                    design = design,
+                                    sharedText = sharedTextState.value,
+                                    onSharedTextConsumed = { sharedTextState.value = null }
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractSharedText(intent)?.let { sharedTextState.value = it }
+    }
+}
+
+/** Vytáhne z intentu text sdílený z jiné appky (ACTION_SEND text/plain), nebo null. */
+private fun extractSharedText(intent: Intent?): String? {
+    if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return null
+    return intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() }
 }
 
 private const val LOCK_GRACE_PERIOD_MS = 10_000L
@@ -140,7 +172,12 @@ private fun AppLockGate(content: @Composable () -> Unit) {
     // výměny klíče na dálku, kdy na pár sekund odejde z appky).
     Box(modifier = Modifier.fillMaxSize()) {
         content()
-        if (needsUnlock) {
+        // Zámek se plynule objeví/zmizí (fade) - po odemčení „odtaje", ne tvrdý skok.
+        AnimatedVisibility(
+            visible = needsUnlock,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(220))
+        ) {
             // Neprůhledný celoobrazovkový překryv, který navíc pohltí doteky,
             // aby nešlo omylem ovládat skrytý obsah pod zámkem.
             Box(
@@ -193,12 +230,24 @@ private fun StartupGate(content: @Composable () -> Unit) {
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
             ?: return@LaunchedEffect
-        val shouldShow = when {
-            result.important -> true
-            result.latestVersion != settings.getUpdateDismissedVersion() -> true
-            else -> System.currentTimeMillis() - settings.getUpdateDismissedAt() >= UPDATE_REMIND_INTERVAL_MS
+        // Pozastavení připomínání (na 30 dní): kontrola proběhla, ale běžné
+        // aktualizace se nepřipomínají. Důležitou verzi připomeneme jen jednou.
+        val snoozeActive = settings.getUpdateSnoozeUntil() > System.currentTimeMillis()
+        val shouldShow = if (snoozeActive) {
+            result.important && settings.getUpdateSnoozeImportantShown() != result.latestVersion
+        } else {
+            when {
+                result.important -> true
+                result.latestVersion != settings.getUpdateDismissedVersion() -> true
+                else -> System.currentTimeMillis() - settings.getUpdateDismissedAt() >= UPDATE_REMIND_INTERVAL_MS
+            }
         }
         if (shouldShow) {
+            // Během pozastavení si důležitou verzi poznač jako připomenutou, ať
+            // se příště (další den) neukáže znovu.
+            if (snoozeActive && result.important) {
+                settings.setUpdateSnoozeImportantShown(result.latestVersion)
+            }
             updateInfo = result
             updateEligible = true
         }
@@ -308,11 +357,24 @@ private fun popExitFor(style: AnimStyle, d: Int): ExitTransition = when (style) 
 }
 
 @Composable
-fun CryptoChatApp(design: DesignController) {
+fun CryptoChatApp(
+    design: DesignController,
+    sharedText: String? = null,
+    onSharedTextConsumed: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val viewModel: ContactsViewModel = viewModel()
     val style = design.animStyle
     val d = design.animSpeed.millis
+
+    // Přišel text „Sdílet do CryptoChat"? Ulož ho a otevři obrazovku dešifrování.
+    var pendingSharedText by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sharedText) {
+        val text = sharedText ?: return@LaunchedEffect
+        pendingSharedText = text
+        onSharedTextConsumed()
+        navController.navigate("receive_shared")
+    }
 
     NavHost(
         navController = navController,
@@ -326,42 +388,86 @@ fun CryptoChatApp(design: DesignController) {
 
         composable("add_user") { AddUserScreen(navController) }
 
+        composable(
+            route = "rekey/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            val existing = viewModel.getContact(id)
+            AddUserScreen(
+                navController = navController,
+                contactId = id,
+                presetName = existing?.name ?: ""
+            )
+        }
+
         composable("settings") { SettingsScreen(navController) }
 
         composable("design") { DesignScreen(navController) }
 
         composable("backup") { BackupScreen(navController, viewModel) }
 
-        composable(
-            route = "create_key/{name}",
-            arguments = listOf(navArgument("name") { type = NavType.StringType })
-        ) { backStackEntry ->
-            val name = Uri.decode(backStackEntry.arguments?.getString("name") ?: "")
-            CreateKeyScreen(name = name, navController = navController, viewModel = viewModel)
+        composable("receive_shared") {
+            ReceiveSharedScreen(
+                cipherText = pendingSharedText ?: "",
+                navController = navController,
+                viewModel = viewModel
+            )
+        }
+
+        composable("changelog") {
+            ChangelogScreen(
+                version = currentVersionName(LocalContext.current),
+                onDismiss = { navController.popBackStack() }
+            )
         }
 
         composable(
-            route = "accept_key/{name}",
-            arguments = listOf(navArgument("name") { type = NavType.StringType })
+            route = "create_key/{name}?contactId={contactId}",
+            arguments = listOf(
+                navArgument("name") { type = NavType.StringType },
+                navArgument("contactId") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
         ) { backStackEntry ->
             val name = Uri.decode(backStackEntry.arguments?.getString("name") ?: "")
-            AcceptKeyScreen(name = name, navController = navController, viewModel = viewModel)
+            val contactId = backStackEntry.arguments?.getString("contactId")?.let { Uri.decode(it) }
+            CreateKeyScreen(name = name, navController = navController, viewModel = viewModel, contactId = contactId)
         }
 
         composable(
-            route = "remote_init/{name}",
-            arguments = listOf(navArgument("name") { type = NavType.StringType })
+            route = "accept_key/{name}?contactId={contactId}",
+            arguments = listOf(
+                navArgument("name") { type = NavType.StringType },
+                navArgument("contactId") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
         ) { backStackEntry ->
             val name = Uri.decode(backStackEntry.arguments?.getString("name") ?: "")
-            RemoteInitScreen(name = name, navController = navController, viewModel = viewModel)
+            val contactId = backStackEntry.arguments?.getString("contactId")?.let { Uri.decode(it) }
+            AcceptKeyScreen(name = name, navController = navController, viewModel = viewModel, contactId = contactId)
         }
 
         composable(
-            route = "remote_complete/{name}",
-            arguments = listOf(navArgument("name") { type = NavType.StringType })
+            route = "remote_init/{name}?contactId={contactId}",
+            arguments = listOf(
+                navArgument("name") { type = NavType.StringType },
+                navArgument("contactId") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
         ) { backStackEntry ->
             val name = Uri.decode(backStackEntry.arguments?.getString("name") ?: "")
-            RemoteCompleteScreen(name = name, navController = navController, viewModel = viewModel)
+            val contactId = backStackEntry.arguments?.getString("contactId")?.let { Uri.decode(it) }
+            RemoteInitScreen(name = name, navController = navController, viewModel = viewModel, contactId = contactId)
+        }
+
+        composable(
+            route = "remote_complete/{name}?contactId={contactId}",
+            arguments = listOf(
+                navArgument("name") { type = NavType.StringType },
+                navArgument("contactId") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
+        ) { backStackEntry ->
+            val name = Uri.decode(backStackEntry.arguments?.getString("name") ?: "")
+            val contactId = backStackEntry.arguments?.getString("contactId")?.let { Uri.decode(it) }
+            RemoteCompleteScreen(name = name, navController = navController, viewModel = viewModel, contactId = contactId)
         }
 
         composable(
@@ -394,6 +500,22 @@ fun CryptoChatApp(design: DesignController) {
         ) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id") ?: ""
             ReceiveScreen(id = id, navController = navController, viewModel = viewModel)
+        }
+
+        composable(
+            route = "send_file/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            SendFileScreen(id = id, navController = navController, viewModel = viewModel)
+        }
+
+        composable(
+            route = "receive_file/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            ReceiveFileScreen(id = id, navController = navController, viewModel = viewModel)
         }
     }
 }

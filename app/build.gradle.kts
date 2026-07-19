@@ -13,8 +13,8 @@ android {
         applicationId = "com.jelenxp.cryptochat"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "2.3"
+        versionCode = 6
+        versionName = "3.0"
     }
 
     // Podpis release buildu vlastním klíčem. Cesty a hesla se čtou ze souboru
@@ -38,9 +38,14 @@ android {
 
     buildTypes {
         release {
-            // R8: zmenšení a obfuskace kódu + odstranění nepoužitých resources.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 minifikace ZÁMĚRNĚ VYPNUTÁ. Minifikace/obfuskace R8 spouštěla
+            // heuristiku antiviru (AVG hlásil „malware"); bez ní klesla detekce
+            // na „suspicious". APK je proto větší (~15 MB). Podepsaná minifikovaná
+            // verze (menší, obfuskovaná) se vyrábí zvlášť na nahlášení AVG false
+            // positive - viz CryptoChat-forAVG-minified.apk. Až AVG whitelistne,
+            // lze zvážit návrat na true.
+            isMinifyEnabled = false
+            isShrinkResources = false
             // Když existuje keystore.properties, podepíše se vlastním release
             // klíčem; jinak fallback na debug klíč (aby build fungoval i bez
             // keystoru, např. v CI). Debug podpis stačí na osobní instalaci,

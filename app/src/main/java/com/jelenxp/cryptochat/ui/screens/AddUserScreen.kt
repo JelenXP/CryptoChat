@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -22,12 +23,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
+import com.jelenxp.cryptochat.ui.components.InfoCard
 
 private const val STEP_NAME = 0
 private const val STEP_METHOD = 1
@@ -43,27 +46,40 @@ private const val METHOD_REMOTE = "remote"
  * Poslední krok teprve naviguje na konkrétní obrazovku výměny klíče.
  */
 @Composable
-fun AddUserScreen(navController: NavController) {
-    var step by rememberSaveable { mutableStateOf(STEP_NAME) }
-    var name by rememberSaveable { mutableStateOf("") }
+fun AddUserScreen(
+    navController: NavController,
+    contactId: String? = null,
+    presetName: String? = null
+) {
+    // Re-key režim: jméno už známe (obnovujeme klíč existujícího kontaktu),
+    // takže se přeskočí krok se jménem a začíná se rovnou volbou způsobu.
+    val rekey = contactId != null
+    val startStep = if (rekey) STEP_METHOD else STEP_NAME
+
+    var step by rememberSaveable { mutableStateOf(startStep) }
+    var name by rememberSaveable { mutableStateOf(presetName ?: "") }
     var method by rememberSaveable { mutableStateOf(METHOD_IN_PERSON) }
 
     val trimmedName = name.trim()
     val encodedName = Uri.encode(trimmedName)
+    // Když obnovujeme klíč, výměna se nasměruje na existující kontakt (zachová
+    // jméno i fotku); jinak se založí nový.
+    val idSuffix = if (contactId != null) "?contactId=${Uri.encode(contactId)}" else ""
 
     // Systémové "zpět" projde nejdřív kroky průvodce, teprve pak opustí obrazovku.
-    BackHandler(enabled = step > STEP_NAME) { step -= 1 }
+    BackHandler(enabled = step > startStep) { step -= 1 }
 
     CryptoScaffold(
-        title = stringResource(R.string.new_user_title),
-        onBack = { if (step > STEP_NAME) step -= 1 else navController.popBackStack() }
+        title = stringResource(if (rekey) R.string.rekey_title else R.string.new_user_title),
+        onBack = { if (step > startStep) step -= 1 else navController.popBackStack() }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            StepIndicator(currentStep = step)
+            // Ukazatel tří kroků dává smysl jen u zakládání (Jméno → Způsob → Klíč).
+            if (!rekey) StepIndicator(currentStep = step)
 
             AnimatedContent(
                 targetState = step,
@@ -78,17 +94,18 @@ fun AddUserScreen(navController: NavController) {
                     )
                     STEP_METHOD -> MethodStep(
                         name = trimmedName,
+                        note = if (rekey) stringResource(R.string.rekey_warning) else null,
                         onChoose = { chosen -> method = chosen; step = STEP_ROLE }
                     )
                     else -> RoleStep(
                         method = method,
                         onPrimary = {
                             val route = if (method == METHOD_IN_PERSON) "create_key" else "remote_init"
-                            navController.navigate("$route/$encodedName")
+                            navController.navigate("$route/$encodedName$idSuffix")
                         },
                         onSecondary = {
                             val route = if (method == METHOD_IN_PERSON) "accept_key" else "remote_complete"
-                            navController.navigate("$route/$encodedName")
+                            navController.navigate("$route/$encodedName$idSuffix")
                         }
                     )
                 }
@@ -181,6 +198,7 @@ private fun NameStep(name: String, onNameChange: (String) -> Unit, onContinue: (
             onValueChange = onNameChange,
             label = { Text(stringResource(R.string.label_username)) },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
@@ -197,7 +215,7 @@ private fun NameStep(name: String, onNameChange: (String) -> Unit, onContinue: (
 }
 
 @Composable
-private fun MethodStep(name: String, onChoose: (String) -> Unit) {
+private fun MethodStep(name: String, onChoose: (String) -> Unit, note: String? = null) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -216,6 +234,8 @@ private fun MethodStep(name: String, onChoose: (String) -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp)
         )
+        // Upozornění při obnově klíče (re-key).
+        note?.let { InfoCard(text = it) }
         MethodCard(
             icon = Icons.Default.Groups,
             title = stringResource(R.string.section_in_person),

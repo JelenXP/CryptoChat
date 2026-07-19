@@ -196,6 +196,8 @@
     <string name="btn_update_later">Later</string>
     <string name="settings_update_check_label">Check for updates</string>
     <string name="settings_update_check_desc">Check GitHub for a new version on start. Turn off to avoid any network access.</string>
+    <string name="settings_update_snooze_label">Pause update reminders for 30 days</string>
+    <string name="settings_update_snooze_desc">Stop reminding you about updates for 30 days. It still checks in the background, and an important update is still shown once.</string>
 
     <!-- Verify contact (key fingerprint) -->
     <string name="verify_title">Verify contact</string>
@@ -206,6 +208,109 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">• Verify a contact anytime — open a contact and tap \"Verify key\" to compare a short code and confirm nobody swapped the key.\n• This \"What\'s new\" screen now appears after an update.\n• You can turn update checking off in Settings.</string>
+    <string name="changelog_body">• A completely redesigned look and animations — a clearer contact screen (encrypt and decrypt text and files in one place) and smooth transitions throughout.\n• File encryption — photos, documents and even large files, with a preview, saving and sharing.\n• Sharing — send an encrypted message or file to another app, or \"Share to CryptoChat\" to decrypt.\n• Better contacts — profile photos, search, key renewal and quick actions.\n• More settings — an \"About\" section, update-reminder controls and a file-size limit.\n• Small improvements — paste from clipboard, haptics and smarter keyboard behavior.</string>
     <string name="btn_changelog_ok">Got it</string>
+
+    <!-- About the app (Settings) -->
+    <string name="settings_section_about">About</string>
+    <string name="about_version">Version %1$s</string>
+    <string name="about_changelog_label">What\'s new</string>
+    <string name="about_changelog_desc">See what changed in this version</string>
+    <string name="about_check_updates_label">Check for updates</string>
+    <string name="about_check_updates_desc">Look on GitHub for a newer version now</string>
+    <string name="about_github_label">Project on GitHub</string>
+    <string name="about_github_desc">Open the source code in your browser</string>
+    <string name="update_check_dialog_title">Updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_up_to_date">You\'re on the latest version (%1$s).</string>
+    <string name="update_check_failed">Couldn\'t check for updates. Check your connection and try again.</string>
+    <string name="btn_close">Close</string>
+
+    <!-- Share encrypted message / receive shared text -->
+    <string name="btn_share_encrypted">Share</string>
+    <string name="share_encrypted_chooser">Share encrypted message</string>
+    <string name="receive_shared_title">Decrypt message</string>
+    <string name="receive_shared_empty">There\'s no text to decrypt.</string>
+    <string name="receive_shared_no_contacts">You have no contact with a key yet. Exchange a key first, then you can decrypt shared messages.</string>
+    <string name="receive_shared_instructions">You received this text from another app. Choose who sent it and it will be decrypted with their key.</string>
+    <string name="receive_shared_pick">Decrypt with:</string>
+
+    <!-- Contact photo -->
+    <string name="avatar_dialog_title">Profile photo</string>
+    <string name="avatar_pick_gallery">Choose from gallery</string>
+    <string name="avatar_take_photo">Take a photo</string>
+    <string name="avatar_remove">Remove photo</string>
+
+    <!-- Contact search -->
+    <string name="search_contacts_hint">Search contacts</string>
+    <string name="content_desc_clear_search">Clear search</string>
+    <string name="search_no_results">No contacts match your search.</string>
+
+    <!-- Renew key (re-key an existing contact) -->
+    <string name="btn_rekey">Renew key</string>
+    <string name="rekey_title">Renew key</string>
+    <string name="rekey_warning">Renewing the key replaces the current one. You\'ll both need to complete the exchange again, and messages secured with the old key can no longer be decrypted.</string>
+
+    <!-- Encrypt / decrypt files -->
+    <string name="btn_send_file">Send file</string>
+    <string name="btn_receive_file">Open file</string>
+    <string name="title_send_file_to">Send file: %1$s</string>
+    <string name="title_receive_file_from">Open file from: %1$s</string>
+    <string name="send_file_instructions">Pick a file (photo, document…) to encrypt with your shared key. Only this contact can open it. Max 25 MB.</string>
+    <string name="receive_file_instructions">Pick the encrypted file you received. It will be decrypted with your shared key.</string>
+    <string name="btn_pick_file">Pick a file</string>
+    <string name="btn_pick_encrypted_file">Pick encrypted file</string>
+    <string name="file_encrypting">Encrypting…</string>
+    <string name="file_decrypting">Decrypting…</string>
+    <string name="file_encrypted_ready">Encrypted file ready</string>
+    <string name="file_decrypted_ready">Decrypted file</string>
+    <string name="btn_save_file">Save</string>
+    <string name="btn_share_file">Share</string>
+    <string name="share_encrypted_file_chooser">Share encrypted file</string>
+    <string name="share_decrypted_file_chooser">Share file</string>
+    <string name="toast_file_saved">File saved.</string>
+    <string name="error_file_save_failed">Couldn\'t save the file.</string>
+    <string name="error_file_encrypt_failed">Couldn\'t encrypt the file. It may be too large (max 25 MB) or unreadable.</string>
+    <string name="error_file_decrypt_failed">Couldn\'t decrypt. Wrong contact/key, or the file is corrupted or not a CryptoChat file.</string>
+    <string name="error_file_too_large">File is too large. Turn off the size limit in Settings, or pick a smaller file.</string>
+
+    <!-- Send/Receive choice (text vs file) -->
+    <string name="send_choice_title">Send</string>
+    <string name="receive_choice_title">Receive</string>
+    <string name="choice_text">Text message</string>
+    <string name="choice_file">File</string>
+
+    <!-- File size limit setting -->
+    <string name="settings_file_limit_label">Limit file size (256 MB)</string>
+    <string name="settings_file_limit_desc">On by default. Turn off to encrypt larger files — it can take longer and use a lot of storage and memory.</string>
+
+    <!-- Contact detail (combined encrypt/decrypt screen) -->
+    <string name="menu_more">More</string>
+    <string name="menu_open">Open</string>
+    <string name="menu_edit_profile">Edit profile</string>
+    <string name="e2e_label">End-to-end encryption</string>
+    <string name="chip_text">Text</string>
+    <string name="chip_file">File</string>
+    <string name="detail_msg_for">Message for %1$s</string>
+    <string name="detail_enc_text_from">Encrypted text from %1$s</string>
+    <string name="detail_msg_placeholder">Write a message…</string>
+    <string name="detail_paste_placeholder">Paste the encrypted text…</string>
+    <string name="action_enc_text">Encrypt message</string>
+    <string name="action_dec_text">Decrypt message</string>
+    <string name="action_enc_file">Encrypt file</string>
+    <string name="action_dec_file">Decrypt file</string>
+    <string name="action_paste">Paste</string>
+    <string name="detail_out_encrypted">Encrypted — send it over</string>
+    <string name="detail_out_original">Original message</string>
+    <string name="detail_file_for">File for %1$s</string>
+    <string name="detail_enc_file_from">Encrypted file from %1$s</string>
+    <string name="detail_pick_enc">Pick a file to encrypt</string>
+    <string name="detail_pick_dec">Pick an encrypted file</string>
+    <string name="detail_pick_enc_hint">Photo, PDF, anything</string>
+    <string name="detail_pick_dec_hint">Encrypted file from this contact</string>
+    <string name="detail_pick_other">Choose another</string>
+    <string name="detail_verify_code">Verified · code %1$s</string>
+
+    <!-- Animation preview (Design settings) -->
+    <string name="design_preview_hint">Changing the style or speed replays the transition on this whole screen.</string>
 </resources>

@@ -33,10 +33,30 @@ object UpdateChecker {
         val important: Boolean
     )
 
+    /**
+     * Výsledek kontroly pro ruční spuštění z Nastavení, který na rozdíl od
+     * [check] rozlišuje „jste aktuální" od „nepovedlo se" (offline apod.).
+     */
+    sealed interface Result {
+        /** Je novější verze. */
+        data class UpdateAvailable(val info: UpdateInfo) : Result
+        /** Nic novějšího není. */
+        data object UpToDate : Result
+        /** Kontrola se nepovedla (offline, chyba serveru…). */
+        data object Failed : Result
+    }
+
     /** Vrátí info o novější verzi, nebo `null` (nic novějšího / se to nepovedlo). */
-    fun check(currentVersion: String): UpdateInfo? {
+    fun check(currentVersion: String): UpdateInfo? =
+        (checkDetailed(currentVersion) as? Result.UpdateAvailable)?.info
+
+    /**
+     * Podrobná varianta [check]: vrátí [Result] rozlišující dostupný update,
+     * aktuální verzi a selhání. Nikdy nevyhodí výjimku.
+     */
+    fun checkDetailed(currentVersion: String): Result {
         return try {
-            val json = fetch(RELEASES_URL) ?: return null
+            val json = fetch(RELEASES_URL) ?: return Result.Failed
             val array = JSONArray(json)
             var latest: Release? = null
             var importantNewer = false
@@ -56,11 +76,12 @@ object UpdateChecker {
                     importantNewer = true
                 }
             }
-            val newest = latest ?: return null
-            if (compareVersions(newest.version, currentVersion) <= 0) return null
-            UpdateInfo(newest.version, newest.url, importantNewer)
+            // Fetch prošel, ale nenašla se žádná platná verze → nic novějšího.
+            val newest = latest ?: return Result.UpToDate
+            if (compareVersions(newest.version, currentVersion) <= 0) return Result.UpToDate
+            Result.UpdateAvailable(UpdateInfo(newest.version, newest.url, importantNewer))
         } catch (e: Exception) {
-            null
+            Result.Failed
         }
     }
 

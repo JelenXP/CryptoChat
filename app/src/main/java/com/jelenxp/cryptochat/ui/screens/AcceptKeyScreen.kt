@@ -21,16 +21,19 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.Base64Util
-import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
 import com.jelenxp.cryptochat.ui.qr.buildQrScanOptions
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import com.journeyapps.barcodescanner.ScanContract
-import java.util.UUID
 
 @Composable
-fun AcceptKeyScreen(name: String, navController: NavController, viewModel: ContactsViewModel) {
+fun AcceptKeyScreen(
+    name: String,
+    navController: NavController,
+    viewModel: ContactsViewModel,
+    contactId: String? = null
+) {
     val context = LocalContext.current
     var keyText by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -120,9 +123,7 @@ fun AcceptKeyScreen(name: String, navController: NavController, viewModel: Conta
                             error = errorInvalidLength
                             return@Button
                         }
-                        val success = viewModel.addOrUpdateContact(
-                            Contact(id = UUID.randomUUID().toString(), name = name, keyBase64 = keyText.trim())
-                        )
+                        val success = viewModel.saveExchangedKey(contactId, name, keyText.trim())
                         if (success) {
                             navController.popBackStack("main", inclusive = false)
                         } else {

@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.CryptoManager
-import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CopyableField
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
@@ -27,10 +26,14 @@ import com.jelenxp.cryptochat.ui.qr.QrCard
 import com.jelenxp.cryptochat.ui.qr.generateQrBitmap
 import com.jelenxp.cryptochat.ui.util.copyToClipboard
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
-import java.util.UUID
 
 @Composable
-fun CreateKeyScreen(name: String, navController: NavController, viewModel: ContactsViewModel) {
+fun CreateKeyScreen(
+    name: String,
+    navController: NavController,
+    viewModel: ContactsViewModel,
+    contactId: String? = null
+) {
     val context = LocalContext.current
 
     val keyBase64 = remember { CryptoManager.keyToBase64(CryptoManager.generateKey()) }
@@ -81,9 +84,7 @@ fun CreateKeyScreen(name: String, navController: NavController, viewModel: Conta
 
             Button(
                 onClick = {
-                    val success = viewModel.addOrUpdateContact(
-                        Contact(id = UUID.randomUUID().toString(), name = name, keyBase64 = keyBase64)
-                    )
+                    val success = viewModel.saveExchangedKey(contactId, name, keyBase64)
                     if (success) {
                         navController.popBackStack("main", inclusive = false)
                     } else {

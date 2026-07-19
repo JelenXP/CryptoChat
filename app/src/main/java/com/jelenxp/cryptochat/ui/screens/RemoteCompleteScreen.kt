@@ -20,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.PostQuantumKem
-import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.ui.components.CopyableField
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
@@ -31,7 +30,6 @@ import com.jelenxp.cryptochat.ui.util.LockPortraitWhileVisible
 import com.jelenxp.cryptochat.ui.util.copyToClipboard
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import com.journeyapps.barcodescanner.ScanContract
-import java.util.UUID
 
 private enum class CompletePhase { INPUT_PUBLIC_KEY, SHOW_RESPONSE, CONFIRM_CODE }
 
@@ -41,7 +39,12 @@ private enum class CompletePhase { INPUT_PUBLIC_KEY, SHOW_RESPONSE, CONFIRM_CODE
  * které je potřeba poslat zpátky.
  */
 @Composable
-fun RemoteCompleteScreen(name: String, navController: NavController, viewModel: ContactsViewModel) {
+fun RemoteCompleteScreen(
+    name: String,
+    navController: NavController,
+    viewModel: ContactsViewModel,
+    contactId: String? = null
+) {
     val context = LocalContext.current
 
     // Zámek na výšku: citlivý klíčový materiál (odvozený sdílený klíč) se drží
@@ -165,9 +168,7 @@ fun RemoteCompleteScreen(name: String, navController: NavController, viewModel: 
                         verificationCode = verificationCode,
                         contactName = name,
                         onConfirmed = {
-                            val success = viewModel.addOrUpdateContact(
-                                Contact(id = UUID.randomUUID().toString(), name = name, keyBase64 = aesKeyBase64)
-                            )
+                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64)
                             if (success) {
                                 navController.popBackStack("main", inclusive = false)
                             } else {

@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.PostQuantumKem
-import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.ui.components.CopyableField
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
@@ -34,7 +33,6 @@ import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import com.journeyapps.barcodescanner.ScanContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 private enum class InitPhase { SHOW_PUBLIC_KEY, CONFIRM_CODE }
 
@@ -45,7 +43,12 @@ private enum class InitPhase { SHOW_PUBLIC_KEY, CONFIRM_CODE }
  * ručně nebo naskenovanou) a nakonec dopočítá sdílený klíč.
  */
 @Composable
-fun RemoteInitScreen(name: String, navController: NavController, viewModel: ContactsViewModel) {
+fun RemoteInitScreen(
+    name: String,
+    navController: NavController,
+    viewModel: ContactsViewModel,
+    contactId: String? = null
+) {
     val context = LocalContext.current
 
     // Zámek na výšku: citlivý klíčový materiál níže se drží jen v paměti
@@ -194,9 +197,7 @@ fun RemoteInitScreen(name: String, navController: NavController, viewModel: Cont
                         verificationCode = verificationCode,
                         contactName = name,
                         onConfirmed = {
-                            val success = viewModel.addOrUpdateContact(
-                                Contact(id = UUID.randomUUID().toString(), name = name, keyBase64 = aesKeyBase64)
-                            )
+                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64)
                             if (success) {
                                 navController.popBackStack("main", inclusive = false)
                             } else {

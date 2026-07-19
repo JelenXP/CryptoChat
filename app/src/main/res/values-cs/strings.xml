@@ -196,6 +196,8 @@
     <string name="btn_update_later">Později</string>
     <string name="settings_update_check_label">Kontrolovat aktualizace</string>
     <string name="settings_update_check_desc">Při startu ověřit na GitHubu novější verzi. Vypnutím zabráníš jakémukoli přístupu k síti.</string>
+    <string name="settings_update_snooze_label">Pozastavit připomínání na 30 dní</string>
+    <string name="settings_update_snooze_desc">Na 30 dní přestane připomínat aktualizace. Na pozadí je dál kontroluje a důležitou aktualizaci i tak jednou zobrazí.</string>
 
     <!-- Ověření kontaktu (otisk klíče) -->
     <string name="verify_title">Ověřit kontakt</string>
@@ -206,6 +208,109 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">• Ověření kontaktu kdykoli — otevři kontakt a klepni na „Ověřit klíč", porovnej krátký kód a potvrď, že klíč nikdo nepodvrhl.\n• Tato obrazovka „Novinky" se teď ukáže po aktualizaci.\n• Kontrolu aktualizací můžeš vypnout v Nastavení.</string>
+    <string name="changelog_body">• Kompletně předesignovaný vzhled a animace — přehlednější obrazovka kontaktu (šifrování i dešifrování textu a souborů na jednom místě) a plynulé přechody.\n• Šifrování souborů — fotky, dokumenty i velké soubory, s náhledem, uložením a sdílením.\n• Sdílení — pošli zašifrovanou zprávu nebo soubor do jiné aplikace, nebo je „Sdílej do CryptoChat" k dešifrování.\n• Vylepšené kontakty — profilové fotky, vyhledávání, obnova klíče a rychlé akce.\n• Rozšířené nastavení — sekce „O aplikaci", správa upozornění na aktualizace a limit velikosti souborů.\n• Drobná vylepšení — vkládání ze schránky, haptika a chytřejší chování klávesnice.</string>
     <string name="btn_changelog_ok">Rozumím</string>
+
+    <!-- O aplikaci (Nastavení) -->
+    <string name="settings_section_about">O aplikaci</string>
+    <string name="about_version">Verze %1$s</string>
+    <string name="about_changelog_label">Novinky</string>
+    <string name="about_changelog_desc">Co se změnilo v této verzi</string>
+    <string name="about_check_updates_label">Zkontrolovat aktualizace</string>
+    <string name="about_check_updates_desc">Podívat se hned na GitHub po novější verzi</string>
+    <string name="about_github_label">Projekt na GitHubu</string>
+    <string name="about_github_desc">Otevřít zdrojový kód v prohlížeči</string>
+    <string name="update_check_dialog_title">Aktualizace</string>
+    <string name="update_checking">Kontroluji aktualizace…</string>
+    <string name="update_up_to_date">Máte nejnovější verzi (%1$s).</string>
+    <string name="update_check_failed">Aktualizace se nepodařilo zkontrolovat. Zkontrolujte připojení a zkuste to znovu.</string>
+    <string name="btn_close">Zavřít</string>
+
+    <!-- Sdílení zašifrované zprávy / příjem sdíleného textu -->
+    <string name="btn_share_encrypted">Sdílet</string>
+    <string name="share_encrypted_chooser">Sdílet zašifrovanou zprávu</string>
+    <string name="receive_shared_title">Dešifrovat zprávu</string>
+    <string name="receive_shared_empty">Není co dešifrovat.</string>
+    <string name="receive_shared_no_contacts">Zatím nemáš žádný kontakt s klíčem. Nejdřív si vyměňte klíč, pak půjde sdílené zprávy dešifrovat.</string>
+    <string name="receive_shared_instructions">Tento text jsi dostal z jiné aplikace. Vyber, kdo ho poslal, a rozšifruje se jeho klíčem.</string>
+    <string name="receive_shared_pick">Dešifrovat klíčem:</string>
+
+    <!-- Profilová fotka kontaktu -->
+    <string name="avatar_dialog_title">Profilová fotka</string>
+    <string name="avatar_pick_gallery">Vybrat z galerie</string>
+    <string name="avatar_take_photo">Vyfotit</string>
+    <string name="avatar_remove">Odebrat fotku</string>
+
+    <!-- Vyhledávání kontaktů -->
+    <string name="search_contacts_hint">Hledat kontakty</string>
+    <string name="content_desc_clear_search">Vymazat hledání</string>
+    <string name="search_no_results">Žádný kontakt neodpovídá hledání.</string>
+
+    <!-- Obnova klíče (re-key existujícího kontaktu) -->
+    <string name="btn_rekey">Obnovit klíč</string>
+    <string name="rekey_title">Obnovit klíč</string>
+    <string name="rekey_warning">Obnovením se stávající klíč nahradí novým. Výměnu musíte dokončit oba znovu a zprávy zašifrované starým klíčem už nepůjdou dešifrovat.</string>
+
+    <!-- Šifrování / dešifrování souborů -->
+    <string name="btn_send_file">Odeslat soubor</string>
+    <string name="btn_receive_file">Otevřít soubor</string>
+    <string name="title_send_file_to">Odeslat soubor: %1$s</string>
+    <string name="title_receive_file_from">Otevřít soubor od: %1$s</string>
+    <string name="send_file_instructions">Vyber soubor (fotku, dokument…), zašifruje se vaším sdíleným klíčem. Otevřít ho může jen tento kontakt. Max 25 MB.</string>
+    <string name="receive_file_instructions">Vyber zašifrovaný soubor, který jsi dostal. Rozšifruje se vaším sdíleným klíčem.</string>
+    <string name="btn_pick_file">Vybrat soubor</string>
+    <string name="btn_pick_encrypted_file">Vybrat zašifrovaný soubor</string>
+    <string name="file_encrypting">Šifruji…</string>
+    <string name="file_decrypting">Dešifruji…</string>
+    <string name="file_encrypted_ready">Zašifrovaný soubor je připravený</string>
+    <string name="file_decrypted_ready">Dešifrovaný soubor</string>
+    <string name="btn_save_file">Uložit</string>
+    <string name="btn_share_file">Sdílet</string>
+    <string name="share_encrypted_file_chooser">Sdílet zašifrovaný soubor</string>
+    <string name="share_decrypted_file_chooser">Sdílet soubor</string>
+    <string name="toast_file_saved">Soubor uložen.</string>
+    <string name="error_file_save_failed">Soubor se nepodařilo uložit.</string>
+    <string name="error_file_encrypt_failed">Soubor se nepodařilo zašifrovat. Možná je příliš velký (max 25 MB) nebo nečitelný.</string>
+    <string name="error_file_decrypt_failed">Nepodařilo se dešifrovat. Špatný kontakt/klíč, nebo je soubor poškozený či není z CryptoChatu.</string>
+    <string name="error_file_too_large">Soubor je příliš velký. Vypni v nastavení limit velikosti, nebo vyber menší soubor.</string>
+
+    <!-- Volba odeslat/přijmout (text vs soubor) -->
+    <string name="send_choice_title">Odeslat</string>
+    <string name="receive_choice_title">Přijmout</string>
+    <string name="choice_text">Textová zpráva</string>
+    <string name="choice_file">Soubor</string>
+
+    <!-- Nastavení limitu velikosti souborů -->
+    <string name="settings_file_limit_label">Limit velikosti souborů (256 MB)</string>
+    <string name="settings_file_limit_desc">Ve výchozím zapnuto. Vypnutím půjdou šifrovat i větší soubory — může to ale trvat déle a zabrat hodně místa i paměti.</string>
+
+    <!-- Detail kontaktu (spojená obrazovka šifrovat/dešifrovat) -->
+    <string name="menu_more">Více</string>
+    <string name="menu_open">Otevřít</string>
+    <string name="menu_edit_profile">Upravit profil</string>
+    <string name="e2e_label">Koncové šifrování</string>
+    <string name="chip_text">Text</string>
+    <string name="chip_file">Soubor</string>
+    <string name="detail_msg_for">Zpráva pro %1$s</string>
+    <string name="detail_enc_text_from">Zašifrovaný text od %1$s</string>
+    <string name="detail_msg_placeholder">Napište zprávu…</string>
+    <string name="detail_paste_placeholder">Vložte zašifrovaný text…</string>
+    <string name="action_enc_text">Zašifrovat zprávu</string>
+    <string name="action_dec_text">Dešifrovat zprávu</string>
+    <string name="action_enc_file">Zašifrovat soubor</string>
+    <string name="action_dec_file">Dešifrovat soubor</string>
+    <string name="action_paste">Vložit</string>
+    <string name="detail_out_encrypted">Zašifrováno — pošli druhé straně</string>
+    <string name="detail_out_original">Původní zpráva</string>
+    <string name="detail_file_for">Soubor pro %1$s</string>
+    <string name="detail_enc_file_from">Zašifrovaný soubor od %1$s</string>
+    <string name="detail_pick_enc">Vybrat soubor k zašifrování</string>
+    <string name="detail_pick_dec">Vybrat zašifrovaný soubor</string>
+    <string name="detail_pick_enc_hint">Foto, PDF, cokoliv</string>
+    <string name="detail_pick_dec_hint">Zašifrovaný soubor od tohoto kontaktu</string>
+    <string name="detail_pick_other">Vybrat jiný</string>
+    <string name="detail_verify_code">Ověřeno · kód %1$s</string>
+
+    <!-- Náhled animace (Nastavení vzhledu) -->
+    <string name="design_preview_hint">Změna stylu nebo rychlosti přehraje přechod na celé této obrazovce.</string>
 </resources>

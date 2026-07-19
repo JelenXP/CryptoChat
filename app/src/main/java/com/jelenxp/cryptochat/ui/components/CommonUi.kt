@@ -1,15 +1,24 @@
 package com.jelenxp.cryptochat.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import android.view.HapticFeedbackConstants
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -121,6 +130,65 @@ fun InfoCard(
                 Icon(icon, contentDescription = null)
             }
             Text(text, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/**
+ * Segmentový přepínač s klouzavou „pilulkou" - vybraná volba je podbarvená a
+ * indikátor při změně plynule přejede na novou pozici (i barva textu se prolne).
+ * Pracuje pro libovolný počet voleb.
+ */
+@Composable
+fun SegmentedControl(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val count = options.size.coerceAtLeast(1)
+    val index = selectedIndex.coerceIn(0, count - 1)
+    val view = LocalView.current
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        BoxWithConstraints(modifier = Modifier.padding(4.dp).height(38.dp)) {
+            val pillWidth = maxWidth / count
+            val offsetX by animateDpAsState(pillWidth * index, tween(240), label = "segPill")
+            // Klouzavá pilulka pod textem.
+            Surface(
+                shape = RoundedCornerShape(9.dp),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.offset(x = offsetX).width(pillWidth).fillMaxHeight()
+            ) {}
+            Row(modifier = Modifier.fillMaxSize()) {
+                options.forEachIndexed { i, label ->
+                    val selected = i == index
+                    val textColor by animateColorAsState(
+                        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tween(240),
+                        label = "segText"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(9.dp))
+                            .clickable {
+                                if (i != index) view.performHapticFeedback(
+                                    HapticFeedbackConstants.CONTEXT_CLICK,
+                                    HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
+                                )
+                                onSelect(i)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelLarge, color = textColor, maxLines = 1)
+                    }
+                }
+            }
         }
     }
 }
