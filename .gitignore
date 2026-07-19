@@ -1,0 +1,30 @@
+# --- Podpisové klíče a hesla (NIKDY do gitu!) ---
+keystore.properties
+*.jks
+*.keystore
+
+# --- Gradle / build (Android klient) ---
+.gradle/
+build/
+local.properties
+
+# --- Android Studio / IntelliJ ---
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Python (relay server) ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Claude Code (lokální, nepatří na GitHub) ---
+.claude/
+CLAUDE.md
+
+# --- Různé ---
+*.log
+*.apk
+*.aab

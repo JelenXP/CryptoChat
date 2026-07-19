@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        AppCompatActivity (potřebná kvůli AppCompatDelegate.setApplicationLocales
+        pro přepínání jazyka appky) vyžaduje motiv odvozený od Theme.AppCompat -
+        obyčejný android:Theme.* by appku hned při startu shodil s
+        IllegalStateException.
+
+        Tento XML motiv řídí jen to, co je vidět MIMO Compose - hlavně pozadí
+        okna při studeném startu a barvy systémových pruhů. Skutečný vzhled UI
+        dělá Compose motiv (ui/theme/CryptoChatTheme). Barvy tu proto ladí
+        s minimalistickou paletou - světlé neutrální pozadí, tyrkysový akcent.
+        Tmavou variantu má values-night/themes.xml.
+    -->
+    <style name="Theme.CryptoChat" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_teal</item>
+        <item name="colorPrimaryDark">@color/brand_teal_dark</item>
+        <item name="colorAccent">@color/brand_teal</item>
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@color/window_background</item>
+        <item name="android:navigationBarColor">@color/window_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

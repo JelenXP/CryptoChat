@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cesty sdílené přes FileProvider. „camera" = fotka z foťáku, „share" =
+     dočasné soubory (zašifrované/dešifrované) k odeslání přes systémové Sdílet. -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+    <cache-path name="share" path="share/" />
+</paths>

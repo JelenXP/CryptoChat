@@ -1,0 +1,42 @@
+# systemd sluzba pro spusteni CryptoChat relaye na Linux serveru
+# (jednodeskovy pocitac, starsi PC, VPS - cokoli s Pythonem 3 a systemd).
+#
+# Instalace:
+#   1. Zkopiruj slozku CryptoChatServer na server, napr. do /opt/cryptochat-relay
+#   2. Uprav cesty/uzivatele nize podle sveho.
+#   3. sudo cp cryptochat-relay.service /etc/systemd/system/
+#   4. sudo systemctl daemon-reload
+#   5. sudo systemctl enable --now cryptochat-relay
+#   6. Stav:  systemctl status cryptochat-relay
+#
+# Relay nasloucha jen na 127.0.0.1 - do sveta ho pustis pres Tor onion service
+# (viz README.md), ne primym otevrenim portu na routeru.
+
+[Unit]
+Description=CryptoChat zero-knowledge relay (dead-drop)
+After=network.target
+
+[Service]
+Type=simple
+# Uzivatel bez zbytecnych prav (vytvor napr.: sudo useradd -r -s /usr/sbin/nologin cryptochat)
+User=cryptochat
+WorkingDirectory=/opt/cryptochat-relay
+ExecStart=/usr/bin/python3 /opt/cryptochat-relay/server.py
+Restart=on-failure
+RestartSec=3
+
+# Konfigurace pres promenne prostredi (odkomentuj a uprav dle potreby):
+Environment=CC_HOST=127.0.0.1
+Environment=CC_PORT=8787
+# Environment=CC_TTL_SECONDS=86400
+# Environment=CC_MAX_BLOB_SIZE=524288
+
+# Zpevneni (server nic nezapisuje na disk, tak mu to sebereme):
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/cryptochat-relay
+
+[Install]
+WantedBy=multi-user.target

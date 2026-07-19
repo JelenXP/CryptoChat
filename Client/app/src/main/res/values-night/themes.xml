@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Tmavá varianta XML (AppCompat) motivu - hluboké neutrální pozadí okna
+        a tmavé systémové pruhy se světlými ikonami. Ladí s tmavou Compose
+        paletou (ui/theme/Color.kt, Dark*).
+    -->
+    <style name="Theme.CryptoChat" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_teal</item>
+        <item name="colorPrimaryDark">@color/brand_teal_dark</item>
+        <item name="colorAccent">@color/brand_teal</item>
+        <item name="android:windowBackground">@color/window_background_night</item>
+        <item name="android:statusBarColor">@color/window_background_night</item>
+        <item name="android:navigationBarColor">@color/window_background_night</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

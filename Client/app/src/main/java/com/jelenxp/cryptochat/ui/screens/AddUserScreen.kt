@@ -1,0 +1,313 @@
+package com.jelenxp.cryptochat.ui.screens
+
+import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
+import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.ui.components.AppCard
+import com.jelenxp.cryptochat.ui.components.CryptoScaffold
+import com.jelenxp.cryptochat.ui.components.InfoCard
+
+private const val STEP_NAME = 0
+private const val STEP_METHOD = 1
+private const val STEP_ROLE = 2
+
+private const val METHOD_IN_PERSON = "in_person"
+private const val METHOD_REMOTE = "remote"
+
+/**
+ * Průvodce přidáním kontaktu ve třech krocích: Jméno → Způsob → Klíč.
+ * Kroky žijí uvnitř jedné obrazovky (ne přes navigaci), takže zadané jméno i
+ * volba způsobu zůstanou zachované, když se uživatel vrátí o krok zpět.
+ * Poslední krok teprve naviguje na konkrétní obrazovku výměny klíče.
+ */
+@Composable
+fun AddUserScreen(
+    navController: NavController,
+    contactId: String? = null,
+    presetName: String? = null
+) {
+    // Re-key režim: jméno už známe (obnovujeme klíč existujícího kontaktu),
+    // takže se přeskočí krok se jménem a začíná se rovnou volbou způsobu.
+    val rekey = contactId != null
+    val startStep = if (rekey) STEP_METHOD else STEP_NAME
+
+    var step by rememberSaveable { mutableStateOf(startStep) }
+    var name by rememberSaveable { mutableStateOf(presetName ?: "") }
+    var method by rememberSaveable { mutableStateOf(METHOD_IN_PERSON) }
+
+    val trimmedName = name.trim()
+    val encodedName = Uri.encode(trimmedName)
+    // Když obnovujeme klíč, výměna se nasměruje na existující kontakt (zachová
+    // jméno i fotku); jinak se založí nový.
+    val idSuffix = if (contactId != null) "?contactId=${Uri.encode(contactId)}" else ""
+
+    // Systémové "zpět" projde nejdřív kroky průvodce, teprve pak opustí obrazovku.
+    BackHandler(enabled = step > startStep) { step -= 1 }
+
+    CryptoScaffold(
+        title = stringResource(if (rekey) R.string.rekey_title else R.string.new_user_title),
+        onBack = { if (step > startStep) step -= 1 else navController.popBackStack() }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // Ukazatel tří kroků dává smysl jen u zakládání (Jméno → Způsob → Klíč).
+            if (!rekey) StepIndicator(currentStep = step)
+
+            AnimatedContent(
+                targetState = step,
+                transitionSpec = { fadeIn() togetherWith fadeOut() },
+                label = "wizardStep"
+            ) { current ->
+                when (current) {
+                    STEP_NAME -> NameStep(
+                        name = name,
+                        onNameChange = { name = it },
+                        onContinue = { if (trimmedName.isNotEmpty()) step = STEP_METHOD }
+                    )
+                    STEP_METHOD -> MethodStep(
+                        name = trimmedName,
+                        note = if (rekey) stringResource(R.string.rekey_warning) else null,
+                        onChoose = { chosen -> method = chosen; step = STEP_ROLE }
+                    )
+                    else -> RoleStep(
+                        method = method,
+                        onPrimary = {
+                            val route = if (method == METHOD_IN_PERSON) "create_key" else "pair_invite"
+                            navController.navigate("$route/$encodedName$idSuffix")
+                        },
+                        onSecondary = {
+                            val route = if (method == METHOD_IN_PERSON) "accept_key" else "pair_join"
+                            navController.navigate("$route/$encodedName$idSuffix")
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Vodorovný ukazatel tří kroků (Jméno / Způsob / Klíč) s aktivní/hotovou tečkou. */
+@Composable
+private fun StepIndicator(currentStep: Int) {
+    val labels = listOf(
+        stringResource(R.string.step_name),
+        stringResource(R.string.step_method),
+        stringResource(R.string.step_key)
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        labels.forEachIndexed { index, label ->
+            val done = index < currentStep
+            val active = index == currentStep
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Surface(
+                    shape = CircleShape,
+                    color = if (active) MaterialTheme.colorScheme.primary
+                    else if (done) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = if (active) MaterialTheme.colorScheme.onPrimary
+                    else if (done) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (done) Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        else Text("${index + 1}", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (active || done) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (index < labels.lastIndex) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 6.dp)
+                        .padding(bottom = 16.dp)
+                        .height(2.dp)
+                ) {
+                    Surface(
+                        color = if (index < currentStep) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outlineVariant,
+                        modifier = Modifier.fillMaxSize()
+                    ) {}
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NameStep(name: String, onNameChange: (String) -> Unit, onContinue: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.add_name_question),
+            style = MaterialTheme.typography.headlineSmall
+        )
+        Text(
+            text = stringResource(R.string.add_user_instructions),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = name,
+            onValueChange = onNameChange,
+            label = { Text(stringResource(R.string.label_username)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = onContinue,
+            enabled = name.trim().isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(stringResource(R.string.btn_continue))
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun MethodStep(name: String, onChoose: (String) -> Unit, note: String? = null) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.add_method_question, name),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        Text(
+            text = stringResource(R.string.add_method_help),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+        // Upozornění při obnově klíče (re-key).
+        note?.let { InfoCard(text = it) }
+        MethodCard(
+            icon = Icons.Default.Groups,
+            title = stringResource(R.string.section_in_person),
+            description = stringResource(R.string.section_in_person_description),
+            onClick = { onChoose(METHOD_IN_PERSON) }
+        )
+        MethodCard(
+            icon = Icons.Default.Link,
+            title = stringResource(R.string.section_invite),
+            description = stringResource(R.string.section_invite_description),
+            onClick = { onChoose(METHOD_REMOTE) }
+        )
+    }
+}
+
+@Composable
+private fun MethodCard(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
+    AppCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(46.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null) }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoleStep(method: String, onPrimary: () -> Unit, onSecondary: () -> Unit) {
+    val inPerson = method == METHOD_IN_PERSON
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = stringResource(
+                if (inPerson) R.string.add_role_title_in_person else R.string.add_role_title_invite
+            ),
+            style = MaterialTheme.typography.titleLarge
+        )
+        Text(
+            text = stringResource(
+                if (inPerson) R.string.add_role_desc_in_person else R.string.add_role_desc_invite
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Button(onClick = onPrimary, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(if (inPerson) R.string.btn_create_key else R.string.btn_invite_create))
+        }
+        OutlinedButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(if (inPerson) R.string.btn_accept_key else R.string.btn_invite_enter))
+        }
+    }
+}
