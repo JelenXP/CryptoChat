@@ -90,10 +90,10 @@ object RelaySync {
     data class PollResult(val received: Int, val failed: Boolean)
 
     /** Směr, na který kontakt POSÍLÁ. Iniciátor = 0, odpovídající = 1. */
-    private fun sendDir(contact: Contact) = if (contact.initiator == true) 0 else 1
+    private fun sendDir(contact: Contact) = sendDirFor(contact.initiator)
 
     /** Směr, na kterém kontakt POSLOUCHÁ (opačný). */
-    private fun recvDir(contact: Contact) = 1 - sendDir(contact)
+    private fun recvDir(contact: Contact) = recvDirFor(contact.initiator)
 
     /**
      * Zapíše zprávu do lokální historie se stavem SENDING a vrátí ji. Nedělá síť -
@@ -592,3 +592,13 @@ internal fun shouldCheckPrevEpochAt(
     if (lastCheckedAt == null) return true
     return now - lastCheckedAt >= recheckMs
 }
+
+/**
+ * Směr schránky, na který strana POSÍLÁ, podle role při párování ([Contact.initiator]).
+ * Iniciátor = 0, odpovídající (i neznámý) = 1. Čistá funkce - testuje se symetrie
+ * s [recvDirFor], protože chyba tady = zpráva do schránky, kterou protějšek nečte.
+ */
+internal fun sendDirFor(initiator: Boolean?): Int = if (initiator == true) 0 else 1
+
+/** Směr, na kterém strana POSLOUCHÁ (opačný než [sendDirFor]). */
+internal fun recvDirFor(initiator: Boolean?): Int = 1 - sendDirFor(initiator)
