@@ -144,13 +144,16 @@ object ChatEnvelope {
      */
     fun open(blob: ByteArray, keyBase64: String, dir: Int): Opened? {
         return try {
-            if (blob.size <= IV_SIZE_BYTES) return null
-            val iv = blob.copyOfRange(0, IV_SIZE_BYTES)
-            val cipherBytes = blob.copyOfRange(IV_SIZE_BYTES, blob.size)
+            // [1B verze formátu][12B IV][ciphertext+tag]
+            if (blob.size <= 1 + IV_SIZE_BYTES) return null
+            val wire = blob[0].toInt() and 0xFF
+            if (wire != WireCompat.WIRE_VERSION) return null
+            val iv = blob.copyOfRange(1, 1 + IV_SIZE_BYTES)
+            val cipherBytes = blob.copyOfRange(1 + IV_SIZE_BYTES, blob.size)
             val key = CryptoManager.keyFromBase64(keyBase64)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.updateAAD(aad(dir))
+            cipher.updateAAD(aad(dir, wire))
             val payload = cipher.doFinal(cipherBytes)
             if (payload.size < HEADER) return null
             val kind = payload[0]
@@ -213,16 +216,18 @@ object ChatEnvelope {
         val iv = ByteArray(IV_SIZE_BYTES).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        cipher.updateAAD(aad(dir))
-        return iv + cipher.doFinal(payload)
+        cipher.updateAAD(aad(dir, WireCompat.WIRE_VERSION))
+        return byteArrayOf(WireCompat.WIRE_VERSION.toByte()) + iv + cipher.doFinal(payload)
     }
 
     /**
-     * Přidružená data pro GCM: doménový štítek + směr schránky. Nešifruje se,
-     * ale je součástí autentizačního tagu - blob zapsaný pro jeden směr tedy
-     * nelze vydávat za blob směru opačného.
+     * Přidružená data pro GCM: doménový štítek, směr schránky a verze formátu.
+     * Nešifruje se, ale je součástí autentizačního tagu - blob zapsaný pro jeden
+     * směr tedy nelze vydávat za blob směru opačného a otevřený bajt verze nejde
+     * po cestě přepsat (rozbilo by to tag).
      */
-    private fun aad(dir: Int): ByteArray = "ccdir:$dir".toByteArray(Charsets.US_ASCII)
+    private fun aad(dir: Int, wire: Int): ByteArray =
+        "ccdir:$dir|w:$wire".toByteArray(Charsets.US_ASCII)
 
     /** Nejbližší koš >= potřebné velikosti; nad nejvyšší koš zaokrouhlí na jeho násobek. */
     private fun bucketFor(size: Int): Int {

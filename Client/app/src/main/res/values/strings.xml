@@ -348,6 +348,8 @@
     <string name="chat_retry_hint">Not delivered — tap to retry</string>
     <string name="chat_last_you">You: %1$s</string>
     <string name="chat_preview_none">No messages yet</string>
+    <string name="chat_peer_outdated">This contact is using an older version of the app. Their messages can\'t be read and yours won\'t reach them until they update.</string>
+    <string name="chat_peer_newer">This contact is using a newer version of the app. Update CryptoChatServer to exchange messages again.</string>
     <string name="chat_preview_photo">📷 Photo</string>
     <string name="content_desc_attach">Attach photo</string>
     <string name="content_desc_image">Photo</string>

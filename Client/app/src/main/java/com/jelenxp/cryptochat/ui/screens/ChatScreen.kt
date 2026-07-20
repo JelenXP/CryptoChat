@@ -60,6 +60,7 @@ import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.MediaTransfers
 import com.jelenxp.cryptochat.chat.RelaySync
+import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.TorController
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
@@ -101,6 +102,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
+    // Stav kompatibility formátu s protějškem (WireCompat drží Compose stav,
+    // takže se banner objeví hned, jak dorazí zpráva z jiné verze).
+    val peerCompat = WireCompat.peerState(context, id)
     val hasKey = contact?.keyBase64 != null
     val canChat = hasKey && relayUrl.isNotBlank()
 
@@ -286,6 +290,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 ChatNotice(stringResource(R.string.chat_notice_no_key))
             } else if (relayUrl.isBlank()) {
                 ChatNotice(stringResource(R.string.chat_notice_no_server))
+            } else when (peerCompat) {
+                // Rozdílný formát obálky: bez tohohle by zprávy jen tiše mizely.
+                WireCompat.Peer.OUTDATED ->
+                    ChatNotice(stringResource(R.string.chat_peer_outdated))
+                WireCompat.Peer.NEWER ->
+                    ChatNotice(stringResource(R.string.chat_peer_newer))
+                WireCompat.Peer.OK -> {}
             }
 
             if (messages.isEmpty()) {

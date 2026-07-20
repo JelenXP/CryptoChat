@@ -257,12 +257,19 @@ object RelaySync {
             fun arrived(message: ChatMessage) {
                 repo.append(contact.id, message)
                 if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
+                // Zpráva se opravdu otevřela - protějšek tedy mluví naším
+                // formátem (bajt verze sám o sobě by nestačil, mohl být poškozený).
+                WireCompat.markCompatible(context, contact.id)
                 n++
             }
 
             for (blob in blobs) {
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
                 if (!ReplayGuard.isNew(context, contact.id, blob)) continue
+                // Zprávu z jiné verze formátu nemá smysl zkoušet otevřít - jen
+                // si poznamenej, kdo je pozadu, ať to appka umí uživateli říct
+                // (dřív se takový blob tiše zahodil a "zprávy prostě nechodily").
+                if (!WireCompat.accept(context, contact.id, blob)) continue
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
                 when (val opened = ChatEnvelope.open(blob, key, dir)) {

@@ -2,6 +2,9 @@ package com.jelenxp.cryptochat.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.ReplayGuard
+import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.ContactBackup
 import com.jelenxp.cryptochat.data.ContactRepository
@@ -27,8 +30,18 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         return success
     }
 
+    /**
+     * Smaže kontakt VČETNĚ všeho, co k němu patří. Samotný záznam kontaktu
+     * nestačí - historie zpráv (i s fotkami), počítadlo nepřečtených, otisky
+     * proti replay i stav kompatibility by jinak zůstaly na disku, ačkoli
+     * uživatel čeká, že smazáním kontaktu je pryč všechno.
+     */
     fun deleteContact(id: String): Boolean {
         val success = repository.delete(id)
+        val ctx = getApplication<Application>()
+        runCatching { ChatRepository(ctx).clear(id) }
+        runCatching { ReplayGuard.clear(ctx, id) }
+        runCatching { WireCompat.clear(ctx, id) }
         refresh()
         return success
     }
