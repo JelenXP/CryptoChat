@@ -566,22 +566,31 @@ object RelayClient {
     }
 
     /** Rozbalí délkově rámované bloby: [4B big-endian délka][data]... */
-    private fun unframe(data: ByteArray): List<ByteArray> {
-        val out = ArrayList<ByteArray>()
-        var i = 0
-        while (i + 4 <= data.size) {
-            val len = ((data[i].toInt() and 0xFF) shl 24) or
-                ((data[i + 1].toInt() and 0xFF) shl 16) or
-                ((data[i + 2].toInt() and 0xFF) shl 8) or
-                (data[i + 3].toInt() and 0xFF)
-            i += 4
-            // Odečítáme, ne přičítáme: `i + len` u len blízko 2^31 přeteče,
-            // podmínka projde a copyOfRange pak vyhodí výjimku - schránka by
-            // se stala trvale nečitelnou.
-            if (len < 0 || len > data.size - i) break
-            out.add(data.copyOfRange(i, i + len))
-            i += len
-        }
-        return out
+    private fun unframe(data: ByteArray): List<ByteArray> = unframeBlobs(data)
+}
+
+/**
+ * Rozbalí délkově rámované bloby: `[4B big-endian délka][data]…`. Top-level a
+ * `internal`, aby šla otestovat bez sítě.
+ *
+ * Klíčový guard `len < 0 || len > zbytek` chrání před přetečením: u délky blízko
+ * 2^31 by `i + len` přeteklo, podmínka `i + len <= size` by prošla a `copyOfRange`
+ * by vyhodil výjimku - schránka by se stala TRVALE nečitelnou. Proto se porovnává
+ * odečítáním (`len > data.size - i`), ne přičítáním. Neúplný poslední rámec
+ * (kratší než hlásí délka) se zahodí - vrátí se jen celé bloby.
+ */
+internal fun unframeBlobs(data: ByteArray): List<ByteArray> {
+    val out = ArrayList<ByteArray>()
+    var i = 0
+    while (i + 4 <= data.size) {
+        val len = ((data[i].toInt() and 0xFF) shl 24) or
+            ((data[i + 1].toInt() and 0xFF) shl 16) or
+            ((data[i + 2].toInt() and 0xFF) shl 8) or
+            (data[i + 3].toInt() and 0xFF)
+        i += 4
+        if (len < 0 || len > data.size - i) break
+        out.add(data.copyOfRange(i, i + len))
+        i += len
     }
+    return out
 }
