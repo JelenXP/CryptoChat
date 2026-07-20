@@ -160,11 +160,12 @@ object RelaySync {
         wireRef: String,
         emoji: String?
     ): ReactionSend {
-        // Podpora se ověřuje PŘED uložením. Kdyby se reakce uložila lokálně a
-        // odeslat nešla, viděl by ji jen její autor a rozdíl mezi telefony by
-        // se už nikdy nesrovnal - odesílací fronta pro reakce neexistuje.
-        if (!WireCompat.peerKnownSupports(context, contact.id, WireCompat.MINOR_REACTIONS)) {
-            DiagnosticsLog.log(TAG, "protějšek reakce neumí (nebo verzi neznáme), neposílám")
+        // Stačí, když protějšek umí řídicí zprávu bezpečně ZAHODIT (minor >= 2),
+        // ne až ji zobrazit (minor 3). v1.1 reakci tiše zahodí, takže mu ji
+        // klidně pošleme - u sebe ji vidíme, on ji jen ignoruje. Blokujeme jen
+        // v0.1 (minor 1), kde by naskočila prázdná bublina, a neznámou verzi.
+        if (!WireCompat.peerKnownSupports(context, contact.id, WireCompat.MINOR_CONTROL_SAFE)) {
+            DiagnosticsLog.log(TAG, "protějšek řídicí zprávu neumí zahodit (v0.1/neznámý), neposílám")
             return ReactionSend.PEER_UNSUPPORTED
         }
         val key = contact.keyBase64

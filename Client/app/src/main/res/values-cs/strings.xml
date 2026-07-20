@@ -367,6 +367,7 @@
 
     <!-- Akce se zprávou (dlouhý stisk) -->
     <string name="chat_selection_title">1 vybráno</string>
+    <string name="chat_selection_count">Vybráno: %1$d</string>
     <string name="chat_action_reply">Odpovědět</string>
     <string name="chat_action_copy">Kopírovat</string>
     <string name="chat_action_delete">Smazat u mě</string>

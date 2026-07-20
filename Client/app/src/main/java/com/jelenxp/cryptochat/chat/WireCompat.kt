@@ -104,12 +104,23 @@ object WireCompat {
      */
     const val WIRE_MINOR: Int = 3
 
-    /**
-     * Minor, od kterého protějšek umí **reakce**. Posílat je někomu staršímu
-     * nemá smysl: minor 2 je zahodí (zná řídicí zprávy) a minor 1 by ukázal
-     * prázdnou bublinu (o traileru neví). Viz [peerKnownSupports].
-     */
+    /** Minor, od kterého protějšek umí reakce ZOBRAZIT (v1.2). */
     const val MINOR_REACTIONS = 3
+
+    /**
+     * Minor, od kterého je BEZPEČNÉ poslat protějšku řídicí zprávu (reakci),
+     * i když ji neumí zobrazit.
+     *
+     * Od minoru 2 (v1.1) protějšek zná rozšiřující trailer a řídicí zprávy:
+     * neznámou řídicí zprávu s prázdným tělem **tiše zahodí** (viz [ChatEnvelope]
+     * a jeho `Result.Unsupported`). Poslat mu reakci je tedy bez následků -
+     * u sebe ji vidím, on ji jen zahodí. **Proto se reakce gatují právě tímhle
+     * minorem, ne [MINOR_REACTIONS].**
+     *
+     * Minor 1 (v1.0) o traileru neví a četl by jen `len` bajtů dat - u reakce 0,
+     * takže by mu naskočila prázdná bublina. Tam se reakce posílat NESMÍ.
+     */
+    const val MINOR_CONTROL_SAFE = 2
 
     /** Jak si stojí protějšek oproti nám. */
     enum class Peer {

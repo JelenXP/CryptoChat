@@ -367,6 +367,7 @@
 
     <!-- Message actions (long press) -->
     <string name="chat_selection_title">1 selected</string>
+    <string name="chat_selection_count">%1$d selected</string>
     <string name="chat_action_reply">Reply</string>
     <string name="chat_action_copy">Copy</string>
     <string name="chat_action_delete">Delete for me</string>

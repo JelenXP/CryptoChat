@@ -120,11 +120,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
 
-    // Vybraná zpráva (dlouhý stisk) a zpráva, na kterou se odpovídá. Drží se
-    // podle `id`, ne podle indexu - LazyColumn položky recykluje.
-    var selectedId by remember(id) { mutableStateOf<String?>(null) }
+    // Vybrané zprávy (dlouhý stisk vybere, klepnutí ve výběru přepíná) a zpráva,
+    // na kterou se odpovídá. Drží se podle `id`, ne podle indexu - LazyColumn
+    // položky recykluje.
+    var selectedIds by remember(id) { mutableStateOf<Set<String>>(emptySet()) }
     var replyTo by remember(id) { mutableStateOf<ChatMessage?>(null) }
-    var pendingDelete by remember(id) { mutableStateOf<ChatMessage?>(null) }
+    var pendingDelete by remember(id) { mutableStateOf<List<ChatMessage>>(emptyList()) }
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
@@ -211,7 +212,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     fun react(message: ChatMessage, emoji: String) {
         val ref = message.wireRef ?: return
         if (contact == null) return
-        selectedId = null
+        selectedIds = emptySet()
         scope.launch {
             val next = ChatScreenLogic.toggledReaction(
                 message.reactionOf(ChatMessage.REACTOR_ME), emoji
@@ -228,9 +229,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         }
     }
 
-    fun deleteForMe(message: ChatMessage) {
+    fun deleteForMe(toDelete: List<ChatMessage>) {
         scope.launch {
-            withContext(Dispatchers.IO) { repo.deleteMessage(context, id, message.id) }
+            withContext(Dispatchers.IO) {
+                toDelete.forEach { repo.deleteMessage(context, id, it.id) }
+            }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
@@ -323,23 +326,25 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // odpovídalo na zprávu, která už není. Rozhodnutí je v ChatScreenLogic, ať
     // jde otestovat (nález v1.2-23).
     LaunchedEffect(messages) {
-        selectedId = ChatScreenLogic.survivingId(messages, selectedId)
+        selectedIds = ChatScreenLogic.survivingIds(messages, selectedIds)
         replyTo = ChatScreenLogic.survivingReply(messages, replyTo)
     }
 
     // Systémové zpět nejdřív zavře výběr / rozepsanou odpověď, teprve pak
     // opustí konverzaci - jinak by uživatel omylem vyskočil z chatu.
-    BackHandler(enabled = selectedId != null) { selectedId = null }
-    BackHandler(enabled = selectedId == null && replyTo != null) { replyTo = null }
+    BackHandler(enabled = selectedIds.isNotEmpty()) { selectedIds = emptySet() }
+    BackHandler(enabled = selectedIds.isEmpty() && replyTo != null) { replyTo = null }
 
     Scaffold(
         topBar = {
-            if (selectedId != null) {
-                val selected = messages.firstOrNull { it.id == selectedId }
+            if (selectedIds.isNotEmpty()) {
+                val selectedMsgs = messages.filter { it.id in selectedIds }
+                val single = selectedMsgs.singleOrNull()
+                val copyable = ChatScreenLogic.copyText(messages, selectedIds)
                 TopAppBar(
-                    title = { Text(stringResource(R.string.chat_selection_title)) },
+                    title = { Text(stringResource(R.string.chat_selection_count, selectedIds.size)) },
                     navigationIcon = {
-                        IconButton(onClick = { selectedId = null }) {
+                        IconButton(onClick = { selectedIds = emptySet() }) {
                             Icon(
                                 Icons.Default.Close,
                                 contentDescription = stringResource(R.string.content_desc_clear_selection)
@@ -347,33 +352,36 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         }
                     },
                     actions = {
-                        if (selected != null) {
-                            if (canChat && selected.wireRef != null) {
-                                IconButton(onClick = { replyTo = selected; selectedId = null }) {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.Reply,
-                                        contentDescription = stringResource(R.string.chat_action_reply)
-                                    )
-                                }
-                            }
-                            if (selected.text.isNotBlank()) {
-                                IconButton(onClick = {
-                                    clipboard.setText(AnnotatedString(selected.text))
-                                    selectedId = null
-                                    Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
-                                }) {
-                                    Icon(
-                                        Icons.Default.ContentCopy,
-                                        contentDescription = stringResource(R.string.chat_action_copy)
-                                    )
-                                }
-                            }
-                            IconButton(onClick = { pendingDelete = selected; selectedId = null }) {
+                        // Odpověď a reakce dávají smysl jen u JEDNÉ zprávy.
+                        if (single != null && canChat && single.wireRef != null) {
+                            IconButton(onClick = { replyTo = single; selectedIds = emptySet() }) {
                                 Icon(
-                                    Icons.Default.DeleteOutline,
-                                    contentDescription = stringResource(R.string.chat_action_delete)
+                                    Icons.AutoMirrored.Filled.Reply,
+                                    contentDescription = stringResource(R.string.chat_action_reply)
                                 )
                             }
+                        }
+                        // Kopírování a mazání jdou i pro víc zpráv naráz.
+                        if (copyable.isNotBlank()) {
+                            IconButton(onClick = {
+                                clipboard.setText(AnnotatedString(copyable))
+                                selectedIds = emptySet()
+                                Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = stringResource(R.string.chat_action_copy)
+                                )
+                            }
+                        }
+                        IconButton(onClick = {
+                            pendingDelete = selectedMsgs
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(
+                                Icons.Default.DeleteOutline,
+                                contentDescription = stringResource(R.string.chat_action_delete)
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -466,9 +474,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             quoted = quote.message,
                             quotedMissing = quote.missing,
                             peerName = contact?.name.orEmpty(),
-                            selected = selectedId == m.id,
+                            selected = m.id in selectedIds,
+                            // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
+                            showReactionPicker = selectedIds == setOf(m.id),
                             canReact = canChat && m.wireRef != null,
-                            onSelect = { selectedId = m.id },
+                            selectionMode = selectedIds.isNotEmpty(),
+                            onSelect = { selectedIds = selectedIds + m.id },
+                            onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
                             onReact = { emoji -> react(m, emoji) },
                             onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
                             onRetry = { retry(m) }
@@ -545,21 +557,22 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     // Mazání se potvrzuje: je nevratné a u přijaté zprávy ji relay už smazal,
     // takže se nedá získat zpátky.
-    pendingDelete?.let { target ->
+    if (pendingDelete.isNotEmpty()) {
+        val toDelete = pendingDelete
         val deletedLabel = stringResource(R.string.chat_deleted)
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDelete = emptyList() },
             title = { Text(stringResource(R.string.chat_delete_title)) },
             text = { Text(stringResource(R.string.chat_delete_body)) },
             confirmButton = {
                 TextButton(onClick = {
-                    pendingDelete = null
-                    deleteForMe(target)
+                    pendingDelete = emptyList()
+                    deleteForMe(toDelete)
                     Toast.makeText(context, deletedLabel, Toast.LENGTH_SHORT).show()
                 }) { Text(stringResource(R.string.btn_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) {
+                TextButton(onClick = { pendingDelete = emptyList() }) {
                     Text(stringResource(R.string.btn_cancel))
                 }
             }
@@ -585,8 +598,11 @@ private fun MessageRow(
     quotedMissing: Boolean,
     peerName: String,
     selected: Boolean,
+    showReactionPicker: Boolean,
     canReact: Boolean,
+    selectionMode: Boolean,
     onSelect: () -> Unit,
+    onTapInSelection: () -> Unit,
     onReact: (String) -> Unit,
     onReplySwipe: () -> Unit,
     onRetry: () -> Unit
@@ -615,7 +631,7 @@ private fun MessageRow(
             )
             .padding(vertical = 2.dp)
     ) {
-        if (selected && canReact) {
+        if (showReactionPicker && canReact) {
             ReactionPicker(
                 mine = message.reactionOf(ChatMessage.REACTOR_ME),
                 onPick = onReact
@@ -663,7 +679,9 @@ private fun MessageRow(
                 onLongPress = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     onSelect()
-                }
+                },
+                // Ve výběrovém režimu klepnutí přidává/odebírá zprávu z výběru.
+                onTap = if (selectionMode) onTapInSelection else null
             )
         }
     }
@@ -858,7 +876,8 @@ private fun MessageBubble(
     quotedMissing: Boolean = false,
     peerName: String = "",
     onRetry: () -> Unit,
-    onLongPress: (() -> Unit)? = null
+    onLongPress: (() -> Unit)? = null,
+    onTap: (() -> Unit)? = null
 ) {
     val outgoing = message.outgoing
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
@@ -880,14 +899,17 @@ private fun MessageBubble(
                 .widthIn(max = 300.dp)
                 .clip(shape)
                 .background(bubbleColor)
-                // Klikací (opakovat) jen u ODCHOZÍ neúspěšné zprávy - příchozí
-                // se opakovat nedá (viz ChatScreen.retry). Dlouhý stisk otevírá
-                // akce nad zprávou vždycky.
+                // Dlouhý stisk otevírá výběr. Klepnutí: ve výběru přepíná
+                // označení ([onTap]), jinak jen opakuje ODCHOZÍ neúspěšnou zprávu
+                // (příchozí se opakovat nedá, viz ChatScreen.retry).
                 .then(
                     if (onLongPress != null) Modifier.combinedClickable(
                         onLongClick = onLongPress,
                         onClick = {
-                            if (message.status == ChatMessage.Status.FAILED && outgoing) onRetry()
+                            when {
+                                onTap != null -> onTap()
+                                message.status == ChatMessage.Status.FAILED && outgoing -> onRetry()
+                            }
                         }
                     ) else if (message.status == ChatMessage.Status.FAILED && outgoing)
                         Modifier.clickable { onRetry() } else Modifier
