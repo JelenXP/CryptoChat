@@ -108,11 +108,6 @@ object RelaySync {
         )
 
     /**
-     * Výsledek jednoho pollu: kolik zpráv dorazilo a jestli spojení selhalo.
-     * Selhání hlásíme ven, aby volající mohl zpomalit (backoff) místo toho, aby
-     * při nedostupném serveru donekonečna stavěl Tor okruhy a pálil baterii.
-     */
-    /**
      * Výsledek jednoho pollu. [failed] = má se zpomalit (síťová I lokální chyba,
      * hammering nemá smysl ani u disku). [reachable] = server SKUTEČNĚ odpověděl
      * (get prošel) - odlišuje síťový výpadek od lokálního selhání úložiště, aby
@@ -391,6 +386,10 @@ object RelaySync {
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
         // do `failed`, aby volající mohl zpomalit.
         fun fetch(e: Long, waitSeconds: Int): Int {
+            // Reachable se vztahuje k TÉHLE operaci get (výsledek se vrací podle
+            // ní). Reset na začátku, ať prev-epoch get, který uspěl, nemaskuje
+            // následné síťové selhání aktuální epochy.
+            reachable = false
             val mailbox = RelayCrypto.mailboxId(key, dir, e)
             val fetched = try {
                 transport.get(baseUrl, mailbox, waitSeconds)

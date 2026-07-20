@@ -156,35 +156,43 @@ object ContactBackup {
                 backupId
             }
 
-            // Fotku ulož ze zálohovaných bajtů a získej novou cestu (na tomto zařízení).
-            var avatarPath: String? = null
-            if (obj.has("avatar")) {
-                runCatching {
-                    val bytes = decoder.decode(obj.getString("avatar"))
-                    avatarPath = AvatarStore.saveAvatarBytes(context, id, bytes)
-                }
-            }
+            // Fotku ze zálohy zatím jen DEKÓDUJ, NEUKLÁDEJ. `saveAvatarBytes` maže
+            // stávající fotku před zápisem nové, a to nesmí proběhnout dřív, než je
+            // jisté, že kontakt uložíme - jinak by neúspěch (nebo záloha bez fotky)
+            // připravil EXISTUJÍCÍ kontakt o jeho současnou fotku. Při obnově přes
+            // stávající kontakt proto zatím zachovej jeho dosavadní fotku.
+            val avatarBytes: ByteArray? = if (obj.has("avatar")) {
+                runCatching { decoder.decode(obj.getString("avatar")) }.getOrNull()
+            } else null
+            val keptAvatar = existing[id]?.takeIf { it.id == id }?.avatarPath
 
             val contact = Contact(
                 id = id,
                 name = obj.optString("name", ""),
                 keyBase64 = importedKey,
-                avatarPath = avatarPath,
+                avatarPath = keptAvatar,
                 // optBoolean (ne getBoolean): typově vadné pole nesmí shodit celý import.
                 initiator = if (obj.has("initiator")) obj.optBoolean("initiator") else null
             )
             // Když se kontakt neuloží (přechodné selhání Keystore), NEobnovuj pod
             // jeho id historii ani nepřečtené - jinak by na disku zůstala osiřelá
             // data bez kontaktu (a při pozdějším znovuzaložení téhož id by se
-            // „vzkřísila"). Obnova jen ve větvi, kde uložení uspělo.
-            if (!contactRepo.addOrUpdate(contact)) {
-                // Fotka se uložila na disk PŘED uložením kontaktu. Když kontakt
-                // neuloží, ukliď ji - jinak zůstane osiřelý JPEG bez kontaktu.
-                avatarPath?.let { runCatching { File(it).delete() } }
-                continue
-            }
+            // „vzkřísila"). Obnova jen ve větvi, kde uložení uspělo. Fotka se
+            // zatím netkla, takže existující kontakt o ni při selhání nepřijde.
+            if (!contactRepo.addOrUpdate(contact)) continue
             count++
-            existing[id] = contact   // aby další záznam téže zálohy viděl kolizi
+
+            // Kontakt je uložený - teprve TEĎ je bezpečné nahradit fotku (smaže
+            // starou a zapíše novou). Když záloha fotku nenese, ponechá se stávající.
+            var stored = contact
+            if (avatarBytes != null) {
+                val newPath = AvatarStore.saveAvatarBytes(context, id, avatarBytes)
+                if (newPath != null) {
+                    stored = contact.copy(avatarPath = newPath)
+                    contactRepo.addOrUpdate(stored)
+                }
+            }
+            existing[id] = stored   // aby další záznam téže zálohy viděl kolizi
 
             // Historie chatu.
             if (obj.has("messages")) {
