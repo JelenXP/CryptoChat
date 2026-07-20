@@ -85,14 +85,19 @@ object BlobQuarantine {
             .take(8).joinToString("") { "%02x".format(it) }
 
     /**
-     * Vybere odložené bloby a z karantény je ODSTRANÍ. Volající je pustí znovu
-     * normálním zpracováním; když zase selžou, prostě se uloží zpátky přes
-     * [save]. Příliš staré se zahodí.
+     * Vybere odložené bloby k dalšímu pokusu. Karanténní soubor je JEDINÁ kopie
+     * (relay blob po GETu smazal), takže se tu **NEMAŽE** - jen se PŘEJMENUJE na
+     * konec fronty (nový `sortKey` = round-robin) a na disku zůstane, dokud ho
+     * volající po úspěšném zpracování nesmaže přes [discard]. Kdyby se mazal už
+     * tady, pád procesu mezi smazáním a zpracováním by blob nenávratně ztratil.
+     * Při dalším selhání zůstane ležet sám od sebe (a case-save je no-op).
+     * Příliš staré se zahodí.
      */
     fun takeAll(context: Context, contactId: String): List<Pending> {
         val out = ArrayList<Pending>()
         try {
-            val files = dir(context, contactId).listFiles() ?: return out
+            val d = dir(context, contactId)
+            val files = d.listFiles() ?: return out
             // Řazení podle jména = podle `sortKey` (prvního pole): nejdřív ty, co
             // od posledního pokusu čekají nejdéle. Round-robin, žádné hladovění.
             for (f in files.sortedBy { it.name }) {
@@ -105,8 +110,13 @@ object BlobQuarantine {
                     // Po dávkách: načíst všechno najednou by u velkých blobů
                     // znamenalo OutOfMemoryError ve foreground service.
                     if (out.size >= MAX_RETRY_BATCH) break
-                    out.add(Pending(f.readBytes(), firstSeen))
-                    f.delete()
+                    val bytes = f.readBytes()
+                    // Přesun na konec fronty (nový sortKey), aby se i bloby za
+                    // prvními pěti dostaly na řadu. firstSeen i otisk zůstávají.
+                    val fp = f.name.removeSuffix(".bin").substringAfterLast('_')
+                    val moved = File(d, "${System.currentTimeMillis()}_${firstSeen}_$fp.bin")
+                    val token = if (moved.name != f.name && f.renameTo(moved)) moved.name else f.name
+                    out.add(Pending(bytes, firstSeen, token))
                 } catch (e: Exception) {
                     Log.w(TAG, "Načtení odloženého blobu selhalo (${e.javaClass.simpleName})")
                 }
@@ -118,8 +128,25 @@ object BlobQuarantine {
         return out
     }
 
-    /** Odložený blob i s časem, kdy byl odložen poprvé. */
-    data class Pending(val blob: ByteArray, val firstSeenAt: Long)
+    /**
+     * Smaže konkrétní odložený blob z karantény - volá se AŽ po jeho úspěšném
+     * (nebo trvale marném) zpracování. [token] je název souboru z [Pending].
+     */
+    fun discard(context: Context, contactId: String, token: String) {
+        try {
+            val f = File(dir(context, contactId), File(token).name)  // .name = bez cesty
+            if (f.isFile) f.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "Smazání odloženého blobu selhalo (${e.javaClass.simpleName})")
+        }
+    }
+
+    /**
+     * Odložený blob, čas prvního odložení a [token] (název souboru v karanténě,
+     * null u čerstvého blobu ze sítě). Po úspěšném zpracování se blob s neprázdným
+     * tokenem smaže přes [discard].
+     */
+    data class Pending(val blob: ByteArray, val firstSeenAt: Long, val token: String? = null)
 
     /**
      * Čas prvního odložení z názvu souboru (fallback na čas úpravy). Nový formát

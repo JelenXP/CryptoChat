@@ -37,6 +37,16 @@ object CryptoManager {
     private const val FLAG_RAW: Byte = 0
     private const val FLAG_DEFLATE: Byte = 1
 
+    /**
+     * Strop na výstup [inflate] - obrana proti „decompression bomb". Data ke
+     * dešifrování/rozbalení řídí protějšek (párovací handshake přes nedůvěryhodný
+     * relay i vložený text), takže malý zkomprimovaný blob by bez stropu mohl
+     * nafouknout na gigabajty a shodit appku `OutOfMemoryError` (což NENÍ
+     * `Exception`, takže by ho nechytil ani `catch (e: Exception)`). Legitimní
+     * obsah (text, handshake) je hluboko pod tímhle limitem.
+     */
+    internal const val MAX_INFLATED_BYTES = 16 * 1024 * 1024
+
     /** Vygeneruje nový náhodný AES-256 klíč. */
     fun generateKey(): SecretKey {
         val generator = KeyGenerator.getInstance("AES")
@@ -137,15 +147,24 @@ object CryptoManager {
         return output.toByteArray()
     }
 
-    /** Raw Inflate (protějšek [deflate]). */
+    /**
+     * Raw Inflate (protějšek [deflate]). Výstup je stropovaný [MAX_INFLATED_BYTES]
+     * - jinak by zkomprimovaný blob od protějšku mohl nafouknout na gigabajty
+     * (decompression bomb) a shodit appku. Překročení = zachytitelná výjimka,
+     * ne `OutOfMemoryError`.
+     */
     private fun inflate(input: ByteArray): ByteArray {
         val inflater = Inflater(true)
         inflater.setInput(input)
-        val output = ByteArrayOutputStream(maxOf(32, input.size * 2))
+        // Předalokace jen podle vstupu, ať sám odhad není vektor na paměť.
+        val output = ByteArrayOutputStream(maxOf(32, minOf(input.size * 2, 64 * 1024)))
         val buffer = ByteArray(1024)
+        var total = 0
         while (!inflater.finished()) {
             val n = inflater.inflate(buffer)
             if (n == 0) break
+            total += n
+            require(total <= MAX_INFLATED_BYTES) { "Rozbalený obsah je přes limit." }
             output.write(buffer, 0, n)
         }
         inflater.end()

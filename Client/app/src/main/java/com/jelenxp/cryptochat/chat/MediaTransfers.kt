@@ -135,41 +135,67 @@ object MediaTransfers {
         meta(context, fileIdHex)?.optString("name")?.takeIf { it.isNotEmpty() }
 
     /**
-     * Složí kousky do výsledného souboru v `files/chat_media/`, uklidí dočasné
-     * a vrátí cestu (nebo null při chybě / když ještě nejsou všechny).
+     * Výsledek [assemble]. Tři stavy se NESMÍ slévat do `null` - volající se podle
+     * nich chová jinak:
+     *  - [Done] slož se povedl → zapiš RECEIVED a AŽ POTOM ukliď kousky,
+     *  - [Corrupt] obsah je prokazatelně vadný (velikost nesedí manifestu),
+     *    opakování nepomůže → FAILED a potvrdit,
+     *  - [Retry] přechodná chyba (plný disk, chybějící kousek, nečitelná metadata)
+     *    → NEPOTVRZOVAT, kousky nechat ležet a zkusit znovu.
      */
-    fun assemble(context: Context, fileIdHex: String): String? {
-        return try {
-            val d = dir(context, fileIdHex)
-            val meta = meta(context, fileIdHex) ?: return null
-            val total = meta.optInt("chunks", 0)
-            if (total <= 0 || receivedCount(context, fileIdHex) < total) return null
+    sealed interface AssembleResult {
+        data class Done(val path: String) : AssembleResult
+        object Corrupt : AssembleResult
+        object Retry : AssembleResult
+    }
 
-            val outDir = File(context.filesDir, OUT_DIR).apply { mkdirs() }
-            val safeName = safeFileName(meta.optString("name", "soubor"))
-            val out = File(outDir, "${fileIdHex.take(8)}_$safeName")
+    /**
+     * Složí kousky do výsledného souboru v `files/chat_media/` a vrátí výsledek.
+     *
+     * **Úklid dočasných kousků TAHLE funkce NEDĚLÁ** (dřív ho dělala hned po
+     * složení). Volající je smaže [cleanup] AŽ po úspěšném zápisu stavu do
+     * historie - jinak by selhání zápisu smazalo kousky dřív, než je dokončení
+     * trvale zaznamenané, a přenos by navždy uvázl ve stavu „přijímá se".
+     */
+    fun assemble(context: Context, fileIdHex: String): AssembleResult {
+        val d = dir(context, fileIdHex)
+        val meta = meta(context, fileIdHex) ?: return AssembleResult.Retry
+        val total = meta.optInt("chunks", 0)
+        if (total <= 0 || receivedCount(context, fileIdHex) < total) return AssembleResult.Retry
+
+        val outDir = File(context.filesDir, OUT_DIR).apply { mkdirs() }
+        val safeName = safeFileName(meta.optString("name", "soubor"))
+        val out = File(outDir, "${fileIdHex.take(8)}_$safeName")
+        try {
             out.outputStream().use { sink ->
                 for (i in 0 until total) {
                     val part = File(d, i.toString())
-                    if (!part.isFile) return null
+                    if (!part.isFile) {
+                        // Kousek zmizel (nečekané) - neúplný výstup zahoď a zkus
+                        // znovu, kousky nemaž.
+                        out.delete()
+                        return AssembleResult.Retry
+                    }
                     part.inputStream().use { it.copyTo(sink) }
                 }
             }
-            // Kontrola velikosti proti manifestu: zkrácený/poškozený kousek by
-            // jinak vyrobil soubor špatné délky a stav by se přepnul na „doručeno".
-            // Radši ho zahoď (→ FAILED), ať uživatel neotevře useknutý soubor.
-            val expected = meta.optLong("size", -1L)
-            if (expected >= 0 && out.length() != expected) {
-                Log.e(TAG, "Složený soubor má jinou velikost, než hlásí manifest")
-                out.delete()
-                return null
-            }
-            cleanup(context, fileIdHex)
-            out.absolutePath
         } catch (e: Exception) {
+            // Přechodná chyba zápisu (typicky plný disk). Neúplný výstup smaž,
+            // kousky nech ležet - další pokus složí znovu. NEPOTVRZOVAT.
             Log.e(TAG, "Složení souboru selhalo (${e.javaClass.simpleName})")
-            null
+            out.delete()
+            return AssembleResult.Retry
         }
+        // Kontrola velikosti proti manifestu: zkrácený/poškozený kousek by jinak
+        // vyrobil soubor špatné délky. Kousky jsou GCM-ověřené, takže neshoda =
+        // trvale vadný obsah (opakování nepomůže) → Corrupt.
+        val expected = meta.optLong("size", -1L)
+        if (expected >= 0 && out.length() != expected) {
+            Log.e(TAG, "Složený soubor má jinou velikost, než hlásí manifest")
+            out.delete()
+            return AssembleResult.Corrupt
+        }
+        return AssembleResult.Done(out.absolutePath)
     }
 
     /** Smaže dočasné kousky daného přenosu. */

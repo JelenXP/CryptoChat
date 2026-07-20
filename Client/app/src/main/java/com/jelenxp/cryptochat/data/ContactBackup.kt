@@ -1,6 +1,7 @@
 package com.jelenxp.cryptochat.data
 
 import android.content.Context
+import android.util.Log
 import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
@@ -25,6 +26,7 @@ import java.util.Base64
  */
 object ContactBackup {
 
+    private const val TAG = "ContactBackup"
     private const val VERSION = 2
 
     /**
@@ -126,9 +128,13 @@ object ContactBackup {
         // Kontakty, které už v appce jsou - kvůli kontrole kolizí id níže.
         val existing = contactRepo.getContacts().associateBy { it.id }
 
-        for (i in 0 until array.length()) {
+        for (i in 0 until array.length()) try {
             val obj = array.getJSONObject(i)
-            val backupId = obj.getString("id")
+            // id jde přímo do navigační trasy (`chat/$id`…). Cizí/podvržená záloha
+            // s id obsahujícím `/`, `?`, `#`… by trasu rozbila, proto se přijme jen
+            // jednoduchý segment, jinak se vygeneruje nové.
+            val rawId = obj.optString("id")
+            val backupId = if (isSafeRouteId(rawId)) rawId else java.util.UUID.randomUUID().toString()
             val importedKey = if (obj.has("key")) obj.getString("key") else null
 
             // OCHRANA: záloha nesmí tiše přepsat klíč kontaktu, který už v appce
@@ -162,7 +168,8 @@ object ContactBackup {
                 name = obj.optString("name", ""),
                 keyBase64 = importedKey,
                 avatarPath = avatarPath,
-                initiator = if (obj.has("initiator")) obj.getBoolean("initiator") else null
+                // optBoolean (ne getBoolean): typově vadné pole nesmí shodit celý import.
+                initiator = if (obj.has("initiator")) obj.optBoolean("initiator") else null
             )
             if (contactRepo.addOrUpdate(contact)) count++
 
@@ -183,13 +190,20 @@ object ContactBackup {
                             mediaPath = ChatMediaStore.save(context, decoder.decode(mo.getString("img")))
                         }
                     }
+                    // Soubory (ne fotky) se do zálohy neukládají s bajty (velikost),
+                    // takže po obnově nemají obsah. Bez tohohle by taková zpráva
+                    // vypadala jako doručený soubor, ale nešla by otevřít - proto
+                    // ji označíme jako nedostupnou (FAILED).
+                    val effectiveStatus =
+                        if (kind == ChatMessage.Kind.FILE && mediaPath == null) ChatMessage.Status.FAILED
+                        else status
                     messages.add(
                         ChatMessage(
                             id = mo.optString("id"),
                             outgoing = mo.optBoolean("out"),
                             text = mo.optString("txt"),
                             timestamp = mo.optLong("ts"),
-                            status = status,
+                            status = effectiveStatus,
                             kind = kind,
                             mediaPath = mediaPath,
                             mimeType = if (mo.has("mime")) mo.optString("mime") else null,
@@ -199,12 +213,22 @@ object ContactBackup {
                         )
                     )
                 }
-                chatRepo.restore(id, messages)
+                // Sloučit (ne přepsat): obnova nesmí zahodit zprávy přijaté PO
+                // vytvoření zálohy u kontaktu, který v appce už je.
+                chatRepo.restoreMerging(id, messages)
             }
             if (obj.has("unread")) chatRepo.setUnread(id, obj.optInt("unread", 0))
+        } catch (e: Exception) {
+            // Jeden vadný záznam v záloze nesmí přerušit celý import (zbytek
+            // kontaktů má pořád dorazit). Přeskoč a pokračuj.
+            Log.w(TAG, "Přeskakuji poškozený záznam zálohy na indexu $i (${e.javaClass.simpleName})")
         }
         return count
     }
+
+    /** Přijme jen jednoduchý segment do navigační trasy (UUID i starší formáty id). */
+    private fun isSafeRouteId(id: String): Boolean =
+        id.isNotEmpty() && id.length <= 64 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
     /**
      * Reakce ze zálohy. Záloha může přijít odkudkoli, takže se poškozený záznam

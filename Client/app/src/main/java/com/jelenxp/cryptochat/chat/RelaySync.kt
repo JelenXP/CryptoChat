@@ -418,6 +418,14 @@ object RelaySync {
                     ChatRepository.AppendResult.FAILED -> {
                         android.util.Log.e("RelaySync", "Zprávu se nepodařilo uložit do historie")
                         DiagnosticsLog.error(TAG, "zápis zprávy do historie selhal")
+                        // Fotka se uložila na disk před zápisem do historie. Blob
+                        // se nepotvrdí a dorazí znovu - a další pokus uloží NOVÝ
+                        // soubor. Bez smazání tohohle by se při každém neúspěšném
+                        // pokusu hromadila osiřelá kopie (až ~1,9 MB). Smaž ji;
+                        // opakované doručení fotku uloží čistě.
+                        if (message.kind == ChatMessage.Kind.IMAGE) {
+                            message.mediaPath?.let { runCatching { File(it).delete() } }
+                        }
                         allSafe = false
                     }
                     ChatRepository.AppendResult.DUPLICATE -> {
@@ -459,7 +467,12 @@ object RelaySync {
             for (item in batch) try {
                 val blob = item.blob
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
-                if (!ReplayGuard.isNew(context, contact.id, blob)) continue
+                if (!ReplayGuard.isNew(context, contact.id, blob)) {
+                    // Už zpracovaný karanténní blob z karantény ukliď, ať se
+                    // nezkouší dokola až do vypršení.
+                    item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                    continue
+                }
                 // Zprávu s jiným MAJOR nemá smysl zkoušet otevřít - jen si
                 // poznamenej, kdo je pozadu, ať to appka umí uživateli říct
                 // (dřív se takový blob tiše zahodil a "zprávy prostě nechodily").
@@ -504,6 +517,7 @@ object RelaySync {
                             "(minor protějšku ${result.senderMinor}), zahazuji"
                     )
                     ReplayGuard.remember(context, contact.id, blob)
+                    item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
                     continue
                 }
                 val ok = result as? ChatEnvelope.Result.Ok
@@ -638,17 +652,7 @@ object RelaySync {
                         // Kousky mohly dorazit dřív než manifest (zaparkované) -
                         // pak je soubor hotový už teď a nikdo by ho nesložil.
                         if (MediaTransfers.receivedCount(context, idHex) >= opened.totalChunks) {
-                            val path = MediaTransfers.assemble(context, idHex)
-                            MediaTransfers.clearProgress(idHex)
-                            if (!repo.updateMedia(
-                                    contact.id, idHex, path,
-                                    if (path != null) ChatMessage.Status.RECEIVED
-                                    else ChatMessage.Status.FAILED
-                                )
-                            ) {
-                                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
-                                allSafe = false
-                            }
+                            if (!finishFile(context, repo, contact.id, idHex)) allSafe = false
                         }
                     }
 
@@ -673,17 +677,7 @@ object RelaySync {
                             )
                         }
                         if (complete) {
-                            val path = MediaTransfers.assemble(context, idHex)
-                            MediaTransfers.clearProgress(idHex)
-                            if (!repo.updateMedia(
-                                    contact.id, idHex, path,
-                                    if (path != null) ChatMessage.Status.RECEIVED
-                                    else ChatMessage.Status.FAILED
-                                )
-                            ) {
-                                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
-                                allSafe = false
-                            }
+                            if (!finishFile(context, repo, contact.id, idHex)) allSafe = false
                         }
                     }
 
@@ -710,6 +704,9 @@ object RelaySync {
                 // ať ho příště nezpracujeme podruhé.
                 if (ok != null && allSafe == safeBefore) {
                     ReplayGuard.remember(context, contact.id, blob)
+                    // Úspěšně zpracovaný karanténní blob teď z karantény ukliď -
+                    // do teď tam ležel jako jediná kopie (viz BlobQuarantine.takeAll).
+                    item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
                 }
             } catch (ex: Throwable) {
                 // Throwable: dešifrování velkého blobu může hodit OutOfMemoryError,
@@ -757,6 +754,49 @@ object RelaySync {
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,
         // takže chodí skoro okamžitě a mezitím se nic nebudí.
         return PollResult(fetch(epoch, waitSeconds = LONGPOLL_SECONDS), failed)
+    }
+
+    /**
+     * Dokončí příjem souboru po posledním kousku. Vrací **true**, když se dávka
+     * SMÍ potvrdit (dokončení trvale zapsané, nebo obsah trvale vadný), a
+     * **false**, když se má zkusit znovu (přechodná chyba složení, nebo selhání
+     * zápisu stavu) - volající pak nastaví `allSafe = false`, dávku nepotvrdí a
+     * kousky zůstanou ležet pro další pokus.
+     *
+     * Úklid dočasných kousků se dělá AŽ po ÚSPĚŠNÉM zápisu stavu do historie -
+     * jinak by selhání zápisu smazalo kousky dřív, než je dokončení zaznamenané,
+     * a přenos by navždy uvázl ve stavu „přijímá se".
+     */
+    private fun finishFile(
+        context: Context,
+        repo: ChatRepository,
+        contactId: String,
+        idHex: String
+    ): Boolean = when (val r = MediaTransfers.assemble(context, idHex)) {
+        is MediaTransfers.AssembleResult.Done -> {
+            if (repo.updateMedia(contactId, idHex, r.path, ChatMessage.Status.RECEIVED)) {
+                MediaTransfers.cleanup(context, idHex)
+                MediaTransfers.clearProgress(idHex)
+                true
+            } else {
+                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
+                false
+            }
+        }
+        MediaTransfers.AssembleResult.Corrupt -> {
+            if (repo.updateMedia(contactId, idHex, null, ChatMessage.Status.FAILED)) {
+                MediaTransfers.cleanup(context, idHex)
+                MediaTransfers.clearProgress(idHex)
+                true
+            } else {
+                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
+                false
+            }
+        }
+        MediaTransfers.AssembleResult.Retry -> {
+            DiagnosticsLog.error(TAG, "složení souboru se nezdařilo (přechodně), zkusím znovu")
+            false
+        }
     }
 }
 

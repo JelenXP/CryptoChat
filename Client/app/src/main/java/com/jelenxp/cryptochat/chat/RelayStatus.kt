@@ -26,6 +26,16 @@ object RelayStatus {
     var state: RelayConn by mutableStateOf(RelayConn.UNKNOWN)
         private set
 
+    /**
+     * Poznač spojení jako funkční na základě ÚSPĚŠNÉHO pollu - bez health
+     * požadavku navíc. Bez tohohle by indikátor (i trvalá notifikace) uvázl na
+     * „připojuji", když se health ve warmUpu nestihl, ale poll smyčky se chytly
+     * později a zprávy reálně tečou.
+     */
+    fun markConnected() {
+        if (state != RelayConn.CONNECTED) state = RelayConn.CONNECTED
+    }
+
     // Aby neběželo víc testů spojení naráz (zbytečné dotazy přes Tor), pustí se
     // vždy jen jeden; další volání během něj se přeskočí.
     private val inFlight = AtomicBoolean(false)

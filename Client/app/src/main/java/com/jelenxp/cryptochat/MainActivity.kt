@@ -56,6 +56,7 @@ import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
+import com.jelenxp.cryptochat.data.UpdateStartupPolicy
 import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.onboarding.BackgroundOnboardingScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
@@ -306,22 +307,21 @@ private fun StartupGate(content: @Composable () -> Unit) {
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
             ?: return@LaunchedEffect
-        // Pozastavení připomínání (na 30 dní): kontrola proběhla, ale běžné
-        // aktualizace se nepřipomínají. Důležitou verzi připomeneme jen jednou.
-        val snoozeActive = settings.getUpdateSnoozeUntil() > System.currentTimeMillis()
-        val shouldShow = if (snoozeActive) {
-            result.important && settings.getUpdateSnoozeImportantShown() != result.latestVersion
-        } else {
-            when {
-                result.important -> true
-                result.latestVersion != settings.getUpdateDismissedVersion() -> true
-                else -> System.currentTimeMillis() - settings.getUpdateDismissedAt() >= UPDATE_REMIND_INTERVAL_MS
-            }
-        }
-        if (shouldShow) {
-            // Během pozastavení si důležitou verzi poznač jako připomenutou, ať
-            // se příště (další den) neukáže znovu.
-            if (snoozeActive && result.important) {
+        // Rozhodnutí (pozastavení, zavření, připomínací interval) je v čisté
+        // funkci vedle obrazovky - stejná pravidla jako UpdateNotifyPolicy na
+        // pozadí, ale testovatelná a bez duplicitní logiky v composable.
+        val decision = UpdateStartupPolicy.decide(
+            important = result.important,
+            latestVersion = result.latestVersion,
+            dismissedVersion = settings.getUpdateDismissedVersion(),
+            dismissedAt = settings.getUpdateDismissedAt(),
+            snoozeUntil = settings.getUpdateSnoozeUntil(),
+            snoozeImportantShown = settings.getUpdateSnoozeImportantShown(),
+            remindIntervalMs = UPDATE_REMIND_INTERVAL_MS,
+            now = System.currentTimeMillis()
+        )
+        if (decision.show) {
+            if (decision.markSnoozeImportantShown) {
                 settings.setUpdateSnoozeImportantShown(result.latestVersion)
             }
             updateInfo = result

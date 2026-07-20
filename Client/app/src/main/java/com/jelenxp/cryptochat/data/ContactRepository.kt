@@ -66,7 +66,9 @@ class ContactRepository(
                             // Cesta k fotce - necitlivá, ukládá se v plaintextu.
                             avatarPath = obj.optString("avatar", "").takeIf { it.isNotEmpty() },
                             // Role při online párování (chat); chybí u starších/osobních kontaktů.
-                            initiator = if (obj.has("initiator")) obj.getBoolean("initiator") else null
+                            // optBoolean (ne getBoolean): typově vadná hodnota nesmí kvůli
+                            // NEPODSTATNÉMU poli shodit jinak funkční kontakt i s klíčem.
+                            initiator = if (obj.has("initiator")) obj.optBoolean("initiator") else null
                         )
                     )
                 } catch (e: Exception) {

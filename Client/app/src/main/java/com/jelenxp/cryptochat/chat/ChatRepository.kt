@@ -303,6 +303,33 @@ class ChatRepository(
         saveLocked(contactId, messages.distinctBy { it.id })
     }
 
+    /**
+     * Sloučí historii ze zálohy se STÁVAJÍCÍ (na rozdíl od [restore], které
+     * přepisuje). Existující zprávy zůstanou v živé podobě; ze zálohy se doplní
+     * jen ty, co v konverzaci ještě nejsou (podle `id` i `wireId`), a výsledek se
+     * seřadí podle času. Tím obnova nikdy nezahodí zprávy přijaté PO vytvoření
+     * zálohy - dřív [restore] celou konverzaci přepsal a novější zprávy zmizely.
+     *
+     * Když stávající historii nejde přečíst, spadne zpět na přepis (lepší obnovit
+     * aspoň zálohu než nic).
+     */
+    fun restoreMerging(contactId: String, backup: List<ChatMessage>): Boolean = synchronized(lock) {
+        val existing = loadForWriteLocked(contactId)
+            ?: return@synchronized saveLocked(contactId, backup.distinctBy { it.id })
+        val seenIds = existing.mapTo(HashSet()) { it.id }
+        val seenWire = existing.mapNotNullTo(HashSet()) { it.wireId }
+        val merged = ArrayList(existing)
+        for (m in backup) {
+            if (m.id in seenIds) continue
+            if (m.wireId != null && m.wireId in seenWire) continue
+            seenIds.add(m.id)
+            m.wireId?.let { seenWire.add(it) }
+            merged.add(m)
+        }
+        merged.sortBy { it.timestamp }
+        saveLocked(contactId, merged)
+    }
+
     /** Smaže celou historii konverzace (např. při smazání kontaktu). */
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)

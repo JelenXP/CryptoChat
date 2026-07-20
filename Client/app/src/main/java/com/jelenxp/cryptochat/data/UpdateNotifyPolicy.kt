@@ -52,8 +52,13 @@ object UpdateNotifyPolicy {
      */
     fun retryStamp(now: Long, intervalMs: Long, baseRetryMs: Long, failures: Int): Long {
         val steps = (failures - 1).coerceIn(0, 20)
+        // Dolní mez nesmí přerůst horní, jinak `coerceIn(min, max)` vyhodí výjimku.
+        // Dnes nedosažitelné (base 30 min < interval 6 h), ale kdyby někdo posunul
+        // konstanty, spadlo by to TIŠE v korutině služby - proto pojistka i test.
+        val hi = intervalMs
+        val lo = baseRetryMs.coerceAtMost(hi)
         // Násobí se v Long a strop se uplatní hned, takže nemůže přetéct.
-        val delay = (baseRetryMs shl steps).coerceIn(baseRetryMs, intervalMs)
+        val delay = (baseRetryMs shl steps).coerceIn(lo, hi)
         return now - intervalMs + delay
     }
 

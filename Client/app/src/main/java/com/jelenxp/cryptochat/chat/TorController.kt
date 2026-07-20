@@ -38,6 +38,13 @@ object TorController {
     @Volatile
     private var runtime: TorRuntime? = null
 
+    /**
+     * Běží runtime Toru? `false` = nikdy nespuštěn, nebo po pádu démona zahozen
+     * ([forgetRuntime]). Hlídač služby podle toho pozná, že Tor na pozadí umřel
+     * a je potřeba ho znovu spustit (poll smyčky volají jen `awaitReady`).
+     */
+    val isRunning: Boolean get() = runtime != null
+
     @Synchronized
     fun ensureStarted(context: Context) {
         if (runtime != null) return

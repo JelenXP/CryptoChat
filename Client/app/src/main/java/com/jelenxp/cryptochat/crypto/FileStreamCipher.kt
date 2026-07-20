@@ -35,8 +35,16 @@ object FileStreamCipher {
 
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val GCM_TAG_BITS = 128
-    private const val VERSION = 1
-    private const val BASE_NONCE_LEN = 8
+
+    // Verze formátu. VERSION 2 nese PLNÝCH 96 bitů náhodného základu nonce
+    // (12 B); starší VERSION 1 měla jen 64 bitů (8 B) + 32bitový čítač, takže
+    // se napříč soubory téhož klíče opírala jen o 64bitovou náhodu. Čtení
+    // VERSION 1 se zachovává, aby dřív zašifrované soubory šly pořád otevřít.
+    private const val VERSION = 2
+    private const val VERSION_LEGACY = 1
+    private const val NONCE_LEN = 12
+    private const val BASE_NONCE_LEN = 12            // VERSION 2
+    private const val BASE_NONCE_LEN_LEGACY = 8      // VERSION 1
     private const val LAST_FLAG = 0x80000000.toInt() // nejvyšší bit LENFIELD = poslední rámec
     private const val LEN_MASK = 0x7FFFFFFF
     private val MAGIC = byteArrayOf('C'.code.toByte(), 'C'.code.toByte(), 'F'.code.toByte(), '1'.code.toByte())
@@ -99,15 +107,16 @@ object FileStreamCipher {
         readFully(input, magic)
         require(magic.contentEquals(MAGIC)) { "Není to zašifrovaný soubor CryptoChat." }
         val version = input.read()
-        require(version == VERSION) { "Nepodporovaná verze souboru." }
-        val baseNonce = ByteArray(BASE_NONCE_LEN)
+        require(version == VERSION || version == VERSION_LEGACY) { "Nepodporovaná verze souboru." }
+        val baseNonceLen = if (version == VERSION) BASE_NONCE_LEN else BASE_NONCE_LEN_LEGACY
+        val baseNonce = ByteArray(baseNonceLen)
         readFully(input, baseNonce)
 
         var counter = 0
         var metadata: Metadata? = null
         var sawLast = false
         var outTotal = 0L
-        var inTotal = (4 + 1 + BASE_NONCE_LEN).toLong()
+        var inTotal = (4 + 1 + baseNonceLen).toLong()
 
         while (true) {
             val lenField = readIntOrEof(input) ?: break // konec mezi rámci
@@ -172,9 +181,23 @@ object FileStreamCipher {
         return cipher.doFinal(ct)
     }
 
-    /** 12bajtový nonce = baseNonce(8) || counter(4 BE). */
-    private fun nonce(baseNonce: ByteArray, counter: Int): ByteArray =
-        baseNonce + intToBytes(counter)
+    /**
+     * 12bajtový GCM nonce, unikátní pro každý rámec i soubor.
+     *  - VERSION 2 (základ 12 B): čítač rámce XORován do posledních 4 bajtů
+     *    plně náhodného 96bitového základu. Různý čítač → různý nonce v rámci
+     *    souboru; kolize napříč soubory potřebuje srážku celého 96bitového
+     *    základu (birthday ~2^48, nedosažitelné).
+     *  - VERSION 1 (základ 8 B): historicky `baseNonce(8) || counter(4 BE)`.
+     */
+    private fun nonce(baseNonce: ByteArray, counter: Int): ByteArray {
+        if (baseNonce.size == BASE_NONCE_LEN_LEGACY) return baseNonce + intToBytes(counter)
+        val n = baseNonce.copyOf(NONCE_LEN)
+        val c = intToBytes(counter)
+        for (i in 0 until 4) {
+            n[NONCE_LEN - 4 + i] = (n[NONCE_LEN - 4 + i].toInt() xor c[i].toInt()).toByte()
+        }
+        return n
+    }
 
     private fun aad(counter: Int, isLast: Boolean): ByteArray =
         intToBytes(counter) + byteArrayOf(if (isLast) 1 else 0)

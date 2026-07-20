@@ -91,32 +91,34 @@ class TorForegroundService : Service() {
         syncStarted = true
         DiagnosticsLog.log(TAG, "služba na pozadí spuštěna, startuji synchronizaci")
         scope.launch {
-            // Nejdřív ZAHŘEJ spojení jedním požadavkem (postaví onion okruh) a
-            // teprve pak spusť pollování kontaktů. Jinak by health check i všechny
-            // polly cold-connectily naráz a konkurovaly si o stavbu prvního okruhu
-            // (nestabilní / pomalé první připojení).
-            // Nedokončené přenosy z dřívějška (přerušené, se ztraceným manifestem…)
-            // jinak leží na disku navždy. Den je bezpečně za TTL relaye.
-            runCatching {
-                val ctx = this@TorForegroundService
-                MediaTransfers.purgeStale(ctx, 24L * 60 * 60 * 1000)
-                // Přenosy, které se nikdy nedokončily, by jinak nechaly bublinu
-                // navždy ve stavu „přijímá se" - bez progressu a bez chyby.
-                val repo = ChatRepository(ctx)
-                ContactRepository(ctx).getContacts().forEach { c ->
-                    repo.getMessages(c.id)
-                        .filter { it.status == ChatMessage.Status.RECEIVING }
-                        .filter { System.currentTimeMillis() - it.timestamp > 24L * 60 * 60 * 1000 }
-                        .forEach { m ->
-                            repo.updateMedia(c.id, m.id, null, ChatMessage.Status.FAILED)
-                            MediaTransfers.clearProgress(m.id)
-                        }
+            // Úklid nedokončených přenosů běží VEDLE (vlastní launch), NE před
+            // smyčkami: dešifruje celou historii všech kontaktů přes Keystore, a
+            // kdyby blokoval, odložil by start VŠECH poll smyček (tedy první
+            // příjem po startu) o dobu úklidu - u dlouhých historií znatelně.
+            launch {
+                runCatching {
+                    val ctx = this@TorForegroundService
+                    // Nedokončené přenosy (přerušené, se ztraceným manifestem…) by
+                    // jinak ležely na disku navždy. Den je bezpečně za TTL relaye.
+                    MediaTransfers.purgeStale(ctx, 24L * 60 * 60 * 1000)
+                    // Přenosy, které se nikdy nedokončily, by jinak nechaly bublinu
+                    // navždy ve stavu „přijímá se" - bez progressu a bez chyby.
+                    val repo = ChatRepository(ctx)
+                    ContactRepository(ctx).getContacts().forEach { c ->
+                        repo.getMessages(c.id)
+                            .filter { it.status == ChatMessage.Status.RECEIVING }
+                            .filter { System.currentTimeMillis() - it.timestamp > 24L * 60 * 60 * 1000 }
+                            .forEach { m ->
+                                repo.updateMedia(c.id, m.id, null, ChatMessage.Status.FAILED)
+                                MediaTransfers.clearProgress(m.id)
+                            }
+                    }
                 }
             }
-            // Zahřívání běží VEDLE, ne před hlídačem. Když se Tor teprve
-            // rozjíždí, jedna iterace warmUp trvá i přes minutu - a dokud
-            // blokovala, nevznikla ANI JEDNA poll smyčka, takže appka po startu
-            // několik minut vůbec nepřijímala zprávy.
+            // Zahřej spojení jedním požadavkem (postaví onion okruh). Běží VEDLE,
+            // ne před hlídačem: když se Tor teprve rozjíždí, jedna iterace warmUp
+            // trvá i přes minutu - a dokud blokovala, nevznikla ANI JEDNA poll
+            // smyčka, takže appka po startu několik minut vůbec nepřijímala zprávy.
             launch { runCatching { warmUp() } }
             while (isActive) {
                 // Celý tik hlídače je pod try/catch: jediná nechycená výjimka by
@@ -144,7 +146,8 @@ class TorForegroundService : Service() {
      */
     private suspend fun watchdogTick() {
         val ctx = this@TorForegroundService
-        if (SettingsRepository(ctx).getRelayUrl().isBlank()) {
+        val relayUrl = SettingsRepository(ctx).getRelayUrl()
+        if (relayUrl.isBlank()) {
             // Chat vypnutý - zastav všechny smyčky, ať netočí naprázdno.
             jobs.values.forEach { it.cancel() }
             jobs.clear()
@@ -176,7 +179,16 @@ class TorForegroundService : Service() {
         }
         // Keepalive JEN když nic nepolluje. Běžící long-polly drží okruh
         // teplý samy - health request navíc by byl čistá spotřeba navíc.
-        if (contacts.isEmpty()) RelayStatus.refresh(ctx)
+        if (contacts.isEmpty()) {
+            RelayStatus.refresh(ctx)
+        } else if (relayUrl.contains(".onion") && !TorController.isRunning) {
+            // Tor mohl na pozadí spadnout (listener se zavřel / StartDaemon
+            // selhal) a sám se nerozjede - poll smyčky volají jen `awaitReady`,
+            // ne `ensureStarted`. Bez tohohle by doručování na pozadí tiše umřelo
+            // až do otevření appky. `ensureStarted` je no-op, když runtime žije.
+            DiagnosticsLog.warn(TAG, "Tor na pozadí neběží, znovu ho spouštím")
+            withContext(Dispatchers.IO) { TorController.ensureStarted(ctx) }
+        }
         updateNotification()
         maybeNotifyAboutUpdate()
     }
@@ -339,6 +351,10 @@ class TorForegroundService : Service() {
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS
+                    // Poll prošel = server je dosažitelný. Srovnej indikátor i
+                    // trvalou notifikaci na „připojeno", i když se health ve
+                    // warmUpu nestihl (jinak by uvázly na „připojuji").
+                    RelayStatus.markConnected()
                     // Pojistka proti serveru, který nectí long-poll (vrátí se hned):
                     // bez podlahy by se smyčka roztočila na 100 % CPU a stavěla okruh
                     // za okruhem. Výchozí relay drží ~60 s, takže se sem nedostane.
