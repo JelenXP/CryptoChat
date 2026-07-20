@@ -50,9 +50,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -118,6 +125,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
     }
     var input by remember { mutableStateOf("") }
+    var inputFocused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
     // Vybrané zprávy (dlouhý stisk vybere, klepnutí ve výběru přepíná) a zpráva,
@@ -187,6 +195,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 listState.animateScrollToItem(messages.size - 1)
             }
         }
+    }
+
+    // Když se otevře klávesnice, okno se zmenší (adjustResize) a poslední zpráva
+    // by se schovala za klávesnici. Dokud je vstup zaostřený, drž seznam u
+    // poslední zprávy - reaguje i na samotné zmenšení viewportu (přelom výšky).
+    LaunchedEffect(inputFocused) {
+        if (!inputFocused) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.viewportSize.height }
+            .collect { if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex) }
     }
 
     fun sendCurrent() {
@@ -552,7 +569,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         enabled = canChat,
                         maxLines = 5,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .onFocusChanged { inputFocused = it.isFocused }
                     )
                     FilledIconButton(
                         onClick = { sendCurrent() },
@@ -641,12 +660,6 @@ private fun MessageRow(
             )
             .padding(vertical = 2.dp)
     ) {
-        if (showReactionPicker && canReact) {
-            ReactionPicker(
-                mine = message.reactionOf(ChatMessage.REACTOR_ME),
-                onPick = onReact
-            )
-        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -693,7 +706,38 @@ private fun MessageRow(
                 // Ve výběrovém režimu klepnutí přidává/odebírá zprávu z výběru.
                 onTap = if (selectionMode) onTapInSelection else null
             )
+            // Pruh emoji jako plovoucí Popup NAD bublinou - nerezervuje místo a
+            // klidně překryje zprávu nad ní (jako WhatsApp). Nefokusovatelný, ať
+            // dál jdou gesta na zbytek konverzace.
+            if (showReactionPicker && canReact) {
+                Popup(
+                    popupPositionProvider = remember(message.outgoing) {
+                        AboveAnchorPosition(alignEnd = message.outgoing)
+                    },
+                    properties = PopupProperties(focusable = false)
+                ) {
+                    ReactionPicker(
+                        mine = message.reactionOf(ChatMessage.REACTOR_ME),
+                        onPick = onReact
+                    )
+                }
+            }
         }
+    }
+}
+
+/** Umístí Popup těsně NAD kotvu (bublinu), zarovnaný k její straně. */
+private class AboveAnchorPosition(private val alignEnd: Boolean) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val y = (anchorBounds.top - popupContentSize.height).coerceAtLeast(0)
+        val rawX = if (alignEnd) anchorBounds.right - popupContentSize.width else anchorBounds.left
+        val maxX = (windowSize.width - popupContentSize.width).coerceAtLeast(0)
+        return IntOffset(rawX.coerceIn(0, maxX), y)
     }
 }
 
