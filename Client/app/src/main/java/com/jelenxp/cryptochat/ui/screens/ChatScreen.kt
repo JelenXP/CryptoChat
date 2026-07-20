@@ -6,9 +6,16 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,8 +25,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
@@ -40,14 +51,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
@@ -101,6 +119,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+
+    // Vybraná zpráva (dlouhý stisk) a zpráva, na kterou se odpovídá. Drží se
+    // podle `id`, ne podle indexu - LazyColumn položky recykluje.
+    var selectedId by remember(id) { mutableStateOf<String?>(null) }
+    var replyTo by remember(id) { mutableStateOf<ChatMessage?>(null) }
+    var pendingDelete by remember(id) { mutableStateOf<ChatMessage?>(null) }
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
@@ -168,10 +192,45 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         val text = input.trim()
         if (text.isEmpty() || contact == null) return
         input = ""
+        // Odkaz vytáhni TEĎ a náhled zavři - kdyby se to dělalo až v korutině,
+        // uživatel by mezitím mohl odpověď zrušit a zpráva by odešla s odkazem.
+        val replyRef = replyTo?.wireRef
+        replyTo = null
         scope.launch {
-            val msg = withContext(Dispatchers.IO) { RelaySync.enqueue(context, contact, text) }
+            val msg = withContext(Dispatchers.IO) {
+                RelaySync.enqueue(context, contact, text, replyRef)
+            }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+        }
+    }
+
+    /** Přepne naši reakci: stejné emoji podruhé ji zruší. */
+    val reactionsUnsupported = stringResource(R.string.chat_reactions_unsupported)
+    fun react(message: ChatMessage, emoji: String) {
+        val ref = message.wireRef ?: return
+        if (contact == null) return
+        selectedId = null
+        scope.launch {
+            val next = ChatScreenLogic.toggledReaction(
+                message.reactionOf(ChatMessage.REACTOR_ME), emoji
+            )
+            val result = withContext(Dispatchers.IO) {
+                RelaySync.sendReaction(context, contact, ref, next)
+            }
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+            // Reakce se neuloží ani lokálně, když ji nejde doručit - tak ať
+            // uživatel nekouká na tlačítko, které nic neudělalo.
+            if (result == RelaySync.ReactionSend.PEER_UNSUPPORTED) {
+                Toast.makeText(context, reactionsUnsupported, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun deleteForMe(message: ChatMessage) {
+        scope.launch {
+            withContext(Dispatchers.IO) { repo.deleteMessage(context, id, message.id) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
@@ -253,9 +312,78 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     ) { uri -> if (uri != null) sendFile(uri) }
 
     var attachMenu by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+    val copiedLabel = stringResource(R.string.chat_copied)
+
+    // Index zpráv podle sdíleného odkazu - pro rychlé dohledání citace.
+    val byWireRef = remember(messages) { ChatScreenLogic.wireRefIndex(messages) }
+
+    // Zpráva mohla mezitím zmizet (smazal ji uživatel, nebo přenačtení historie).
+    // Bez tohohle by zůstal viset výběrový panel bez jediné akce, případně by se
+    // odpovídalo na zprávu, která už není. Rozhodnutí je v ChatScreenLogic, ať
+    // jde otestovat (nález v1.2-23).
+    LaunchedEffect(messages) {
+        selectedId = ChatScreenLogic.survivingId(messages, selectedId)
+        replyTo = ChatScreenLogic.survivingReply(messages, replyTo)
+    }
+
+    // Systémové zpět nejdřív zavře výběr / rozepsanou odpověď, teprve pak
+    // opustí konverzaci - jinak by uživatel omylem vyskočil z chatu.
+    BackHandler(enabled = selectedId != null) { selectedId = null }
+    BackHandler(enabled = selectedId == null && replyTo != null) { replyTo = null }
 
     Scaffold(
         topBar = {
+            if (selectedId != null) {
+                val selected = messages.firstOrNull { it.id == selectedId }
+                TopAppBar(
+                    title = { Text(stringResource(R.string.chat_selection_title)) },
+                    navigationIcon = {
+                        IconButton(onClick = { selectedId = null }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = stringResource(R.string.content_desc_clear_selection)
+                            )
+                        }
+                    },
+                    actions = {
+                        if (selected != null) {
+                            if (canChat && selected.wireRef != null) {
+                                IconButton(onClick = { replyTo = selected; selectedId = null }) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.Reply,
+                                        contentDescription = stringResource(R.string.chat_action_reply)
+                                    )
+                                }
+                            }
+                            if (selected.text.isNotBlank()) {
+                                IconButton(onClick = {
+                                    clipboard.setText(AnnotatedString(selected.text))
+                                    selectedId = null
+                                    Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
+                                }) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = stringResource(R.string.chat_action_copy)
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { pendingDelete = selected; selectedId = null }) {
+                                Icon(
+                                    Icons.Default.DeleteOutline,
+                                    contentDescription = stringResource(R.string.chat_action_delete)
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                )
+            } else {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -288,6 +416,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     }
                 }
             )
+            }
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -327,9 +456,34 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(messages, key = { it.id }) { m ->
-                        MessageBubble(message = m, onRetry = { retry(m) })
+                        // Citovaná zpráva se hledá v UŽ NAČTENÉM seznamu - do
+                        // kompozice nesmí žádné čtení historie (Keystore = ANR).
+                        // Přes mapu, ne lineárním hledáním: u dlouhé konverzace
+                        // by se pro každou viditelnou bublinu procházelo všechno.
+                        val quote = ChatScreenLogic.resolveQuote(m, byWireRef)
+                        MessageRow(
+                            message = m,
+                            quoted = quote.message,
+                            quotedMissing = quote.missing,
+                            peerName = contact?.name.orEmpty(),
+                            selected = selectedId == m.id,
+                            canReact = canChat && m.wireRef != null,
+                            onSelect = { selectedId = m.id },
+                            onReact = { emoji -> react(m, emoji) },
+                            onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
+                            onRetry = { retry(m) }
+                        )
                     }
                 }
+            }
+
+            // Náhled zprávy, na kterou se odpovídá.
+            replyTo?.let { target ->
+                ReplyComposerPreview(
+                    message = target,
+                    peerName = contact?.name.orEmpty(),
+                    onCancel = { replyTo = null }
+                )
             }
 
             // Vstupní řádek.
@@ -388,6 +542,298 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             }
         }
     }
+
+    // Mazání se potvrzuje: je nevratné a u přijaté zprávy ji relay už smazal,
+    // takže se nedá získat zpátky.
+    pendingDelete?.let { target ->
+        val deletedLabel = stringResource(R.string.chat_deleted)
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.chat_delete_title)) },
+            text = { Text(stringResource(R.string.chat_delete_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    deleteForMe(target)
+                    Toast.makeText(context, deletedLabel, Toast.LENGTH_SHORT).show()
+                }) { Text(stringResource(R.string.btn_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text(stringResource(R.string.btn_cancel))
+                }
+            }
+        )
+    }
+}
+
+/** Emoji nabízená na dlouhý stisk. Protokol jich unese libovolně, UI zatím tyhle. */
+private val QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😭", "🙏")
+
+/** Jak daleko se musí bublina odtáhnout, aby se odpověď spustila. */
+private const val SWIPE_REPLY_THRESHOLD_PX = 180f
+
+/**
+ * Jeden řádek konverzace: zvýraznění při výběru, pruh emoji, citace nad
+ * bublinou, reakce pod ní a tažení zleva doprava jako zkratka pro odpověď.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MessageRow(
+    message: ChatMessage,
+    quoted: ChatMessage?,
+    quotedMissing: Boolean,
+    peerName: String,
+    selected: Boolean,
+    canReact: Boolean,
+    onSelect: () -> Unit,
+    onReact: (String) -> Unit,
+    onReplySwipe: () -> Unit,
+    onRetry: () -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    // Během tahu se posun mění přímo (bez animace), po puštění se animuje zpět.
+    // Animatable + snapTo v korutině by znamenalo spustit korutinu při každé
+    // události prstu, tedy desítky za sekundu.
+    var dragX by remember(message.id) { mutableFloatStateOf(0f) }
+    var dragging by remember(message.id) { mutableStateOf(false) }
+    val offsetX by animateFloatAsState(
+        targetValue = dragX,
+        animationSpec = if (dragging) snap() else spring(),
+        label = "swipeReply"
+    )
+    // Aby haptika cvakla jen jednou při překročení prahu, ne při každém pixelu.
+    var passedThreshold by remember(message.id) { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) Modifier.background(
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                ) else Modifier
+            )
+            .padding(vertical = 2.dp)
+    ) {
+        if (selected && canReact) {
+            ReactionPicker(
+                mine = message.reactionOf(ChatMessage.REACTOR_ME),
+                onPick = onReact
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(message.id, canReact) {
+                    if (!canReact) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = {
+                            if (dragX >= SWIPE_REPLY_THRESHOLD_PX) onReplySwipe()
+                            passedThreshold = false
+                            dragging = false
+                            dragX = 0f
+                        },
+                        onDragCancel = {
+                            passedThreshold = false
+                            dragging = false
+                            dragX = 0f
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        // Jen doprava a s odporem - tažení se ke konci zpomaluje,
+                        // ať gesto nepůsobí, že bublinu odtáhneš pryč.
+                        val next = (dragX + dragAmount * 0.6f)
+                            .coerceIn(0f, SWIPE_REPLY_THRESHOLD_PX * 1.3f)
+                        if (!passedThreshold && next >= SWIPE_REPLY_THRESHOLD_PX) {
+                            passedThreshold = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        dragX = next
+                    }
+                }
+        ) {
+            MessageBubble(
+                message = message,
+                quoted = quoted,
+                quotedMissing = quotedMissing,
+                peerName = peerName,
+                onRetry = onRetry,
+                onLongPress = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSelect()
+                }
+            )
+        }
+    }
+}
+
+/** Vodorovný pruh rychlých reakcí. Vybraná je zvýrazněná. */
+@Composable
+private fun ReactionPicker(mine: String?, onPick: (String) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 2.dp,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            QUICK_REACTIONS.forEach { emoji ->
+                val isMine = mine == emoji
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.dp))
+                        .then(
+                            if (isMine) Modifier.background(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+                            ) else Modifier
+                        )
+                        .clickable { onPick(emoji) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text(emoji, style = MaterialTheme.typography.titleLarge)
+                }
+            }
+        }
+    }
+}
+
+/** Reakce přilepené pod bublinou. Stejné emoji od obou se sloučí a přičte počet. */
+@Composable
+private fun ReactionChips(reactions: Map<String, ChatMessage.Reaction>, outgoing: Boolean) {
+    if (reactions.isEmpty()) return
+    val grouped = reactions.values.groupBy { it.emoji }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            tonalElevation = 1.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                grouped.forEach { (emoji, list) ->
+                    Text(
+                        if (list.size > 1) "$emoji ${list.size}" else emoji,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Krátký popis zprávy pro citaci (u fotky/souboru není text). */
+@Composable
+private fun quotedSummary(message: ChatMessage): String = when (message.kind) {
+    ChatMessage.Kind.IMAGE -> stringResource(R.string.chat_reply_photo)
+    ChatMessage.Kind.FILE -> message.text.ifBlank { stringResource(R.string.chat_reply_file) }
+    else -> message.text
+}
+
+/** Citace uvnitř bubliny - barevný pruh vlevo, jméno a náhled textu. */
+@Composable
+private fun QuotedBlock(
+    quoted: ChatMessage?,
+    missing: Boolean,
+    peerName: String,
+    accent: Color,
+    textColor: Color
+) {
+    if (quoted == null && !missing) return
+    Row(
+        modifier = Modifier
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(textColor.copy(alpha = 0.10f))
+            .height(IntrinsicSize.Min)
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(accent)
+        )
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            if (quoted != null) {
+                Text(
+                    if (quoted.outgoing) stringResource(R.string.chat_reply_you) else peerName,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accent,
+                    maxLines = 1
+                )
+                Text(
+                    quotedSummary(quoted),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.85f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    stringResource(R.string.chat_reply_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.7f),
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+/** Náhled nad vstupním polem, když se píše odpověď. */
+@Composable
+private fun ReplyComposerPreview(
+    message: ChatMessage,
+    peerName: String,
+    onCancel: () -> Unit
+) {
+    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(34.dp)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(
+                    if (message.outgoing) stringResource(R.string.chat_reply_you) else peerName,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+                Text(
+                    quotedSummary(message),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = stringResource(R.string.content_desc_cancel_reply)
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -404,17 +850,27 @@ private fun ChatNotice(text: String) {
 
 private val TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
+private fun MessageBubble(
+    message: ChatMessage,
+    quoted: ChatMessage? = null,
+    quotedMissing: Boolean = false,
+    peerName: String = "",
+    onRetry: () -> Unit,
+    onLongPress: (() -> Unit)? = null
+) {
     val outgoing = message.outgoing
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val accent = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(
         topStart = 16.dp, topEnd = 16.dp,
         bottomStart = if (outgoing) 16.dp else 4.dp,
         bottomEnd = if (outgoing) 4.dp else 16.dp
     )
 
+    Column {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
@@ -425,13 +881,26 @@ private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
                 .clip(shape)
                 .background(bubbleColor)
                 // Klikací (opakovat) jen u ODCHOZÍ neúspěšné zprávy - příchozí
-                // se opakovat nedá (viz ChatScreen.retry).
+                // se opakovat nedá (viz ChatScreen.retry). Dlouhý stisk otevírá
+                // akce nad zprávou vždycky.
                 .then(
-                    if (message.status == ChatMessage.Status.FAILED && outgoing)
+                    if (onLongPress != null) Modifier.combinedClickable(
+                        onLongClick = onLongPress,
+                        onClick = {
+                            if (message.status == ChatMessage.Status.FAILED && outgoing) onRetry()
+                        }
+                    ) else if (message.status == ChatMessage.Status.FAILED && outgoing)
                         Modifier.clickable { onRetry() } else Modifier
                 )
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
+            QuotedBlock(
+                quoted = quoted,
+                missing = quotedMissing,
+                peerName = peerName,
+                accent = accent,
+                textColor = textColor
+            )
             when (message.kind) {
                 ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
                 ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor)
@@ -461,6 +930,8 @@ private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
                 )
             }
         }
+    }
+    ReactionChips(reactions = message.visibleReactions, outgoing = outgoing)
     }
 }
 

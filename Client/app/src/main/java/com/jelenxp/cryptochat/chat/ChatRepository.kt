@@ -2,7 +2,8 @@ package com.jelenxp.cryptochat.chat
 
 import android.content.Context
 import android.util.Log
-import com.jelenxp.cryptochat.crypto.KeystoreCryptoHelper
+import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
+import com.jelenxp.cryptochat.crypto.StorageCrypto
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.json.JSONArray
@@ -11,7 +12,7 @@ import org.json.JSONObject
 /**
  * Lokální historie zpráv jednotlivých konverzací. Ukládá se jako JSON do
  * SharedPreferences, celé pole je před uložením zašifrované klíčem z Android
- * Keystore ([KeystoreCryptoHelper]) - na disku tedy nikdy neleží čitelné.
+ * Keystore (viz [StorageCrypto]) - na disku tedy nikdy neleží čitelné.
  *
  * Stejně jako [com.jelenxp.cryptochat.data.ContactRepository] je odolné proti
  * výjimkám: poškozená data vrátí prázdný seznam, zápis vrací Boolean, appka
@@ -28,7 +29,14 @@ import org.json.JSONObject
  * ([cache]); zápisy ji rovnou aktualizují. Instance téhle třídy jsou levné a
  * zahoditelné - stav je společný přes companion object.
  */
-class ChatRepository(context: Context) {
+class ChatRepository(
+    context: Context,
+    /**
+     * Šifrování at rest. Výchozí je Keystore; testy si dosadí průhlednou
+     * implementaci, jinak by tenhle repozitář nešlo otestovat vůbec.
+     */
+    private val crypto: StorageCrypto = KeystoreStorageCrypto
+) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -38,12 +46,32 @@ class ChatRepository(context: Context) {
         loadLocked(contactId)
     }
 
-    /** Načte historii (z cache, jinak z disku). Volej jen pod [lock]. */
-    private fun loadLocked(contactId: String): List<ChatMessage> {
+    /**
+     * Načte historii pro ČTENÍ (z cache, jinak z disku). Při chybě vrací prázdný
+     * seznam - obrazovka pak ukáže prázdnou konverzaci místo pádu.
+     *
+     * **K zápisu NEPOUŽÍVAT**, na to je [loadForWriteLocked]. Volej jen pod [lock].
+     */
+    private fun loadLocked(contactId: String): List<ChatMessage> =
+        loadForWriteLocked(contactId) ?: emptyList()
+
+    /**
+     * Načte historii pro ZÁPIS. Vrací `null`, když se ji nepodařilo přečíst -
+     * na rozdíl od prázdné historie, což je legitimní stav.
+     *
+     * **Proč to rozlišení musí být:** zápis je read-modify-write nad celým polem.
+     * Kdyby se při nepovedeném čtení tvářilo, že je historie prázdná, uložil by
+     * se přes tu skutečnou seznam s jedinou zprávou - a celá konverzace by byla
+     * pryč. Selhat je tady jediná bezpečná možnost: volající zápis nepotvrdí,
+     * relay zprávu podrží a příště to vyjde.
+     *
+     * Volej jen pod [lock].
+     */
+    private fun loadForWriteLocked(contactId: String): List<ChatMessage>? {
         cache[contactId]?.let { return it }
         // Neúspěšné čtení (null) NEcachujeme - jinak by si appka zapamatovala
         // prázdnou historii a první zápis by tu skutečnou na disku přepsal.
-        val loaded = readFromDisk(contactId) ?: return emptyList()
+        val loaded = readFromDisk(contactId) ?: return null
         cache[contactId] = loaded
         return loaded
     }
@@ -52,7 +80,7 @@ class ChatRepository(context: Context) {
     private fun readFromDisk(contactId: String): List<ChatMessage>? {
         return try {
             val stored = prefs.getString(key(contactId), null) ?: return emptyList()
-            val json = KeystoreCryptoHelper.decryptFromStorage(stored) ?: return null
+            val json = crypto.decrypt(stored) ?: return null
             val array = JSONArray(json)
             val result = ArrayList<ChatMessage>(array.length())
             for (i in 0 until array.length()) {
@@ -71,7 +99,9 @@ class ChatRepository(context: Context) {
                         kind = kind,
                         mediaPath = if (o.has("media")) o.optString("media") else null,
                         mimeType = if (o.has("mime")) o.optString("mime") else null,
-                        wireId = if (o.has("wid")) o.optString("wid") else null
+                        wireId = if (o.has("wid")) o.optString("wid") else null,
+                        replyToWireId = if (o.has("rto")) o.optString("rto") else null,
+                        reactions = readReactions(o.optJSONObject("rx"))
                     )
                 )
             }
@@ -84,9 +114,8 @@ class ChatRepository(context: Context) {
 
     /** Přidá zprávu na konec konverzace. Vrací true při úspěchu. */
     fun append(contactId: String, message: ChatMessage): Boolean = synchronized(lock) {
-        val current = loadLocked(contactId).toMutableList()
-        current.add(message)
-        saveLocked(contactId, current)
+        val current = loadForWriteLocked(contactId) ?: return false
+        saveLocked(contactId, current + message)
     }
 
     /**
@@ -95,10 +124,13 @@ class ChatRepository(context: Context) {
      * stejný soubor znovu, vznikly by dvě zprávy se shodným id a `LazyColumn`
      * (klíčovaný právě id) by shodil obrazovku chatu. Vrací true, když se přidala.
      */
-    fun appendIfAbsent(contactId: String, message: ChatMessage): Boolean = synchronized(lock) {
-        val current = loadLocked(contactId)
-        if (current.any { it.id == message.id }) return false
-        saveLocked(contactId, current + message)
+    fun appendIfAbsent(contactId: String, message: ChatMessage): AppendResult = synchronized(lock) {
+        // Musí rozlišit „už tam byla" od „nepodařilo se přečíst historii".
+        // Kdyby se obojí slévalo do `false`, volající by neúspěch považoval za
+        // duplicitu, dávku by potvrdil a relay by zprávu smazal - nenávratně.
+        val current = loadForWriteLocked(contactId) ?: return AppendResult.FAILED
+        if (current.any { it.id == message.id }) return AppendResult.DUPLICATE
+        if (saveLocked(contactId, current + message)) AppendResult.ADDED else AppendResult.FAILED
     }
 
     /** Jak dopadlo přidání zprávy, u které hlídáme duplicitu. */
@@ -128,12 +160,9 @@ class ChatRepository(context: Context) {
     fun appendIfAbsentByWireId(contactId: String, message: ChatMessage): AppendResult =
         synchronized(lock) {
             val wireId = message.wireId ?: return AppendResult.FAILED
-            // Když se historii NEPODAŘILO přečíst, nesmí se zapisovat: prázdný
-            // seznam by se uložil přes tu skutečnou a smazal by ji. Raději hlas
-            // chybu - dávka se nepotvrdí a zpráva dorazí znovu.
-            val current = cache[contactId] ?: readFromDisk(contactId)
-                ?: return AppendResult.FAILED
-            cache[contactId] = current
+            // Když se historii NEPODAŘILO přečíst, nesmí se zapisovat (viz
+            // loadForWriteLocked) - dávka se nepotvrdí a zpráva dorazí znovu.
+            val current = loadForWriteLocked(contactId) ?: return AppendResult.FAILED
             // Porovnává se JEN proti příchozím zprávám. Naše odchozí ID protějšek
             // zná (posíláme mu je v traileru), takže by stačilo, aby jedno z nich
             // poslal zpátky, a jeho zpráva by se tiše zahodila jako duplicita.
@@ -147,8 +176,8 @@ class ChatRepository(context: Context) {
     /** Nastaví stav existující zprávy (např. SENDING -> SENT/FAILED). */
     fun updateStatus(contactId: String, messageId: String, status: ChatMessage.Status): Boolean =
         synchronized(lock) {
-            val updated = loadLocked(contactId)
-                .map { if (it.id == messageId) it.copy(status = status) else it }
+            val current = loadForWriteLocked(contactId) ?: return false
+            val updated = current.map { if (it.id == messageId) it.copy(status = status) else it }
             saveLocked(contactId, updated)
         }
 
@@ -159,11 +188,89 @@ class ChatRepository(context: Context) {
         mediaPath: String?,
         status: ChatMessage.Status
     ): Boolean = synchronized(lock) {
-        val updated = loadLocked(contactId).map {
+        val current = loadForWriteLocked(contactId) ?: return false
+        val updated = current.map {
             if (it.id == messageId) it.copy(mediaPath = mediaPath, status = status) else it
         }
         saveLocked(contactId, updated)
     }
+
+    /**
+     * Smaže jednu zprávu **jen u nás**. Protějšku nic neposílá a jeho kopie
+     * zůstává - proto „smazat u sebe".
+     *
+     * Uklidí i přiloženou fotku/soubor, ať po smazané zprávě nezůstane osiřelý
+     * soubor. Přijímaný soubor (RECEIVING) se maže taky, ale jeho rozpracované
+     * kousky si uklidí [MediaTransfers] samo.
+     */
+    fun deleteMessage(context: Context, contactId: String, messageId: String): Boolean =
+        synchronized(lock) {
+            val current = loadForWriteLocked(contactId) ?: return false
+            val target = current.firstOrNull { it.id == messageId } ?: return false
+            if (!saveLocked(contactId, current.filterNot { it.id == messageId })) return false
+            // Až po úspěšném zápisu - kdyby se neuložil, zpráva zůstane a s ní
+            // musí zůstat i její soubor.
+            if (target.kind != ChatMessage.Kind.TEXT) {
+                target.mediaPath?.let { path -> runCatching { java.io.File(path).delete() } }
+            }
+            // Rozpracovaný příjem souboru: `mediaPath` je ještě null, takže výše
+            // není co mazat. Bez tohohle by se kousky doskládaly do souboru, na
+            // který už nic neodkazuje, a zůstal by na disku napořád.
+            if (target.kind == ChatMessage.Kind.FILE) {
+                runCatching {
+                    MediaTransfers.clearProgress(target.id)
+                    MediaTransfers.cleanup(context, target.id)
+                }
+            }
+            true
+        }
+
+    /**
+     * Nastaví nebo zruší reakci u zprávy s daným [ChatMessage.wireRef].
+     *
+     * [timestamp] chrání před přeházeným pořadím: starší reakce nikdy nepřebije
+     * novější. Bez toho by opožděná reakce z karantény mohla vrátit zpátky
+     * emoji, které už uživatel zrušil.
+     *
+     * Vrací true, když se cílová zpráva našla a stav se uložil.
+     */
+    fun setReaction(
+        contactId: String,
+        wireRef: String,
+        reactor: String,
+        emoji: String?,
+        timestamp: Long
+    ): ReactionResult = synchronized(lock) {
+        val current = loadForWriteLocked(contactId) ?: return ReactionResult.FAILED
+        val index = current.indexOfFirst { it.wireRef == wireRef }
+        // Cíl tu ještě není (zpráva nedorazila, nebo leží v karanténě). Volající
+        // ji odloží a zkusí to znovu, až něco přijde.
+        if (index < 0) return ReactionResult.TARGET_MISSING
+        val message = current[index]
+        // Rozhodování o pořadí a náhrobcích je v ReactionMerge, ať jde otestovat.
+        val updated = ReactionMerge.apply(message.reactions, reactor, emoji, timestamp)
+            ?: return ReactionResult.APPLIED   // nic se nemění
+        val saved = saveLocked(contactId, current.toMutableList().also {
+            it[index] = message.copy(reactions = updated)
+        })
+        if (saved) ReactionResult.APPLIED else ReactionResult.FAILED
+    }
+
+    /** Jak dopadlo nastavení reakce. */
+    enum class ReactionResult {
+        /** Uloženo (nebo se nic měnit nemuselo). */
+        APPLIED,
+
+        /** Cílová zpráva zatím není v historii - zkusit později. */
+        TARGET_MISSING,
+
+        /** Zápis selhal. */
+        FAILED
+    }
+
+    /** Zpráva podle [ChatMessage.wireRef] (pro náhled odpovědi). */
+    fun findByWireRef(contactId: String, wireRef: String): ChatMessage? =
+        synchronized(lock) { loadLocked(contactId).firstOrNull { it.wireRef == wireRef } }
 
     /** Poslední zpráva konverzace, nebo null když žádná není. */
     fun getLastMessage(contactId: String): ChatMessage? = getMessages(contactId).lastOrNull()
@@ -221,10 +328,12 @@ class ChatRepository(context: Context) {
                             m.mediaPath?.let { put("media", it) }
                             m.mimeType?.let { put("mime", it) }
                             m.wireId?.let { put("wid", it) }
+                            m.replyToWireId?.let { put("rto", it) }
+                            if (m.reactions.isNotEmpty()) put("rx", writeReactions(m.reactions))
                         }
                 )
             }
-            val encrypted = KeystoreCryptoHelper.encryptForStorage(array.toString())
+            val encrypted = crypto.encrypt(array.toString())
             // commit(), ne apply(): příchozí zprávu už relay smazal, takže
             // asynchronní zápis by ji při zabití procesu ztratil nenávratně.
             // Jsme na IO vlákně, takže synchronní zápis nikoho neblokuje.
@@ -239,6 +348,27 @@ class ChatRepository(context: Context) {
             cache.remove(contactId)
             false
         }
+    }
+
+    /** Reakce z JSONu. Poškozený záznam se přeskočí, historii kvůli němu neztratíme. */
+    private fun readReactions(obj: JSONObject?): Map<String, ChatMessage.Reaction> {
+        if (obj == null) return emptyMap()
+        val out = HashMap<String, ChatMessage.Reaction>(2)
+        for (reactor in obj.keys()) {
+            val r = obj.optJSONObject(reactor) ?: continue
+            // Prázdné emoji je platný záznam - náhrobek po zrušené reakci.
+            // Zahodit ho by znamenalo ztratit čas zrušení (viz setReaction).
+            out[reactor] = ChatMessage.Reaction(r.optString("e"), r.optLong("t"))
+        }
+        return out
+    }
+
+    private fun writeReactions(reactions: Map<String, ChatMessage.Reaction>): JSONObject {
+        val obj = JSONObject()
+        reactions.forEach { (reactor, r) ->
+            obj.put(reactor, JSONObject().put("e", r.emoji).put("t", r.timestamp))
+        }
+        return obj
     }
 
     private fun key(contactId: String) = "msgs_$contactId"
@@ -262,5 +392,12 @@ class ChatRepository(context: Context) {
          * zpožděním (nebo vůbec).
          */
         val changes = _changes.asSharedFlow()
+
+        /**
+         * Zahodí paměťovou cache. **Jen pro testy** - ty běží v jednom procesu
+         * za sebou a bez tohohle by si historie z předchozího testu přenesla
+         * do dalšího.
+         */
+        fun resetCacheForTests() = synchronized(lock) { cache.clear() }
     }
 }

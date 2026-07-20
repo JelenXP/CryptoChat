@@ -12,8 +12,12 @@ import androidx.core.content.ContextCompat
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.ContactRepository
+import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.data.UpdateChecker
+import com.jelenxp.cryptochat.data.UpdateNotifyPolicy
 import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -174,6 +178,90 @@ class TorForegroundService : Service() {
         // teplý samy - health request navíc by byl čistá spotřeba navíc.
         if (contacts.isEmpty()) RelayStatus.refresh(ctx)
         updateNotification()
+        maybeNotifyAboutUpdate()
+    }
+
+    /**
+     * Jednou za [UPDATE_CHECK_INTERVAL_MS] se podívá, jestli nevyšla nová verze,
+     * a když ano, pošle notifikaci.
+     *
+     * **Proč to nestojí baterii:** neprobouzí nic navíc - jede na tiku hlídače,
+     * který běží tak jako tak, a na síť jde jen když od poslední kontroly uplynul
+     * celý interval. Požadavek jde přes Tor (viz [UpdateChecker]); napřímo by
+     * z reálné IP prozradil, že tenhle messenger na zařízení běží.
+     *
+     * Pravidla pro zobrazení jsou schválně stejná jako u kontroly při startu
+     * (`MainActivity`): respektuje vypnutou kontrolu i pozastavené připomínání,
+     * ať uživatel nedostane z pozadí to, co si v appce odklikl pryč.
+     */
+    private fun maybeNotifyAboutUpdate() {
+        val ctx = this@TorForegroundService
+        if (!FeatureFlags.UPDATE_CHECK_ENABLED) return
+        val settings = SettingsRepository(ctx)
+        if (!settings.isUpdateCheckEnabled()) return
+        val now = System.currentTimeMillis()
+        when (
+            UpdateNotifyPolicy.decide(now, settings.getUpdateLastCheckAt(), UPDATE_CHECK_INTERVAL_MS)
+        ) {
+            UpdateNotifyPolicy.Decision.SKIP -> return
+            // Čerstvá instalace: jen orazítkovat, na síť teď nechodit.
+            UpdateNotifyPolicy.Decision.STAMP_ONLY -> {
+                settings.setUpdateLastCheckAt(now)
+                return
+            }
+            UpdateNotifyPolicy.Decision.CHECK -> Unit
+        }
+        // Razítko se dává PŘED požadavkem: díky tomu další tik hlídače uvidí
+        // „kontrolováno teď" a nespustí druhou souběžnou kontrolu, i když tahle
+        // ještě běží na pozadí.
+        settings.setUpdateLastCheckAt(now)
+
+        // VEDLE tiku, ne uvnitř. UpdateChecker čeká až 30 s na Tor a dalších
+        // 20 s na odpověď; uvnitř tiku by o tuhle dobu odložil dorovnání poll
+        // smyček, tedy zotavení příjmu zpráv.
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { UpdateChecker.checkDetailed(currentVersionName()) }
+                    .getOrDefault(UpdateChecker.Result.Failed)
+            }
+            if (result is UpdateChecker.Result.Failed) {
+                val failures = settings.getUpdateCheckFailures() + 1
+                settings.setUpdateCheckFailures(failures)
+                settings.setUpdateLastCheckAt(
+                    UpdateNotifyPolicy.retryStamp(
+                        now, UPDATE_CHECK_INTERVAL_MS, UPDATE_RETRY_AFTER_FAIL_MS, failures
+                    )
+                )
+                return@launch
+            }
+            settings.setUpdateCheckFailures(0)
+            val info = (result as? UpdateChecker.Result.UpdateAvailable)?.info ?: return@launch
+            if (!UpdateNotifyPolicy.shouldNotify(
+                    latestVersion = info.latestVersion,
+                    important = info.important,
+                    notifiedVersion = settings.getUpdateNotifiedVersion(),
+                    dismissedVersion = settings.getUpdateDismissedVersion(),
+                    snoozeUntil = settings.getUpdateSnoozeUntil(),
+                    now = now
+                )
+            ) {
+                return@launch
+            }
+            // Verze se značí jako oznámená AŽ po úspěšném zobrazení - jinak by
+            // se při zakázaných notifikacích „spotřebovala" naprázdno a po
+            // jejich povolení by o ní uživatel už nikdy nedostal vědět.
+            if (ChatNotifications.notifyUpdate(ctx, info.latestVersion, info.important)) {
+                settings.setUpdateNotifiedVersion(info.latestVersion)
+                DiagnosticsLog.log(TAG, "upozornění na novou verzi odesláno")
+            }
+        }
+    }
+
+    /** Verze appky jako čistě číselný řetězec (viz `versionName` v build.gradle). */
+    private fun currentVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+    } catch (e: Exception) {
+        ""
     }
 
     /**
@@ -364,6 +452,20 @@ class TorForegroundService : Service() {
          * krátký interval stojí CPU zbytečně - poll smyčky si běží samy.
          */
         private const val WATCHDOG_INTERVAL_MS = 120_000L
+
+        /**
+         * Jak často smí služba na pozadí zjišťovat novou verzi. Čtyřikrát denně -
+         * jde o jeden krátký požadavek po okruhu, který už stejně stojí, takže
+         * proti long-pollům je to v šumu. **Nezkracuj pod hodinu bez měření.**
+         */
+        private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
+
+        /**
+         * Za jak dlouho zkusit znovu, když kontrola selhala. Nedostupný relay
+         * (uspaný notebook) je běžný stav a bylo by hloupé kvůli němu propálit
+         * celý interval - ale opakovat každý tik hlídače by zase pálilo baterii.
+         */
+        private const val UPDATE_RETRY_AFTER_FAIL_MS = 30L * 60 * 1000
 
         /** Kolik času nejvýš strávit zahříváním spojení, než to necháme na poll smyčkách. */
         private const val WARMUP_BUDGET_MS = 3L * 60 * 1000

@@ -50,6 +50,12 @@ man-in-the-middle.
 - Write a message and send — it arrives almost instantly.
 - Tap the **photo button** to send a picture from the **camera** or **gallery**. The photo
   is encrypted the same way; the other side sees it decrypted directly in the chat.
+- **Reply** — swipe a message from left to right, or hold it and pick Reply. The original
+  is quoted above your answer.
+- **React** — hold a message and pick one of six emoji. Tapping the same one removes it.
+  Both phones need a recent version; until then reactions simply aren't sent.
+- **Copy or delete** — holding a message also lets you copy its text or delete it from
+  this phone only. The other person keeps their copy.
 - The contact list shows the **last message** and highlights **unread** chats.
 - The **cloud icon** at the top shows the connection: spinner while connecting, a cloud
   with a check when connected.
@@ -160,6 +166,12 @@ man-in-the-middle.
 - Napiš zprávu a odešli — dorazí skoro okamžitě.
 - Tlačítkem **fotky** pošleš obrázek z **foťáku** nebo **galerie**. Fotka se šifruje stejně
   jako zprávy a druhá strana ji vidí rovnou dešifrovanou přímo v chatu.
+- **Odpověď** — přetáhni zprávu zleva doprava, nebo ji podrž a zvol Odpovědět. Původní
+  zpráva se ukáže nad tvojí odpovědí.
+- **Reakce** — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zruší.
+  Oba telefony potřebují novější verzi; do té doby se reakce prostě neposílají.
+- **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat
+  jen z tohohle telefonu. Protějšku jeho kopie zůstane.
 - V seznamu kontaktů je vidět **poslední zpráva** a **nepřečtené** chaty jsou zvýrazněné.
 - **Ikona cloudu** nahoře ukazuje spojení: kolečko při připojování, cloud s fajfkou po
   připojení.

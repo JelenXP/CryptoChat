@@ -143,12 +143,8 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
         }
     }
 
-    // Live filtrování podle jména (bez ohledu na velikost písmen).
-    val filtered = remember(contacts, query) {
-        val q = query.trim()
-        if (q.isEmpty()) contacts
-        else contacts.filter { it.name.contains(q, ignoreCase = true) }
-    }
+    // Live filtrování podle jména (logika v MainScreenLogic, ať jde otestovat).
+    val filtered = remember(contacts, query) { MainScreenLogic.filterContacts(contacts, query) }
 
     val errorDeleteFailed = stringResource(R.string.error_delete_failed)
 
@@ -333,19 +329,19 @@ private fun ContactCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                // Podtitulek = poslední zpráva. Odchozí má prefix „Ty:"; když ještě
-                // žádná není, ukáže se stav (bez klíče / zatím žádné zprávy).
-                val subtitle = when {
-                    !hasKey -> stringResource(R.string.key_not_set)
-                    lastMessage != null -> {
-                        val body = when (lastMessage.kind) {
+                // Rozhodnutí, co ukázat, je v MainScreenLogic (testovatelné);
+                // tady se jen přeloží na text. Odchozí má prefix „Ty:".
+                val subtitle = when (val s = MainScreenLogic.contactSubtitle(hasKey, lastMessage)) {
+                    MainScreenLogic.Subtitle.NoKey -> stringResource(R.string.key_not_set)
+                    MainScreenLogic.Subtitle.NoMessages -> stringResource(R.string.chat_preview_none)
+                    is MainScreenLogic.Subtitle.Last -> {
+                        val body = when (s.kind) {
                             ChatMessage.Kind.IMAGE -> stringResource(R.string.chat_preview_photo)
                             ChatMessage.Kind.FILE -> stringResource(R.string.chat_preview_file)
-                            else -> lastMessage.text
+                            else -> s.text
                         }
-                        if (lastMessage.outgoing) stringResource(R.string.chat_last_you, body) else body
+                        if (s.fromMe) stringResource(R.string.chat_last_you, body) else body
                     }
-                    else -> stringResource(R.string.chat_preview_none)
                 }
                 Text(
                     text = subtitle,

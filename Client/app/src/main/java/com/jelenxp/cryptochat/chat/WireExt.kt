@@ -81,14 +81,91 @@ object WireExt {
     const val MAX_TLV_VALUE_BYTES = 1024
 
     /**
-     * Funkce, které TAHLE verze umí zpracovat jako řídicí zprávu. Prázdné:
-     * v1.1 zavádí jen mechanismus, žádnou řídicí funkci zatím neposílá.
-     * Reakce (v1.2) sem přidají svoje id.
+     * Reakce na zprávu (emoji). Řídicí funkce zavedená ve wire minoru 3.
+     *
+     * Registr `feature id` - čísla se stejně jako typy TLV NIKDY nerecyklují:
+     * | id | jméno    | od minoru |
+     * |----|----------|-----------|
+     * | 1  | REACTION | 3         |
      */
-    private val KNOWN_FEATURES = emptySet<Int>()
+    const val FEATURE_REACTION = 1
+
+    /** Funkce, které TAHLE verze umí zpracovat jako řídicí zprávu. */
+    private val KNOWN_FEATURES = setOf(FEATURE_REACTION)
 
     /** Umí tahle verze danou řídicí funkci? */
     fun isKnownFeature(featureId: Int): Boolean = featureId in KNOWN_FEATURES
+
+    // --- Reakce ---
+
+    /** Nejdelší emoji v bajtech. Sedm rodinných emoji se ZWJ se vejde. */
+    const val MAX_EMOJI_BYTES = 64
+
+    /** Nejvíc codepointů. Drží délku i u sekvencí se ZWJ (👨‍👩‍👧‍👦 = 7). */
+    const val MAX_EMOJI_CODEPOINTS = 12
+
+    /** Reakce vytažená z traileru. */
+    data class ReactionData(val targetHex: String, val emoji: String, val remove: Boolean)
+
+    /** Operace reakce. Čísla se stejně jako typy TLV nerecyklují. */
+    const val OP_SET = 0
+    const val OP_REMOVE = 1
+
+    /**
+     * Je řetězec přijatelný jako reakce?
+     *
+     * Hodnotu volí protějšek, takže se omezuje délka a zakazují znaky, kterými
+     * jde ošidit vykreslení - hlavně **obousměrné přepínače** (U+202A-202E,
+     * U+2066-2069, LRM/RLM), kterými se dá text zobrazit pozpátku, a řídicí
+     * znaky. ZWJ (U+200D) a variantní selektor (U+FE0F) se naopak povolují -
+     * bez nich by složená emoji jako 👨‍👩‍👧 nefungovala.
+     *
+     * Schválně se NEkontroluje, jestli jde opravdu o emoji: seznam by zastaral
+     * s každou verzí Unicode a nové emoji by přestaly chodit. Proti zneužití
+     * jako „textová zpráva" stačí strop délky a pevná velikost místa v UI.
+     */
+    fun isValidEmoji(text: String): Boolean {
+        if (text.isEmpty()) return false
+        if (text.toByteArray(Charsets.UTF_8).size > MAX_EMOJI_BYTES) return false
+        var i = 0
+        var count = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            if (isForbidden(cp)) return false
+            i += Character.charCount(cp)
+            count++
+            if (count > MAX_EMOJI_CODEPOINTS) return false
+        }
+        return true
+    }
+
+    private fun isForbidden(cp: Int): Boolean =
+        cp < 0x20 ||                    // C0 (řídicí znaky, konce řádků)
+        cp == 0x7F ||                   // DEL
+        cp in 0x80..0x9F ||             // C1
+        cp == 0x00AD ||                 // měkký spojovník (neviditelný)
+        cp == 0x061C ||                 // arabská značka (taky obousměrná)
+        cp == 0x200E || cp == 0x200F || // LRM / RLM
+        cp in 0x202A..0x202E ||         // obousměrné vkládání a přepnutí
+        cp == 0x2028 || cp == 0x2029 || // oddělovač řádku / odstavce
+        cp in 0x2066..0x2069 ||         // obousměrné izoláty
+        cp in 0xFFF9..0xFFFB            // meziřádkové anotace
+
+    /**
+     * Hodnota TLV reakce: `[16B cíl][1B operace: 0=nastav, 1=zruš][2B délka][emoji UTF-8]`.
+     */
+    fun buildReaction(target: ByteArray, emoji: String, remove: Boolean): ByteArray {
+        require(target.size == MSG_ID_BYTES) { "Cíl reakce musí mít $MSG_ID_BYTES B" }
+        require(remove || isValidEmoji(emoji)) { "Neplatné emoji" }
+        val e = if (remove) ByteArray(0) else emoji.toByteArray(Charsets.UTF_8)
+        val out = ByteArray(MSG_ID_BYTES + 1 + 2 + e.size)
+        System.arraycopy(target, 0, out, 0, MSG_ID_BYTES)
+        out[MSG_ID_BYTES] = (if (remove) OP_REMOVE else OP_SET).toByte()
+        out[MSG_ID_BYTES + 1] = ((e.size ushr 8) and 0xFF).toByte()
+        out[MSG_ID_BYTES + 2] = (e.size and 0xFF).toByte()
+        System.arraycopy(e, 0, out, MSG_ID_BYTES + 3, e.size)
+        return out
+    }
 
     /**
      * Řídicí zpráva: nenese obsah pro uživatele, ale pokyn (reakce, potvrzení
@@ -126,6 +203,38 @@ object WireExt {
         val msgIdHex: String?
             get() = first(TYPE_MSG_ID)?.takeIf { it.size == MSG_ID_BYTES }?.let { toHex(it) }
 
+        /** ID zprávy, na kterou se odpovídá, nebo null. */
+        val replyToHex: String?
+            get() = first(TYPE_REPLY_TO)?.takeIf { it.size == MSG_ID_BYTES }?.let { toHex(it) }
+
+        /**
+         * Reakce, nebo null když ji trailer nenese nebo je vadná. Všechno v ní
+         * pochází od protějšku, takže se ověřuje délka, mez i samotné emoji.
+         */
+        val reaction: ReactionData?
+            get() {
+                val v = first(TYPE_REACTION) ?: return null
+                if (v.size < MSG_ID_BYTES + 3) return null
+                val target = toHex(v.copyOfRange(0, MSG_ID_BYTES))
+                // Jen známé operace. Kdyby budoucí verze zavedla další (třeba
+                // „nahradit"), nesmí ji tahle pochopit jako zrušení - radši
+                // reakci zahodit, tělo je stejně prázdné.
+                val op = v[MSG_ID_BYTES].toInt() and 0xFF
+                if (op != OP_SET && op != OP_REMOVE) return null
+                val remove = op == OP_REMOVE
+                val len = ((v[MSG_ID_BYTES + 1].toInt() and 0xFF) shl 8) or
+                    (v[MSG_ID_BYTES + 2].toInt() and 0xFF)
+                // Odečítáme, ať délka nemůže přetéct přes konec hodnoty.
+                if (len > v.size - MSG_ID_BYTES - 3) return null
+                val emoji = String(
+                    v.copyOfRange(MSG_ID_BYTES + 3, MSG_ID_BYTES + 3 + len),
+                    Charsets.UTF_8
+                )
+                if (remove) return ReactionData(target, "", true)
+                if (!isValidEmoji(emoji)) return null
+                return ReactionData(target, emoji, false)
+            }
+
         /** Řídicí pokyn, nebo null když zpráva žádný nenese. */
         val control: Control?
             get() {
@@ -152,6 +261,16 @@ object WireExt {
         fun putMsgId(msgId: ByteArray): Builder {
             require(msgId.size == MSG_ID_BYTES) { "MSG_ID musí mít $MSG_ID_BYTES B" }
             return put(TYPE_MSG_ID, msgId)
+        }
+
+        /**
+         * Odkaz na zprávu, na kterou se odpovídá. Délka se hlídá tady: čtecí
+         * strana nesedící délku tiše zahodí, takže bez téhle kontroly by
+         * odpověď odešla bez odkazu a nikdo by se to nedozvěděl.
+         */
+        fun putReplyTo(replyTo: ByteArray): Builder {
+            require(replyTo.size == MSG_ID_BYTES) { "REPLY_TO musí mít $MSG_ID_BYTES B" }
+            return put(TYPE_REPLY_TO, replyTo)
         }
 
         /** Prázdné pole, když není co posílat - pak se trailer vůbec nezapíše. */

@@ -216,7 +216,7 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">Tahle aktualizace připravuje appku na nové funkce chatu a vyplatí se nainstalovat na oba telefony.\n\n• Zprávy si nově nesou skrytý identifikátor, díky kterému půjde v dalších verzích přidat odpovědi a reakce.\n• Lepší zvládání rozdílných verzí — když má protějšek novější appku, zprávy, které tahle verze neumí zobrazit, se teď tiše přeskočí místo aby se hromadily.\n• Opakovaně doručená zpráva se už nezobrazí dvakrát.\n\nS předchozí verzí všechno funguje dál: zprávy odsud tam pořád dorazí jako běžné zprávy.</string>
+    <string name="changelog_body">• Odpovědi — přetáhni zprávu zleva doprava, nebo ji podrž a zvol Odpovědět. Původní zpráva se ukáže nad tvojí odpovědí.\n• Reakce — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zase zruší.\n• Kopírování a mazání — po podržení zprávy jde zkopírovat její text nebo ji smazat z tohohle telefonu. Protějšku jeho kopie zůstane.\n• Upozornění na aktualizace — appka teď dá vědět, když vyjde nová verze.\n\nSe staršími verzemi to funguje dál: odpověď tam dorazí jako běžná zpráva. Reakce potřebují aktualizovaný i druhý telefon, takže se do té doby neposílají.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->
@@ -365,6 +365,24 @@
     <string name="chat_file_receiving">Přijímám…</string>
     <string name="chat_preview_file">📎 Soubor</string>
 
+    <!-- Akce se zprávou (dlouhý stisk) -->
+    <string name="chat_selection_title">1 vybráno</string>
+    <string name="chat_action_reply">Odpovědět</string>
+    <string name="chat_action_copy">Kopírovat</string>
+    <string name="chat_action_delete">Smazat u mě</string>
+    <string name="chat_copied">Zkopírováno</string>
+    <string name="chat_deleted">Zpráva smazána</string>
+    <string name="chat_delete_title">Smazat zprávu?</string>
+    <string name="chat_delete_body">Zmizí jen z tohohle telefonu. Protějšku jeho kopie zůstane.</string>
+    <string name="btn_delete">Smazat</string>
+    <string name="content_desc_clear_selection">Zrušit výběr</string>
+    <string name="content_desc_cancel_reply">Zrušit odpověď</string>
+    <string name="chat_reply_you">Vy</string>
+    <string name="chat_reply_unavailable">Původní zpráva není dostupná</string>
+    <string name="chat_reply_photo">Fotka</string>
+    <string name="chat_reply_file">Soubor</string>
+    <string name="chat_reactions_unsupported">Tenhle kontakt musí nejdřív aktualizovat aplikaci, aby reakce viděl.</string>
+
     <!-- Párování přes pozvánku -->
     <string name="pair_need_server">Nejdřív je potřeba nastavit adresu serveru chatu.</string>
     <string name="btn_set_server">Nastavit server</string>
@@ -390,6 +408,11 @@
     <string name="notif_channel_service_desc">Drží spojení k serveru chatu přes Tor, aby chodily zprávy.</string>
     <string name="notif_channel_messages">Zprávy</string>
     <string name="notif_channel_messages_desc">Upozornění na nové zprávy.</string>
+    <string name="notif_channel_updates">Aktualizace aplikace</string>
+    <string name="notif_channel_updates_desc">Dá vědět, když vyjde nová verze.</string>
+    <string name="notif_update_title">Je dostupná nová verze</string>
+    <string name="notif_update_title_important">Důležitá aktualizace</string>
+    <string name="notif_update_text">Verze %1$s je připravená — klepnutím zobrazíte novinky.</string>
     <string name="notif_connecting">Připojuji k serveru chatu…</string>
     <string name="notif_connected">Připojeno k serveru chatu</string>
     <string name="notif_new_message">Nová zpráva</string>

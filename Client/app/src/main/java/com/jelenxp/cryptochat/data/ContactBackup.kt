@@ -61,6 +61,14 @@ object ContactBackup {
                     // Stabilní ID zprávy - bez něj by po obnově zálohy přestaly
                     // fungovat odkazy na zprávu (odpovědi, reakce).
                     m.wireId?.let { mo.put("wid", it) }
+                    m.replyToWireId?.let { mo.put("rto", it) }
+                    if (m.reactions.isNotEmpty()) {
+                        val rx = JSONObject()
+                        m.reactions.forEach { (reactor, r) ->
+                            rx.put(reactor, JSONObject().put("e", r.emoji).put("t", r.timestamp))
+                        }
+                        mo.put("rx", rx)
+                    }
                     // U fotky přibalíme i bajty obrázku, ať je po importu vidět.
                     // Velké soubory (video, dokumenty) se do zálohy nebalí - nafoukly
                     // by ji o desítky MB; zůstane po nich jen název a typ.
@@ -168,7 +176,9 @@ object ContactBackup {
                             kind = kind,
                             mediaPath = mediaPath,
                             mimeType = if (mo.has("mime")) mo.optString("mime") else null,
-                            wireId = if (mo.has("wid")) mo.optString("wid") else null
+                            wireId = if (mo.has("wid")) mo.optString("wid") else null,
+                            replyToWireId = if (mo.has("rto")) mo.optString("rto") else null,
+                            reactions = readBackupReactions(mo.optJSONObject("rx"))
                         )
                     )
                 }
@@ -177,6 +187,22 @@ object ContactBackup {
             if (obj.has("unread")) chatRepo.setUnread(id, obj.optInt("unread", 0))
         }
         return count
+    }
+
+    /**
+     * Reakce ze zálohy. Záloha může přijít odkudkoli, takže se poškozený záznam
+     * přeskočí a zbytek zprávy se načte dál.
+     */
+    private fun readBackupReactions(obj: JSONObject?): Map<String, ChatMessage.Reaction> {
+        if (obj == null) return emptyMap()
+        val out = HashMap<String, ChatMessage.Reaction>(2)
+        for (reactor in obj.keys()) {
+            val r = obj.optJSONObject(reactor) ?: continue
+            val emoji = r.optString("e")
+            if (emoji.isEmpty()) continue
+            out[reactor] = ChatMessage.Reaction(emoji, r.optLong("t"))
+        }
+        return out
     }
 }
 

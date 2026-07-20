@@ -27,6 +27,25 @@ object RelaySync {
 
     private const val TAG = "RelaySync"
 
+    /**
+     * Přenos k relayi. Ostrý je [RealRelayTransport]; testy si sem dosadí
+     * `FakeRelay`, aby šla otestovat celá přijímací roura (viz [RelayTransport]).
+     * Mimo testy tuhle hodnotu NEMĚŇ.
+     */
+    @Volatile
+    var transport: RelayTransport = RealRelayTransport
+
+    /**
+     * Šifrování historie. Stejný důvod jako u [transport] - testy sem dosadí
+     * průhlednou implementaci, jinak by `poll()` neuložilo ani jednu zprávu.
+     */
+    @Volatile
+    var storageCrypto: com.jelenxp.cryptochat.crypto.StorageCrypto =
+        com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
+
+    /** Repozitář historie se správným šifrováním (viz [storageCrypto]). */
+    private fun repoFor(context: Context) = ChatRepository(context, storageCrypto)
+
     // Délka jedné epochy schránky (rotace). 1 den = rozumný kompromis mezi
     // soukromím (časté střídání ID) a spolehlivostí (server drží blob 24 h).
     private const val EPOCH_MS = 24L * 60 * 60 * 1000
@@ -99,7 +118,12 @@ object RelaySync {
      * Zapíše zprávu do lokální historie se stavem SENDING a vrátí ji. Nedělá síť -
      * díky tomu se dá hned zobrazit v UI. Doručení pak dokončí [deliver].
      */
-    fun enqueue(context: Context, contact: Contact, text: String): ChatMessage {
+    fun enqueue(
+        context: Context,
+        contact: Contact,
+        text: String,
+        replyToWireId: String? = null
+    ): ChatMessage {
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             outgoing = true,
@@ -109,10 +133,71 @@ object RelaySync {
             // Stabilní ID se vyrábí TEĎ, ne až při odeslání - opakovaný pokus
             // (`retry`) tak pošle tutéž zprávu se stejným ID a protějšku
             // nevznikne duplicita.
-            wireId = WireExt.toHex(WireExt.randomMsgId())
+            wireId = WireExt.toHex(WireExt.randomMsgId()),
+            replyToWireId = replyToWireId
         )
-        ChatRepository(context).append(contact.id, message)
+        repoFor(context).append(contact.id, message)
         return message
+    }
+
+    /**
+     * Nastaví nebo zruší NAŠI reakci u zprávy a pošle ji protějšku.
+     *
+     * Když protějšek reakce neumí (nebo jeho verzi ještě neznáme), **neuloží se
+     * ani lokálně** a vrátí se [ReactionSend.PEER_UNSUPPORTED]. Uložit ji jen
+     * u sebe by znamenalo trvalý rozdíl mezi telefony: odesílací fronta pro
+     * reakce neexistuje, takže by se nikdy nedoslala.
+     */
+    fun sendReaction(
+        context: Context,
+        contact: Contact,
+        wireRef: String,
+        emoji: String?
+    ): ReactionSend {
+        // Podpora se ověřuje PŘED uložením. Kdyby se reakce uložila lokálně a
+        // odeslat nešla, viděl by ji jen její autor a rozdíl mezi telefony by
+        // se už nikdy nesrovnal - odesílací fronta pro reakce neexistuje.
+        if (!WireCompat.peerKnownSupports(context, contact.id, WireCompat.MINOR_REACTIONS)) {
+            DiagnosticsLog.log(TAG, "protějšek reakce neumí (nebo verzi neznáme), neposílám")
+            return ReactionSend.PEER_UNSUPPORTED
+        }
+        val key = contact.keyBase64
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        val target = WireExt.fromHex(wireRef)
+        if (key.isNullOrBlank() || baseUrl.isBlank() || target == null) {
+            return ReactionSend.FAILED
+        }
+        val now = System.currentTimeMillis()
+        val repo = repoFor(context)
+        val stored = repo.setReaction(contact.id, wireRef, ChatMessage.REACTOR_ME, emoji, now)
+        if (stored != ChatRepository.ReactionResult.APPLIED) {
+            DiagnosticsLog.warn(TAG, "reakci se nepodařilo uložit ($stored)")
+            return ReactionSend.FAILED
+        }
+        val delivered = try {
+            val dir = sendDir(contact)
+            val blob = ChatEnvelope.sealReaction(
+                target, emoji ?: "", emoji == null, now, key, dir
+            )
+            transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "odeslání reakce selhalo (${e.javaClass.simpleName})")
+            false
+        }
+        DiagnosticsLog.log(TAG, "odeslání reakce: ${if (delivered) "doručeno" else "selhalo"}")
+        return if (delivered) ReactionSend.SENT else ReactionSend.FAILED
+    }
+
+    /** Jak dopadl pokus o reakci. */
+    enum class ReactionSend {
+        /** Uloženo a odesláno. */
+        SENT,
+
+        /** Protějšek reakce neumí (nebo jeho verzi ještě neznáme) - neuloženo. */
+        PEER_UNSUPPORTED,
+
+        /** Uložení nebo odeslání selhalo. */
+        FAILED
     }
 
     /**
@@ -132,7 +217,7 @@ object RelaySync {
             mediaPath = path,
             wireId = WireExt.toHex(WireExt.randomMsgId())
         )
-        ChatRepository(context).append(contact.id, message)
+        repoFor(context).append(contact.id, message)
         return message
     }
 
@@ -157,7 +242,7 @@ object RelaySync {
             mediaPath = path,
             mimeType = info.mimeType
         )
-        ChatRepository(context).append(contact.id, message)
+        repoFor(context).append(contact.id, message)
         return message
     }
 
@@ -178,16 +263,17 @@ object RelaySync {
                 // trailer nečte, takže jí zpráva dorazí jako obyčejná - přesně
                 // proto je to tam, kde to je.
                 val msgId = message.wireId?.let { WireExt.fromHex(it) }
+                val replyTo = message.replyToWireId?.let { WireExt.fromHex(it) }
                 val blob = if (message.kind == ChatMessage.Kind.IMAGE && message.mediaPath != null) {
                     ChatEnvelope.sealImage(
                         java.io.File(message.mediaPath).readBytes(), message.timestamp, key, dir,
                         msgId
                     )
                 } else {
-                    ChatEnvelope.seal(message.text, message.timestamp, key, dir, msgId)
+                    ChatEnvelope.seal(message.text, message.timestamp, key, dir, msgId, replyTo)
                 }
                 val mailbox = RelayCrypto.mailboxId(key, dir, currentEpoch())
-                RelayClient.put(baseUrl, mailbox, blob)
+                transport.put(baseUrl, mailbox, blob)
             }
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání zprávy selhalo (${e.javaClass.simpleName})")
@@ -199,7 +285,7 @@ object RelaySync {
             "odeslání zprávy (${message.kind}): ${if (delivered) "doručeno" else "selhalo"}"
         )
         val finalStatus = if (delivered) ChatMessage.Status.SENT else ChatMessage.Status.FAILED
-        ChatRepository(context).updateStatus(contact.id, message.id, finalStatus)
+        repoFor(context).updateStatus(contact.id, message.id, finalStatus)
         return delivered
     }
 
@@ -229,7 +315,7 @@ object RelaySync {
                     message.mimeType ?: "application/octet-stream",
                     message.text, message.timestamp, key, dir
                 )
-                if (!RelayClient.put(baseUrl, mailbox, manifest)) {
+                if (!transport.put(baseUrl, mailbox, manifest)) {
                     false
                 } else {
                     var index = 0
@@ -248,7 +334,7 @@ object RelaySync {
                             val blob = ChatEnvelope.sealFileChunk(
                                 fileId, index, chunk, message.timestamp, key, dir
                             )
-                            if (!RelayClient.put(baseUrl, mailbox, blob)) {
+                            if (!transport.put(baseUrl, mailbox, blob)) {
                                 ok = false
                                 break
                             }
@@ -263,7 +349,7 @@ object RelaySync {
             false
         }
         MediaTransfers.clearProgress(message.id)
-        ChatRepository(context).updateStatus(
+        repoFor(context).updateStatus(
             contact.id, message.id,
             if (delivered) ChatMessage.Status.SENT else ChatMessage.Status.FAILED
         )
@@ -279,7 +365,7 @@ object RelaySync {
         val baseUrl = SettingsRepository(context).getRelayUrl()
         if (baseUrl.isBlank()) return PollResult(0, false)
 
-        val repo = ChatRepository(context)
+        val repo = repoFor(context)
         val dir = recvDir(contact)
         val epoch = currentEpoch()
         var failed = false
@@ -292,7 +378,7 @@ object RelaySync {
         fun fetch(e: Long, waitSeconds: Int): Int {
             val mailbox = RelayCrypto.mailboxId(key, dir, e)
             val fetched = try {
-                RelayClient.get(baseUrl, mailbox, waitSeconds)
+                transport.get(baseUrl, mailbox, waitSeconds)
             } catch (ex: Exception) {
                 failed = true
                 DiagnosticsLog.warn(TAG, "vyzvednutí zpráv selhalo (${ex.javaClass.simpleName})")
@@ -338,6 +424,11 @@ object RelaySync {
                     ChatRepository.AppendResult.ADDED -> {
                         if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
                         n++
+                        // Teprve teď může existovat cíl reakce, která dorazila dřív.
+                        PendingReactions.applyAll(contact.id) { ref, reactor, emoji, ts ->
+                            repo.setReaction(contact.id, ref, reactor, emoji, ts) ==
+                                ChatRepository.ReactionResult.APPLIED
+                        }
                     }
                 }
             }
@@ -417,9 +508,39 @@ object RelaySync {
                             timestamp = opened.timestamp,
                             status = ChatMessage.Status.RECEIVED,
                             // Volí ho protějšek, proto zvlášť od našeho `id`.
-                            wireId = ok.msgIdHex
+                            wireId = ok.msgIdHex,
+                            replyToWireId = ok.replyToHex
                         )
                     )
+
+                    // Reakce: není to zpráva do historie, jen se přilepí k cílové
+                    // zprávě. Schválně NEjde přes arrived() - nesmí zvýšit počet
+                    // nepřečtených ani vyvolat notifikaci.
+                    is ChatEnvelope.Opened.Reaction -> {
+                        val emoji = if (opened.remove) null else opened.emoji
+                        when (
+                            repo.setReaction(
+                                contact.id, opened.targetHex, ChatMessage.REACTOR_PEER,
+                                emoji, opened.timestamp
+                            )
+                        ) {
+                            ChatRepository.ReactionResult.APPLIED -> Unit
+                            // Cíl zatím nedorazil - odlož, ať se reakce neztratí.
+                            // Dávku klidně potvrdíme: reakci si držíme my.
+                            ChatRepository.ReactionResult.TARGET_MISSING -> {
+                                DiagnosticsLog.log(TAG, "reakce dorazila dřív než zpráva, odkládám")
+                                PendingReactions.remember(
+                                    contact.id, opened.targetHex, ChatMessage.REACTOR_PEER,
+                                    emoji, opened.timestamp
+                                )
+                            }
+                            // Zápis selhal - dávku nepotvrzuj, ať dorazí znovu.
+                            ChatRepository.ReactionResult.FAILED -> {
+                                DiagnosticsLog.error(TAG, "uložení reakce selhalo")
+                                allSafe = false
+                            }
+                        }
+                    }
 
                     is ChatEnvelope.Opened.Image -> {
                         val path = ChatMediaStore.save(context, opened.bytes)
@@ -478,20 +599,44 @@ object RelaySync {
                                 mimeType = opened.mimeType
                             )
                         )
-                        if (added) {
-                            if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
-                            n++
+                        when (added) {
+                            // Zápis selhal (nešla přečíst historie) - dávku
+                            // NEPOTVRZOVAT, jinak by manifest relay smazal a
+                            // zpráva o souboru by zmizela, zatímco kousky by se
+                            // poskládaly do souboru, na který nic neodkazuje.
+                            ChatRepository.AppendResult.FAILED -> {
+                                DiagnosticsLog.error(TAG, "zápis manifestu do historie selhal")
+                                BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                                allSafe = false
+                                continue
+                            }
+                            ChatRepository.AppendResult.DUPLICATE -> Unit
+                            ChatRepository.AppendResult.ADDED -> {
+                                if (ActiveChat.currentId != contact.id) {
+                                    repo.incrementUnread(contact.id)
+                                }
+                                n++
+                                // Cíl reakce na soubor může existovat až teď.
+                                PendingReactions.applyAll(contact.id) { ref, reactor, emoji, ts ->
+                                    repo.setReaction(contact.id, ref, reactor, emoji, ts) ==
+                                        ChatRepository.ReactionResult.APPLIED
+                                }
+                            }
                         }
                         // Kousky mohly dorazit dřív než manifest (zaparkované) -
                         // pak je soubor hotový už teď a nikdo by ho nesložil.
                         if (MediaTransfers.receivedCount(context, idHex) >= opened.totalChunks) {
                             val path = MediaTransfers.assemble(context, idHex)
                             MediaTransfers.clearProgress(idHex)
-                            repo.updateMedia(
-                                contact.id, idHex, path,
-                                if (path != null) ChatMessage.Status.RECEIVED
-                                else ChatMessage.Status.FAILED
-                            )
+                            if (!repo.updateMedia(
+                                    contact.id, idHex, path,
+                                    if (path != null) ChatMessage.Status.RECEIVED
+                                    else ChatMessage.Status.FAILED
+                                )
+                            ) {
+                                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
+                                allSafe = false
+                            }
                         }
                     }
 
@@ -518,11 +663,15 @@ object RelaySync {
                         if (complete) {
                             val path = MediaTransfers.assemble(context, idHex)
                             MediaTransfers.clearProgress(idHex)
-                            repo.updateMedia(
-                                contact.id, idHex, path,
-                                if (path != null) ChatMessage.Status.RECEIVED
-                                else ChatMessage.Status.FAILED
-                            )
+                            if (!repo.updateMedia(
+                                    contact.id, idHex, path,
+                                    if (path != null) ChatMessage.Status.RECEIVED
+                                    else ChatMessage.Status.FAILED
+                                )
+                            ) {
+                                DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")
+                                allSafe = false
+                            }
                         }
                     }
 
@@ -569,7 +718,7 @@ object RelaySync {
             // odložená v karanténě - teprve tehdy ji server smí zahodit. Jinak
             // ať dorazí znovu; duplicitu odfiltruje ReplayGuard.
             if (fetched.ackSeq >= 0 && allSafe) {
-                if (!RelayClient.ack(baseUrl, mailbox, fetched.ackSeq)) failed = true
+                if (!transport.ack(baseUrl, mailbox, fetched.ackSeq)) failed = true
             } else if (!allSafe) {
                 DiagnosticsLog.warn(TAG, "dávka není celá uložená, potvrzení se neposílá")
                 failed = true

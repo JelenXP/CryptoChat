@@ -103,6 +103,26 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_UPD_SNOOZE_IMPORTANT, version).apply()
     }
 
+    // Kdy naposled kontrolovala nové vydání služba na pozadí. Drží se zvlášť od
+    // startovní kontroly, aby se z pozadí chodilo na síť nejvýš jednou za den -
+    // víc probuzení a onion requestů by stálo baterii.
+    fun getUpdateLastCheckAt(): Long = prefs.getLong(KEY_UPD_LAST_CHECK, 0L)
+    fun setUpdateLastCheckAt(millis: Long) {
+        prefs.edit().putLong(KEY_UPD_LAST_CHECK, millis).apply()
+    }
+
+    /** Verze, o které už notifikace přišla - ať nechodí znovu při každé kontrole. */
+    fun getUpdateNotifiedVersion(): String? = prefs.getString(KEY_UPD_NOTIFIED, null)
+    fun setUpdateNotifiedVersion(version: String) {
+        prefs.edit().putString(KEY_UPD_NOTIFIED, version).apply()
+    }
+
+    /** Kolikrát po sobě kontrola selhala - vstup pro backoff. */
+    fun getUpdateCheckFailures(): Int = prefs.getInt(KEY_UPD_FAILURES, 0)
+    fun setUpdateCheckFailures(count: Int) {
+        prefs.edit().putInt(KEY_UPD_FAILURES, count.coerceAtLeast(0)).apply()
+    }
+
     // Naposledy „viděná" verze appky (versionCode) - pro zobrazení novinek po
     // aktualizaci. 0 = ještě nezaznamenáno (čerstvá instalace).
     fun getLastSeenVersionCode(): Int = prefs.getInt(KEY_LAST_SEEN_VC, 0)
@@ -176,6 +196,9 @@ class SettingsRepository(context: Context) {
         private const val KEY_UPD_AT = "update_dismissed_at"
         private const val KEY_UPD_SNOOZE_UNTIL = "update_snooze_until"
         private const val KEY_UPD_SNOOZE_IMPORTANT = "update_snooze_important_shown"
+        private const val KEY_UPD_LAST_CHECK = "update_last_check_at"
+        private const val KEY_UPD_NOTIFIED = "update_notified_version"
+        private const val KEY_UPD_FAILURES = "update_check_failures"
         private const val KEY_LAST_SEEN_VC = "last_seen_version_code"
         private const val KEY_FILE_LIMIT = "file_size_limit_enabled"
         private const val KEY_RELAY_URL = "relay_url"

@@ -75,6 +75,17 @@ object ChatEnvelope {
             val index: Int,
             val bytes: ByteArray
         ) : Opened
+
+        /**
+         * Reakce na zprávu. Není to zpráva pro historii - jen se přilepí
+         * k cílové zprávě, nezvyšuje nepřečtené a neposílá notifikaci.
+         */
+        data class Reaction(
+            override val timestamp: Long,
+            val targetHex: String,
+            val emoji: String,
+            val remove: Boolean
+        ) : Opened
     }
 
     /**
@@ -88,10 +99,11 @@ object ChatEnvelope {
         timestamp: Long,
         keyBase64: String,
         dir: Int,
-        msgId: ByteArray? = null
+        msgId: ByteArray? = null,
+        replyTo: ByteArray? = null
     ): ByteArray {
         val data = text.toByteArray(Charsets.UTF_8)
-        val trailer = trailerFor(msgId)
+        val trailer = trailerFor(msgId, replyTo)
         // Do koše se počítá i trailer - jinak by výplň skončila dřív, než trailer
         // začíná, a zpráva by se usekla.
         val padded = ByteArray(bucketFor(HEADER + data.size + trailer.size))
@@ -117,10 +129,47 @@ object ChatEnvelope {
         return encrypt(payload, keyBase64, dir)
     }
 
-    /** Trailer s ID zprávy, nebo prázdné pole když se ID neposílá. */
-    private fun trailerFor(msgId: ByteArray?): ByteArray =
-        if (msgId == null) ByteArray(0)
-        else WireExt.Builder().putMsgId(msgId).build()
+    /** Trailer s ID zprávy a případným odkazem na odpověď. */
+    private fun trailerFor(msgId: ByteArray?, replyTo: ByteArray? = null): ByteArray {
+        if (msgId == null && replyTo == null) return ByteArray(0)
+        val b = WireExt.Builder()
+        msgId?.let { b.putMsgId(it) }
+        replyTo?.let { b.putReplyTo(it) }
+        return b.build()
+    }
+
+    /**
+     * Reakce na zprávu jako **řídicí zpráva**: tělo je prázdné a všechno je
+     * v traileru. Prázdné tělo je součást kontraktu (viz [WireExt.Control]) -
+     * díky němu ji verze, která reakce neumí, bezpečně zahodí, místo aby
+     * uživateli ukázala prázdnou bublinu.
+     *
+     * [remove] = zrušení reakce; pak se [emoji] ignoruje.
+     */
+    fun sealReaction(
+        target: ByteArray,
+        emoji: String,
+        remove: Boolean,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int
+    ): ByteArray {
+        val control = byteArrayOf(
+            ((WireExt.FEATURE_REACTION ushr 8) and 0xFF).toByte(),
+            (WireExt.FEATURE_REACTION and 0xFF).toByte(),
+            0 // příznaky, zatím žádné
+        )
+        val trailer = WireExt.Builder()
+            .put(WireExt.TYPE_CONTROL, control)
+            .put(WireExt.TYPE_REACTION, WireExt.buildReaction(target, emoji, remove))
+            .build()
+        // Do koše jako text - reakce tak na drátě vypadá jako krátká zpráva
+        // a relay z velikosti nepozná, že jde o reakci.
+        val padded = ByteArray(bucketFor(HEADER + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, 0)
+        System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
+        return encrypt(padded, keyBase64, dir)
+    }
 
     /**
      * Ohlášení souboru před posláním kousků.
@@ -179,11 +228,15 @@ object ChatEnvelope {
      */
     sealed interface Result {
 
-        /** Rozbaleno. [msgIdHex] je stabilní ID zprávy, když ho odesílatel poslal. */
+        /**
+         * Rozbaleno. [msgIdHex] je stabilní ID zprávy, když ho odesílatel
+         * poslal; [replyToHex] ID zprávy, na kterou se odpovídá.
+         */
         data class Ok(
             val senderMinor: Int,
             val content: Opened,
-            val msgIdHex: String? = null
+            val msgIdHex: String? = null,
+            val replyToHex: String? = null
         ) : Result
 
         /**
@@ -271,8 +324,27 @@ object ChatEnvelope {
         // relay zprávu po potvrzení maže. U kousku souboru by navíc jeden
         // zahozený díl zasekl celý přenos napořád. Bezpečnost tady nesmí stát
         // na dohodě s budoucí verzí, ale na struktuře zprávy.
-        val control = trailer?.control
-        if (control != null && !WireExt.isKnownFeature(control.featureId) && len == 0) {
+        // Prázdné tělo = zpráva bez obsahu pro uživatele. Buď je to řídicí
+        // zpráva (reakce), nebo něco, čemu nerozumíme - v obou případech se
+        // nemá co ztratit.
+        //
+        // POZOR: podmínka stojí na `len == 0`, NE na tom, že se povedlo přečíst
+        // řídicí TLV. Kdyby se rozhodovalo podle traileru, stačil by vadný nebo
+        // přerostlý trailer (parse vrací null) a spadlo by se do běžné větve,
+        // kde by z prázdného textu vznikla prázdná bublina v historii - i s
+        // notifikací a nepřečtenou zprávou o ničem.
+        if (kind == KIND_TEXT && len == 0) {
+            val control = trailer?.control
+            if (control?.featureId == WireExt.FEATURE_REACTION) {
+                val r = trailer.reaction
+                if (r != null) {
+                    return Result.Ok(
+                        senderMinor,
+                        Opened.Reaction(timestamp, r.targetHex, r.emoji, r.remove),
+                        trailer.msgIdHex
+                    )
+                }
+            }
             return Result.Unsupported(senderMinor)
         }
 
@@ -289,7 +361,7 @@ object ChatEnvelope {
         // Vnitřek manifestu/kousku se rozparsovat nepovedl - poškozený obsah,
         // ať dostane šanci v karanténě.
         if (content == null) return Result.Unreadable
-        return Result.Ok(senderMinor, content, trailer?.msgIdHex)
+        return Result.Ok(senderMinor, content, trailer?.msgIdHex, trailer?.replyToHex)
     }
 
     private fun parseManifest(timestamp: Long, data: ByteArray): Opened.FileManifest? {

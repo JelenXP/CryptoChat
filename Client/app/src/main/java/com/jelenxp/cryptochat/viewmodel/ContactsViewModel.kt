@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.PendingReactions
 import com.jelenxp.cryptochat.chat.ReplayGuard
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.data.Contact
@@ -51,6 +52,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
             runCatching { ReplayGuard.clear(ctx, id) }
             runCatching { WireCompat.clear(ctx, id) }
             runCatching { BlobQuarantine.clear(ctx, id) }
+            runCatching { PendingReactions.clear(id) }
             runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
         }
         refresh()

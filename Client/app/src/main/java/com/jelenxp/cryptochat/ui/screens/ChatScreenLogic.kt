@@ -1,0 +1,68 @@
+package com.jelenxp.cryptochat.ui.screens
+
+import com.jelenxp.cryptochat.chat.ChatMessage
+
+/**
+ * Čistá logika obrazovky konverzace - **vytažená z `@Composable`, aby šla
+ * otestovat**.
+ *
+ * Pravidlo projektu (viz testovací politika v `CLAUDE.md`): netriviální
+ * rozhodování nesmí zůstat uvnitř composable ani `LaunchedEffect`. Přesně tam
+ * se dřív schoval nález v1.2-23 - výběr zprávy, která se mezitím smazala, zůstal
+ * viset a ukázal panel bez akcí. Jako čistá funkce nad seznamem je to triviálně
+ * testovatelné bez Androidu.
+ */
+object ChatScreenLogic {
+
+    /**
+     * Vrátí id vybrané zprávy, jen pokud v seznamu pořád je - jinak `null`.
+     *
+     * Tohle je jádro nálezu v1.2-23: když vybraná zpráva zmizí (uživatel ji
+     * smazal, nebo se přenačetla historie), výběr se musí zrušit, jinak lišta
+     * výběru visí bez cílové zprávy.
+     */
+    fun survivingId(messages: List<ChatMessage>, selectedId: String?): String? =
+        selectedId?.takeIf { id -> messages.any { it.id == id } }
+
+    /**
+     * Vrátí zprávu, na kterou se odpovídá, jen pokud v seznamu pořád je.
+     * Stejný důvod jako [survivingId] - nechceme odpovídat na zmizelou zprávu.
+     */
+    fun survivingReply(messages: List<ChatMessage>, replyTo: ChatMessage?): ChatMessage? =
+        replyTo?.takeIf { r -> messages.any { it.id == r.id } }
+
+    /**
+     * Index zpráv podle sdíleného odkazu ([ChatMessage.wireRef]) - pro rychlé
+     * dohledání citace u odpovědí. Zprávy bez odkazu se přeskočí.
+     */
+    fun wireRefIndex(messages: List<ChatMessage>): Map<String, ChatMessage> =
+        messages.mapNotNull { m -> m.wireRef?.let { it to m } }.toMap()
+
+    /** Výsledek dohledání citované zprávy. */
+    data class Quote(
+        /** Nalezená původní zpráva, nebo `null`. */
+        val message: ChatMessage?,
+        /** Odpověď odkaz nese, ale původní zpráva se nenašla (smazaná / stará). */
+        val missing: Boolean
+    )
+
+    /**
+     * Dohledá zprávu, na kterou [message] odpovídá.
+     *
+     * Rozlišuje tři stavy: není to odpověď (`missing = false`, `message = null`),
+     * odpověď s nalezenou zprávou, a odpověď na zprávu, která už není
+     * (`missing = true`) - tehdy UI ukáže „původní zpráva není dostupná".
+     */
+    fun resolveQuote(message: ChatMessage, index: Map<String, ChatMessage>): Quote {
+        val ref = message.replyToWireId ?: return Quote(null, missing = false)
+        val found = index[ref]
+        return Quote(found, missing = found == null)
+    }
+
+    /**
+     * Nová hodnota MOJÍ reakce po klepnutí na emoji: stejné emoji podruhé ji
+     * zruší (`null`), jiné ji nahradí.
+     */
+    fun toggledReaction(mine: String?, tapped: String): String? =
+        if (mine == tapped) null else tapped
+}

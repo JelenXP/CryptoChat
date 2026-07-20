@@ -21,8 +21,10 @@ object ChatNotifications {
 
     const val CHANNEL_SERVICE = "relay_service"
     const val CHANNEL_MESSAGES = "chat_messages"
+    const val CHANNEL_UPDATES = "app_updates"
     const val SERVICE_NOTIFICATION_ID = 1001
     private const val MESSAGE_NOTIFICATION_BASE = 2000
+    private const val UPDATE_NOTIFICATION_ID = 3001
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -44,6 +46,20 @@ object ChatNotifications {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = context.getString(R.string.notif_channel_messages_desc)
+            }
+        )
+        // Aktualizace mají vlastní kanál, ať jdou vypnout zvlášť od zpráv.
+        // IMPORTANCE_LOW = bez zvuku; není to nic, kvůli čemu má telefon zvonit.
+        // POZOR: důležitost kanálu jde po prvním vytvoření už jen ZVÝŠIT (a to
+        // jen uživatelem), takže tuhle hodnotu nelze později opravit - musí být
+        // správně napoprvé.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_UPDATES,
+                context.getString(R.string.notif_channel_updates),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = context.getString(R.string.notif_channel_updates_desc)
             }
         )
     }
@@ -101,6 +117,49 @@ object ChatNotifications {
             nm.notify(MESSAGE_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF), notification)
         } catch (e: SecurityException) {
             // Povolení mezitím odebráno - ignorovat.
+        }
+    }
+
+    /**
+     * Notifikace o nové verzi aplikace. Klepnutí otevře appku, která pak ukáže
+     * obrazovku s aktualizací (stejná logika jako při startu).
+     *
+     * Nesmí obsahovat nic o kontaktech ani zprávách - je to jen číslo verze.
+     */
+    fun notifyUpdate(context: Context, version: String, important: Boolean): Boolean {
+        val nm = NotificationManagerCompat.from(context)
+        // Vrací úspěch, aby si volající NEPOZNAMENAL verzi jako oznámenou, když
+        // se notifikace vůbec neukázala - jinak by ji po povolení oznámení už
+        // nikdy nedostal.
+        if (!nm.areNotificationsEnabled()) return false
+        val open = PendingIntent.getActivity(
+            context, UPDATE_NOTIFICATION_ID,
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            pendingFlags()
+        )
+        val title = context.getString(
+            if (important) R.string.notif_update_title_important else R.string.notif_update_title
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_UPDATES)
+            .setSmallIcon(R.drawable.ic_stat_relay)
+            .setContentTitle(title)
+            .setContentText(context.getString(R.string.notif_update_text, version))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            // Na zamčené obrazovce jen obecný text. Appka jinak drží FLAG_SECURE
+            // a skrývá obsah zpráv - bylo by nedůsledné, aby zrovna tahle
+            // notifikace komukoli u telefonu prozradila, že tenhle messenger
+            // na zařízení je.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(open)
+            .build()
+        return try {
+            nm.notify(UPDATE_NOTIFICATION_ID, notification)
+            true
+        } catch (e: SecurityException) {
+            // Povolení mezitím odebráno - ignorovat.
+            false
         }
     }
 

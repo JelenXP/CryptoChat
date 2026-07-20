@@ -18,12 +18,12 @@ android {
         applicationId = "com.jelenxp.cryptochatonline"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
+        versionCode = 3
         // POZOR: versionName musí být čistě číselný ("1.0", "1.1", "2.0"). Porovnává
         // ho UpdateChecker.compareVersions po složkách oddělených tečkou a nečíselnou
         // složku bere jako 0 - jakýkoli suffix ("1.0-chat") by se tiše zahodil.
         // Tag vydání na GitHubu musí sedět: "v1.1" nebo "1.1".
-        versionName = "1.1"
+        versionName = "1.2"
 
         // Runner pro instrumentované UI testy (androidTest) - spouští se na emulátoru v CI.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

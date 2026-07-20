@@ -31,9 +31,59 @@ data class ChatMessage(
      * nesmí míchat s naším lokálním klíčem, podle kterého se zprávy hledají
      * a aktualizují.
      */
-    val wireId: String? = null
+    val wireId: String? = null,
+
+    /**
+     * [wireRef] zprávy, na kterou tahle odpovídá, nebo `null`. Citovaný text se
+     * dohledává lokálně - neveze se s sebou, ať se obsah nešifruje a neposílá
+     * podruhé. Když původní zpráva u příjemce není (smazal ji, nebo přišla před
+     * aktualizací), ukáže se místo náhledu poznámka.
+     */
+    val replyToWireId: String? = null,
+
+    /**
+     * Reakce na tuhle zprávu, klíčované [REACTOR_ME] / [REACTOR_PEER].
+     * V konverzaci jsou právě dva účastníci, takže víc klíčů nikdy nevznikne.
+     */
+    val reactions: Map<String, Reaction> = emptyMap()
 ) {
     /** RECEIVING = přijímá se po kouscích (velký soubor), ještě není kompletní. */
     enum class Status { SENDING, SENT, FAILED, RECEIVED, RECEIVING }
     enum class Kind { TEXT, IMAGE, FILE }
+
+    /**
+     * Jedna reakce. [timestamp] rozhoduje při přeházeném pořadí: reakce, která
+     * dorazí opožděně (třeba z karantény), nesmí přebít novější.
+     *
+     * Prázdné [emoji] je **náhrobek** po zrušené reakci - drží se kvůli času,
+     * aby šlo poznat, že zrušení je novější než reakce, která dorazí opožděně.
+     * Do UI se nepropisuje (viz [visibleReactions]).
+     */
+    data class Reaction(val emoji: String, val timestamp: Long) {
+        val isRemoved: Boolean get() = emoji.isEmpty()
+    }
+
+    /** Reakce k zobrazení - bez náhrobků po zrušených. */
+    val visibleReactions: Map<String, Reaction>
+        get() = reactions.filterValues { !it.isRemoved }
+
+    /** Emoji daného autora, nebo null když nereagoval (nebo reakci zrušil). */
+    fun reactionOf(reactor: String): String? =
+        reactions[reactor]?.takeIf { !it.isRemoved }?.emoji
+
+    /**
+     * Odkaz na tuhle zprávu použitelný NA OBOU zařízeních - to, čím se míří
+     * z odpovědí a reakcí.
+     *
+     * U textu a fotek je to [wireId]. U souborů se použije [id], protože to je
+     * hex `fileId` a ten je shodný na obou stranách sám o sobě. `null` znamená
+     * „na tuhle zprávu se odkázat nedá" - typicky zpráva z doby před minorem 2.
+     */
+    val wireRef: String?
+        get() = wireId ?: id.takeIf { kind == Kind.FILE && it.isNotEmpty() }
+
+    companion object {
+        const val REACTOR_ME = "me"
+        const val REACTOR_PEER = "peer"
+    }
 }

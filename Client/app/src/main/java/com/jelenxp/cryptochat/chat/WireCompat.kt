@@ -45,10 +45,13 @@ import androidx.compose.runtime.mutableStateMapOf
  *     - *CONTROL* - řídicí zpráva bez obsahu pro uživatele (reakce, potvrzení
  *       o přečtení). **Musí mít prázdnou datovou oblast** (viz [WireExt.Control]);
  *       verze, která tu funkci nezná, ji pak tiše zahodí.
- *     - *FALLBACK* - `CONTROL` a v těle čitelná náhradní věta. Tělo s obsahem
- *       se zobrazí vždy, takže starší verze ukáže aspoň ji.
  *     - *SUPPRESS* - protějšku, který to neumí, se to neposílá vůbec
- *       (viz [peerSupports]).
+ *       (viz [peerSupports], u řídicích zpráv [peerKnownSupports]).
+ *
+ *     Řídicí zprávu s neprázdným tělem **nemá smysl posílat**: příjemce ji
+ *     podle prázdnosti těla rozpoznává, takže by ji s obsahem zpracoval jako
+ *     běžnou zprávu. Když chceš, aby starší verze místo ticha něco viděla,
+ *     pošli normální zprávu zvlášť - ne řídicí s náhradním textem.
  *  4. **Neznámé TLV se přeskakuje**, poškozený trailer se ignoruje a zpráva
  *     s obsahem se nikdy nezahazuje - kvůli ozdobě se zpráva nesmí ztratit.
  *     Neznámý `kind` jde do karantény (novější verze ho možná přečte), NE
@@ -95,8 +98,18 @@ object WireCompat {
      *  - 2: rozšiřující trailer ([WireExt]) - obecný mechanismus pro novinky,
      *       stabilní ID zprávy (MSG_ID) u textu a fotek, řídicí zprávy
      *       (CONTROL) a odlišení „neumím to" od „nejde dešifrovat".
+     *  - 3: odpovědi na zprávu (REPLY_TO, strategie ENRICH - starší verze ukáže
+     *       obyčejnou zprávu) a reakce emoji (CONTROL/REACTION, strategie
+     *       CONTROL + SUPPRESS vůči minoru 1).
      */
-    const val WIRE_MINOR: Int = 2
+    const val WIRE_MINOR: Int = 3
+
+    /**
+     * Minor, od kterého protějšek umí **reakce**. Posílat je někomu staršímu
+     * nemá smysl: minor 2 je zahodí (zná řídicí zprávy) a minor 1 by ukázal
+     * prázdnou bublinu (o traileru neví). Viz [peerKnownSupports].
+     */
+    const val MINOR_REACTIONS = 3
 
     /** Jak si stojí protějšek oproti nám. */
     enum class Peer {
@@ -175,6 +188,23 @@ object WireCompat {
     }
 
     /**
+     * Jako [peerSupports], ale při NEZNÁMÉ verzi vrací **false**.
+     *
+     * Použij tam, kde by omyl uživateli něco pokazil - typicky u řídicích zpráv
+     * (strategie SUPPRESS). Reakce poslaná protějšku s minorem 1 by se u něj
+     * ukázala jako prázdná bublina, protože o traileru neví; radši ji tedy
+     * neposlat, dokud si nejsme jistí.
+     *
+     * V praxi to nic neomezí: reagovat jde jen na zprávu, která už dorazila,
+     * a tou se verze protějšku právě dozvěděla.
+     */
+    fun peerKnownSupports(context: Context, contactId: String, requiredMinor: Int): Boolean {
+        val v = peerVersion(context, contactId)
+        if (v.major == UNKNOWN || v.minor == UNKNOWN) return false
+        return v.major >= WIRE_MAJOR && v.minor >= requiredMinor
+    }
+
+    /**
      * Vyhodnotí blob PŘED pokusem o dešifrování podle otevřeného majoru. Vrací
      * true, když má smysl blob zkoušet otevřít; false znamená nekompatibilní
      * major - blob zahoď a uživateli se ukáže vysvětlení.
@@ -226,9 +256,20 @@ object WireCompat {
         return if (v == 0) null else v
     }
 
-    /** Zapamatuje verzi jen v paměti (neautentizovaný zdroj - viz [acceptMajor]). */
+    /**
+     * Zapamatuje verzi jen v paměti (neautentizovaný zdroj - viz [acceptMajor]).
+     *
+     * **Minor se přitom NEPŘEPISUJE.** Ten se dá zjistit jen z úspěšně
+     * dešifrovaného blobu, takže je důvěryhodný; major z otevřené hlavičky
+     * důvěryhodný není. Kdyby ho přepsal na UNKNOWN, stačil by relayi jediný
+     * podvržený bajt, aby appka zapomněla, co protějšek umí - a reakce by se
+     * přestaly posílat až do restartu procesu.
+     */
     private fun rememberEphemeral(contactId: String, version: PeerVersion) {
-        versions[contactId] = version
+        val knownMinor = versions[contactId]?.minor ?: UNKNOWN
+        versions[contactId] = version.copy(
+            minor = if (version.minor == UNKNOWN) knownMinor else version.minor
+        )
     }
 
     /** Zapamatuje a ULOŽÍ verzi. Jen z autentizovaného zdroje (po dešifrování). */

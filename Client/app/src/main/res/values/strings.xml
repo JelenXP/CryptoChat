@@ -216,7 +216,7 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">This update prepares the app for new chat features and is worth installing on both phones.\n\n• Messages now carry a hidden identifier, so upcoming versions can add replies and reactions.\n• Better handling of version differences — if the other phone runs a newer version, messages it sends that this version cannot show are now skipped quietly instead of piling up.\n• Repeated messages are no longer shown twice.\n\nEverything keeps working with the previous version: messages sent from here still arrive there as normal messages.</string>
+    <string name="changelog_body">• Replies — swipe a message from left to right, or hold it and pick Reply. The original is quoted above your answer.\n• Reactions — hold a message and pick one of six emoji. Tap the same one again to remove it.\n• Copy and delete — holding a message also lets you copy its text or delete it from this phone. The other person keeps their copy.\n• Update notifications — the app now lets you know when a new version is out.\n\nWorks with older versions too: a reply arrives there as an ordinary message. Reactions need the other phone to be updated as well, so they are not sent until it is.</string>
     <string name="btn_changelog_ok">Got it</string>
 
     <!-- About the app (Settings) -->
@@ -365,6 +365,24 @@
     <string name="chat_file_receiving">Receiving…</string>
     <string name="chat_preview_file">📎 File</string>
 
+    <!-- Message actions (long press) -->
+    <string name="chat_selection_title">1 selected</string>
+    <string name="chat_action_reply">Reply</string>
+    <string name="chat_action_copy">Copy</string>
+    <string name="chat_action_delete">Delete for me</string>
+    <string name="chat_copied">Copied</string>
+    <string name="chat_deleted">Message deleted</string>
+    <string name="chat_delete_title">Delete message?</string>
+    <string name="chat_delete_body">It will be removed from this phone only. The other person keeps their copy.</string>
+    <string name="btn_delete">Delete</string>
+    <string name="content_desc_clear_selection">Clear selection</string>
+    <string name="content_desc_cancel_reply">Cancel reply</string>
+    <string name="chat_reply_you">You</string>
+    <string name="chat_reply_unavailable">Original message is not available</string>
+    <string name="chat_reply_photo">Photo</string>
+    <string name="chat_reply_file">File</string>
+    <string name="chat_reactions_unsupported">This contact needs to update the app before they can see reactions.</string>
+
     <!-- Pairing over an invite -->
     <string name="pair_need_server">You need to set the chat server address first.</string>
     <string name="btn_set_server">Set up server</string>
@@ -390,6 +408,11 @@
     <string name="notif_channel_service_desc">Keeps the Tor connection to the chat server active so messages arrive.</string>
     <string name="notif_channel_messages">Messages</string>
     <string name="notif_channel_messages_desc">Notifications for new messages.</string>
+    <string name="notif_channel_updates">App updates</string>
+    <string name="notif_channel_updates_desc">Lets you know when a new version is available.</string>
+    <string name="notif_update_title">A new version is available</string>
+    <string name="notif_update_title_important">Important update available</string>
+    <string name="notif_update_text">Version %1$s is ready — tap to see what changed.</string>
     <string name="notif_connecting">Connecting to the chat server…</string>
     <string name="notif_connected">Connected to the chat server</string>
     <string name="notif_new_message">New message</string>
