@@ -273,6 +273,20 @@ class MailboxStore:
         target = MAX_TOTAL_BYTES - needed - (MAX_TOTAL_BYTES // 10)
         if self._total_bytes <= target:
             return
+        # 1) Nejdriv zahod EXPIROVANE schranky (mrtve misto). Jejich bloby uz jsou
+        #    stejne za TTL, takze se tim ZADNA ziva zprava neztrati. Uklidove vlakno
+        #    to dela taky, ale pod tlakem nemuselo dobehnout - tady je to jistota.
+        now = time.monotonic()
+        for mid in [m for m, b in list(self._boxes.items()) if b["expires"] <= now]:
+            if self._total_bytes <= target:
+                return
+            self._drain_locked(mid)
+        # 2) Az kdyz to nestaci, obetuj nejstarsi ZIVE schranky. Tady uz jde o tichou
+        #    ztratu nevyzvednutych zprav (odesilatel videl SENT) - je to POSLEDNI
+        #    pojistka proti vycerpani pameti/DoS (viz put()), ne bezny stav. Nastava
+        #    jen pri stovkach MB backlogu (dlouho offline prijemce + velke soubory);
+        #    reseni je provozni (dost RAM), pripadne snizit CC_MAX_MAILBOX_BLOBS, aby
+        #    plna schranka vratila 'box_full' (409 = viditelny FAIL) driv nez eviction.
         for mid, _box in sorted(self._boxes.items(), key=lambda kv: kv[1]["expires"]):
             if self._total_bytes <= target:
                 break

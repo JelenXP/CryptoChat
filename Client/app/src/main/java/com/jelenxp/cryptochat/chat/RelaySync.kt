@@ -44,8 +44,21 @@ object RelaySync {
     // cyklu, tedy dvojnásobek veškerého provozu i spotřeby.
     private const val EPOCH_OVERLAP_MS = 15L * 60 * 1000
 
+    /**
+     * Řídká pojistka: i mimo těsné okno po přelomu se předchozí schránka jednou za
+     * tuhle dobu přece jen zkontroluje. Kryje ROZJETÉ HODINY - kdyby měl odesílatel
+     * čas pozadu o víc než [EPOCH_OVERLAP_MS], poslal by do „včerejší" schránky až
+     * potom, co ji příjemce přestal číst, a zpráva by tam navždy uvízla (ztráta po
+     * TTL). Cena je jeden neblokující request za 30 min - proti 60s cyklu aktuální
+     * epochy zanedbatelné.
+     */
+    private const val PREV_EPOCH_RECHECK_MS = 30L * 60 * 1000
+
     /** Poslední epocha, pro kterou už se u daného kontaktu kontrolovala stará schránka. */
     private val prevEpochChecked = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Kdy (ms) se u daného kontaktu naposledy kontrolovala předchozí schránka. */
+    private val prevEpochCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /** Velikost jednoho kousku souboru (relay bere blob do 2 MB, necháme rezervu). */
     private const val CHUNK_SIZE = 1_800_000
@@ -58,10 +71,16 @@ object RelaySync {
      * ležet) a pak už jen prvních [EPOCH_OVERLAP_MS] nové epochy. Zbytek dne se
      * kontrola přeskočí, takže na cyklus vychází jeden onion request místo dvou.
      */
-    private fun shouldCheckPrevEpoch(contactId: String, epoch: Long): Boolean {
-        if (prevEpochChecked[contactId] != epoch) return true
-        return System.currentTimeMillis() % EPOCH_MS < EPOCH_OVERLAP_MS
-    }
+    private fun shouldCheckPrevEpoch(contactId: String, epoch: Long): Boolean =
+        shouldCheckPrevEpochAt(
+            now = System.currentTimeMillis(),
+            epoch = epoch,
+            lastCheckedEpoch = prevEpochChecked[contactId],
+            lastCheckedAt = prevEpochCheckedAt[contactId],
+            epochMs = EPOCH_MS,
+            overlapMs = EPOCH_OVERLAP_MS,
+            recheckMs = PREV_EPOCH_RECHECK_MS
+        )
 
     /**
      * Výsledek jednoho pollu: kolik zpráv dorazilo a jestli spojení selhalo.
@@ -516,7 +535,10 @@ object RelaySync {
             // rovnou, jediný neúspěšný pokus (nedostupný server) by kontrolu
             // spotřeboval a zpráva odeslaná těsně před přelomem dne by se už
             // nikdy nevyzvedla - tichá a nevratná ztráta.
-            if (!failed) prevEpochChecked[contact.id] = epoch
+            if (!failed) {
+                prevEpochChecked[contact.id] = epoch
+                prevEpochCheckedAt[contact.id] = System.currentTimeMillis()
+            }
             if (prev > 0) return PollResult(prev, failed)
         }
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,
@@ -545,4 +567,28 @@ internal fun readChunkFully(input: InputStream, buffer: ByteArray): Int {
         filled += r
     }
     return filled
+}
+
+/**
+ * Rozhodne, jestli teď kontrolovat schránku PŘEDCHOZÍ epochy. Čistá funkce, aby
+ * šla otestovat bez sítě. Vrací true, když:
+ *  - se pro tuhle epochu ještě nekontrolovala (start procesu / hned po přelomu), NEBO
+ *  - jsme v těsném okně po přelomu ([overlapMs]) - normální rollover dne, NEBO
+ *  - od poslední kontroly uplynulo aspoň [recheckMs] - ŘÍDKÁ POJISTKA na rozjeté
+ *    hodiny: bez ní by zpráva od odesílatele s časem pozadu o víc než [overlapMs]
+ *    uvízla ve schránce, kterou už nikdo nečte (tichá ztráta po TTL).
+ */
+internal fun shouldCheckPrevEpochAt(
+    now: Long,
+    epoch: Long,
+    lastCheckedEpoch: Long?,
+    lastCheckedAt: Long?,
+    epochMs: Long,
+    overlapMs: Long,
+    recheckMs: Long
+): Boolean {
+    if (lastCheckedEpoch != epoch) return true
+    if (now % epochMs < overlapMs) return true
+    if (lastCheckedAt == null) return true
+    return now - lastCheckedAt >= recheckMs
 }
