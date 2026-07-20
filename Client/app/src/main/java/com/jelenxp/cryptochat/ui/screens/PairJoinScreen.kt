@@ -22,6 +22,7 @@ import com.jelenxp.cryptochat.crypto.PostQuantumKem
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
+import com.jelenxp.cryptochat.ui.util.LockPortraitWhileVisible
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -43,6 +44,11 @@ fun PairJoinScreen(
     viewModel: ContactsViewModel,
     contactId: String? = null
 ) {
+    // Zamkne orientaci po dobu párování. Bez toho by otočení ve fázi WORKING
+    // zrušilo korutinu z rememberCoroutineScope, ale phase (rememberSaveable) by
+    // zůstal WORKING -> zatuhlý spinner bez restartu. Stejně jako PairInviteScreen.
+    LockPortraitWhileVisible()
+
     val context = LocalContext.current
     val settings = remember { SettingsRepository(context) }
     val baseUrl = remember { settings.getRelayUrl() }
