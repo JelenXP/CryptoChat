@@ -199,9 +199,22 @@ object BugReporter {
     private fun crashFile(context: Context) = File(context.filesDir, CRASH_LOG_FILE)
 
     /** Konec souboru s posledním pádem, nebo `null` (žádný pád / nejde přečíst). */
+    /**
+     * Záznam o posledním pádu. Vzniká z plného `printStackTrace`, takže může
+     * obsahovat cesty k souborům, názvy příloh nebo `.onion` adresu - a míří na
+     * NEDŮVĚRYHODNÝ server. Než odejde, projde stejnou redakcí jako diagnostika
+     * a navíc se z něj vyříznou cesty do soukromého úložiště appky.
+     */
     private fun readCrashLog(context: Context): String? = try {
         val file = crashFile(context)
-        if (!file.isFile) null else file.readText().takeLast(MAX_CRASH_CHARS)
+        if (!file.isFile) {
+            null
+        } else {
+            DiagnosticsLog.redact(file.readText().takeLast(MAX_CRASH_CHARS))
+                .replace(Regex("/data/(user/\\d+|data)/[^\\s)]*"), "<cesta>")
+                .replace(Regex("/storage/[^\\s)]*"), "<cesta>")
+                .replace(Regex("content://[^\\s)]*"), "<uri>")
+        }
     } catch (e: Exception) {
         null
     }

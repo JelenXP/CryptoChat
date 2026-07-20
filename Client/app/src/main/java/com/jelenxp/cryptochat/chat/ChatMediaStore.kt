@@ -49,7 +49,7 @@ object ChatMediaStore {
             rotated.recycle()
             if (bytes.size > MAX_BYTES) null else bytes
         } catch (e: Throwable) {
-            Log.e(TAG, "Komprese obrázku selhala", e)
+            Log.e(TAG, "Komprese obrázku selhala (${e.javaClass.simpleName})")
             null
         }
     }
@@ -62,7 +62,7 @@ object ChatMediaStore {
             file.writeBytes(jpeg)
             file.absolutePath
         } catch (e: Throwable) {
-            Log.e(TAG, "Uložení obrázku selhalo", e)
+            Log.e(TAG, "Uložení obrázku selhalo (${e.javaClass.simpleName})")
             null
         }
     }
@@ -89,7 +89,7 @@ object ChatMediaStore {
             val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
             FileInfo(name, mime, size)
         } catch (e: Throwable) {
-            Log.e(TAG, "Nepodařilo se přečíst údaje o souboru", e)
+            Log.e(TAG, "Nepodařilo se přečíst údaje o souboru (${e.javaClass.simpleName})")
             null
         }
     }
@@ -106,7 +106,7 @@ object ChatMediaStore {
             } ?: return null
             out.absolutePath
         } catch (e: Throwable) {
-            Log.e(TAG, "Kopírování souboru selhalo", e)
+            Log.e(TAG, "Kopírování souboru selhalo (${e.javaClass.simpleName})")
             null
         }
     }
@@ -122,7 +122,7 @@ object ChatMediaStore {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         } catch (e: Throwable) {
-            Log.e(TAG, "Otevření souboru selhalo", e)
+            Log.e(TAG, "Otevření souboru selhalo (${e.javaClass.simpleName})")
         }
     }
 
@@ -137,7 +137,7 @@ object ChatMediaStore {
             }
             BitmapFactory.decodeFile(path, opts)
         } catch (e: Throwable) {
-            Log.e(TAG, "Načtení obrázku selhalo", e)
+            Log.e(TAG, "Načtení obrázku selhalo (${e.javaClass.simpleName})")
             null
         }
     }

@@ -70,6 +70,12 @@ object TorController {
                 } else {
                     Log.w(TAG, "SOCKS listener zavřen / žádný")
                     DiagnosticsLog.warn(TAG, "SOCKS listener zavřen - Tor není k dispozici")
+                    // Zahoď i runtime. Bez toho by `ensureStarted` (vrací se hned,
+                    // když runtime != null) bylo po pádu démona napořád no-op a
+                    // chat by byl mrtvý až do restartu procesu - každý požadavek
+                    // by jen marně čekal na timeout.
+                    forgetRuntime()
+                    TorManager.resetBootstrap()
                     TorManager.markStopped()
                 }
             }

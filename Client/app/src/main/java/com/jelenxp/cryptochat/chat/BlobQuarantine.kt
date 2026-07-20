@@ -31,7 +31,7 @@ object BlobQuarantine {
      * sám je ukládá) nasypal do příchozí schránky odpad a zaplnil telefon -
      * 30 blobů po 2 MB je 60 MB, což je pořád moc.
      */
-    private const val MAX_BYTES_PER_CONTACT = 4L * 1024 * 1024
+    private const val MAX_BYTES_PER_CONTACT = 24L * 1024 * 1024
 
     /** Kolik blobů nejvýš vrátit v jednom kole (aby se do paměti nenačetlo všechno). */
     private const val MAX_RETRY_BATCH = 5
@@ -49,18 +49,23 @@ object BlobQuarantine {
         contactId: String,
         blob: ByteArray,
         firstSeenAt: Long = System.currentTimeMillis()
-    ) {
-        try {
+    ): Boolean {
+        return try {
             val d = dir(context, contactId).apply { mkdirs() }
             // Jméno nese čas prvního odložení a otisk obsahu. Otisk zabrání tomu,
             // aby se dva různé bloby přijaté ve stejné milisekundě přepsaly, a
             // zároveň zajistí, že se tentýž blob neuloží dvakrát.
             val file = File(d, "${firstSeenAt}_${fingerprint(blob)}.bin")
-            if (file.exists()) return
+            if (file.exists()) return true
             file.writeBytes(blob)
             trim(d)
-        } catch (e: Exception) {
-            Log.w(TAG, "Uložení blobu do karantény selhalo", e)
+            true
+        } catch (e: Throwable) {
+            // Volající MUSÍ poznat neúspěch: kdyby odložení selhalo (plný disk)
+            // a on přesto potvrdil příjem, server by blob smazal a zpráva by byla
+            // nenávratně pryč - přesně to, čemu má karanténa bránit.
+            Log.w(TAG, "Uložení blobu do karantény selhalo (${e.javaClass.simpleName})")
+            false
         }
     }
 
@@ -91,12 +96,12 @@ object BlobQuarantine {
                     out.add(Pending(f.readBytes(), firstSeen))
                     f.delete()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Načtení odloženého blobu selhalo", e)
+                    Log.w(TAG, "Načtení odloženého blobu selhalo (${e.javaClass.simpleName})")
                 }
             }
             if (out.isNotEmpty()) Log.i(TAG, "Zkouším znovu ${out.size} odložených zpráv")
         } catch (e: Exception) {
-            Log.w(TAG, "Průchod karanténou selhal", e)
+            Log.w(TAG, "Průchod karanténou selhal (${e.javaClass.simpleName})")
         }
         return out
     }
@@ -113,7 +118,7 @@ object BlobQuarantine {
         try {
             dir(context, contactId).deleteRecursively()
         } catch (e: Exception) {
-            Log.w(TAG, "Úklid karantény selhal", e)
+            Log.w(TAG, "Úklid karantény selhal (${e.javaClass.simpleName})")
         }
     }
 

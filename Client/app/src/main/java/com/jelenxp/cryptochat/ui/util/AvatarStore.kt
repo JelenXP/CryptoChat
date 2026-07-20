@@ -49,7 +49,7 @@ object AvatarStore {
             rotated.recycle()
             file.absolutePath
         } catch (e: Throwable) {
-            Log.e(TAG, "Uložení fotky se nepovedlo", e)
+            Log.e(TAG, "Uložení fotky se nepovedlo (${e.javaClass.simpleName})")
             null
         }
     }
@@ -66,7 +66,7 @@ object AvatarStore {
             file.writeBytes(bytes)
             file.absolutePath
         } catch (e: Throwable) {
-            Log.e(TAG, "Uložení fotky ze zálohy se nepovedlo", e)
+            Log.e(TAG, "Uložení fotky ze zálohy se nepovedlo (${e.javaClass.simpleName})")
             null
         }
     }
@@ -81,7 +81,7 @@ object AvatarStore {
             val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
             FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         } catch (e: Throwable) {
-            Log.e(TAG, "Nepodařilo se vytvořit cíl pro foťák", e)
+            Log.e(TAG, "Nepodařilo se vytvořit cíl pro foťák (${e.javaClass.simpleName})")
             null
         }
     }
@@ -96,7 +96,7 @@ object AvatarStore {
                 if (f.name.startsWith(prefix)) f.delete()
             }
         } catch (e: Throwable) {
-            Log.e(TAG, "Mazání fotek se nepovedlo", e)
+            Log.e(TAG, "Mazání fotek se nepovedlo (${e.javaClass.simpleName})")
         }
     }
 

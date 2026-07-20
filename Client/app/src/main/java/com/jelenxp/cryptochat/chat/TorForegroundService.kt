@@ -88,7 +88,22 @@ class TorForegroundService : Service() {
             // (nestabilní / pomalé první připojení).
             // Nedokončené přenosy z dřívějška (přerušené, se ztraceným manifestem…)
             // jinak leží na disku navždy. Den je bezpečně za TTL relaye.
-            runCatching { MediaTransfers.purgeStale(this@TorForegroundService, 24L * 60 * 60 * 1000) }
+            runCatching {
+                val ctx = this@TorForegroundService
+                MediaTransfers.purgeStale(ctx, 24L * 60 * 60 * 1000)
+                // Přenosy, které se nikdy nedokončily, by jinak nechaly bublinu
+                // navždy ve stavu „přijímá se" - bez progressu a bez chyby.
+                val repo = ChatRepository(ctx)
+                ContactRepository(ctx).getContacts().forEach { c ->
+                    repo.getMessages(c.id)
+                        .filter { it.status == ChatMessage.Status.RECEIVING }
+                        .filter { System.currentTimeMillis() - it.timestamp > 24L * 60 * 60 * 1000 }
+                        .forEach { m ->
+                            repo.updateMedia(c.id, m.id, null, ChatMessage.Status.FAILED)
+                            MediaTransfers.clearProgress(m.id)
+                        }
+                }
+            }
             // Zahřívání běží VEDLE, ne před hlídačem. Když se Tor teprve
             // rozjíždí, jedna iterace warmUp trvá i přes minutu - a dokud
             // blokovala, nevznikla ANI JEDNA poll smyčka, takže appka po startu

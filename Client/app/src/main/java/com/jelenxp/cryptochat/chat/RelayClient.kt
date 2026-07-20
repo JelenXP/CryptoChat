@@ -402,15 +402,17 @@ object RelayClient {
             // příchozí GET (schránka dir 1) dorazily k onion službě přes tentýž
             // okruh - a relay by si je spojil, tedy zjistil, kdo komu píše. To je
             // přesně to, čemu má celá appka bránit.
-            out.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
+            out.write(byteArrayOf(0x05, 0x01, 0x02))
             out.flush()
             val greeting = readExactly(input, 2)
             if (greeting[0].toInt() != 0x05) throw IOException("SOCKS5 handshake selhal")
-            when (greeting[1].toInt() and 0xFF) {
-                0x00 -> { /* bez autentizace - izolace nebude, ale spojení funguje */ }
-                0x02 -> socksUserPassAuth(out, input, isolation)
-                else -> throw IOException("SOCKS5 handshake selhal (metoda ${greeting[1].toInt()})")
+            // JEN user/pass. Kdybychom povolili i "bez autentizace", izolace by
+            // při volbě 0x00 tiše odpadla a relay by spojil odchozí a příchozí
+            // schránku - tedy zjistil, kdo komu píše. Radši spojení nenavázat.
+            if ((greeting[1].toInt() and 0xFF) != 0x02) {
+                throw IOException("SOCKS5: proxy nepodporuje izolaci okruhů")
             }
+            socksUserPassAuth(out, input, isolation)
 
             // CONNECT na doménu (ATYP 0x03) - host řeší proxy (Tor).
             val hostBytes = target.host.toByteArray(Charsets.US_ASCII)

@@ -65,7 +65,7 @@ object MediaTransfers {
             File(d, META).writeText(meta.toString())
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Založení příjmu souboru selhalo", e)
+            Log.e(TAG, "Založení příjmu souboru selhalo (${e.javaClass.simpleName})")
             false
         }
     }
@@ -158,7 +158,7 @@ object MediaTransfers {
             cleanup(context, fileIdHex)
             out.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Složení souboru selhalo", e)
+            Log.e(TAG, "Složení souboru selhalo (${e.javaClass.simpleName})")
             null
         }
     }

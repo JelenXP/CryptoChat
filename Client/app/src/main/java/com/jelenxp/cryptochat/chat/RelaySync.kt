@@ -316,7 +316,9 @@ object RelaySync {
                         "nekompatibilní verze formátu (major=${WireCompat.readMajor(blob)}), " +
                             "blob odložen do karantény"
                     )
-                    BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                    if (!BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)) {
+                        allSafe = false
+                    }
                     continue
                 }
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
@@ -461,7 +463,9 @@ object RelaySync {
                             "blob se nepodařilo dešifrovat (${blob.size} B, " +
                                 "major=${WireCompat.readMajor(blob)}), odložen do karantény"
                         )
-                        BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                        if (!BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)) {
+                            allSafe = false
+                        }
                     }
                 }
                 // Zpracováno bez zádrhelu - teprve teď si blob zapamatuj,
@@ -469,14 +473,19 @@ object RelaySync {
                 if (decoded != null && allSafe == safeBefore) {
                     ReplayGuard.remember(context, contact.id, blob)
                 }
-            } catch (ex: Exception) {
+            } catch (ex: Throwable) {
+                // Throwable: dešifrování velkého blobu může hodit OutOfMemoryError,
+                // který není Exception a shodil by celou poll smyčku.
                 // Jeden vadný blob nesmí shodit zbytek dávky.
                 android.util.Log.w("RelaySync", "Zpracování blobu selhalo, pokračuji", ex)
                 DiagnosticsLog.warn(TAG, "zpracování blobu selhalo (${ex.javaClass.simpleName})")
                 // Blob odlož: pokud přišel z karantény, `takeAll` ho z disku už
                 // smazal a ze serveru je dávno pryč - bez tohohle by byl ztracený.
                 // Díky odložení smíme dávku potvrdit a schránka se neucpe.
-                runCatching { BlobQuarantine.save(context, contact.id, item.blob, item.firstSeenAt) }
+                val parked = runCatching {
+                    BlobQuarantine.save(context, contact.id, item.blob, item.firstSeenAt)
+                }.getOrDefault(false)
+                if (!parked) allSafe = false
             }
 
             // Potvrzení POSÍLÁME JEN když je celá dávka bezpečně uložená nebo

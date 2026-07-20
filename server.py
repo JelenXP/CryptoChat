@@ -331,6 +331,49 @@ LIMITER = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
 
 # --- Ukladani hlaseni chyb ----------------------------------------------------
 
+def _enforce_reports_quota(incoming: int):
+    """Udrzi slozku hlaseni pod stropem: maze nejstarsi, dokud se nove nevejde.
+
+    Bez toho by kdokoli se znalosti onion adresy zaplnil disk serveru (hlaseni
+    smi mit 256 KB a rate limit je za Torem spolecny pro vsechny).
+    """
+    try:
+        entries = []
+        total = 0
+        for name in os.listdir(REPORTS_DIR):
+            path = os.path.join(REPORTS_DIR, name)
+            if not os.path.isdir(path):
+                continue
+            size = 0
+            for root, _dirs, files in os.walk(path):
+                for f in files:
+                    try:
+                        size += os.path.getsize(os.path.join(root, f))
+                    except OSError:
+                        pass
+            entries.append((name, path, size))
+            total += size
+        entries.sort(key=lambda e: e[0])          # nazev zacina timestampem
+        count = len(entries)
+        for _name, path, size in entries:
+            if count + 1 <= MAX_REPORTS and total + incoming <= MAX_REPORTS_BYTES:
+                break
+            try:
+                for root, dirs, files in os.walk(path, topdown=False):
+                    for f in files:
+                        os.remove(os.path.join(root, f))
+                    for d in dirs:
+                        os.rmdir(os.path.join(root, d))
+                os.rmdir(path)
+                count -= 1
+                total -= size
+            except OSError:
+                break
+    except Exception:
+        # Uklid nesmi shodit prijem hlaseni.
+        pass
+
+
 def store_report(body: bytes) -> bool:
     """Ulozi hlaseni do vlastni slozky reports/<timestamp>-<suffix>/report.json.
 
@@ -347,6 +390,7 @@ def store_report(body: bytes) -> bool:
     if REPORTS_DIR is None:
         return False
     try:
+        _enforce_reports_quota(len(body))
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         folder = os.path.join(REPORTS_DIR, stamp + "-" + secrets.token_hex(4))
         os.makedirs(folder)
@@ -484,6 +528,17 @@ class RelayHandler(BaseHTTPRequestHandler):
             return
 
         blobs = STORE.drain_blocking(mid, wait_s) if wait_s > 0 else STORE.drain(mid)
+        # Strop i tady: schranka smi mit stovky MB a slozit je do jedne odpovedi
+        # by znamenalo nekolikanasobnou spicku v pameti serveru.
+        if blobs:
+            capped = []
+            total = 0
+            for b in blobs:
+                if capped and total + len(b) > MAX_PEEK_BYTES:
+                    break
+                capped.append(b)
+                total += len(b)
+            blobs = capped
         if not blobs:
             # Prazdna schranka - 204 No Content (kratke, bez tela).
             self.send_response(204)
