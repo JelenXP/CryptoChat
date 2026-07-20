@@ -50,6 +50,8 @@ import java.security.SecureRandom
  * | 4   | REACTION  | 2         | reakce emoji (v1.2)                         |
  * | 5   | MAX_MAJOR | 4         | nejvyšší wire MAJOR, který odesílatel UMÍ    |
  * |     |           |           | PŘEČÍST - pojistka pro budoucí major migraci |
+ * | 6   | CAPS      | -         | bitmapa schopností (feature flags), aby nové |
+ * |     |           |           | funkce nemusely zvyšovat WIRE_MINOR          |
  */
 object WireExt {
 
@@ -68,9 +70,54 @@ object WireExt {
     const val TYPE_CONTROL = 3
     const val TYPE_REACTION = 4
     const val TYPE_MAX_MAJOR = 5
+    const val TYPE_CAPABILITIES = 6
 
     /** Délka stabilního ID zprávy. 16 B = stejná odolnost proti kolizi jako UUID. */
     const val MSG_ID_BYTES = 16
+
+    // --- Schopnosti (capability bitmap) ---
+    //
+    // Feature flags inzerované v KAŽDÉ zprávě. Nová funkce si vezme volný bit,
+    // inzeruje ho a odesílatel se pak rozhoduje podle
+    // [WireCompat.peerHasCapability], NE podle [WireCompat.WIRE_MINOR]. Díky tomu
+    // nové funkce NEMUSÍ zvyšovat minor - kompatibilitu už řeší přeskočení
+    // neznámého TLV (starší verze bit prostě nezná a schopnost nenabídne).
+    //
+    // Přítomnost tohoto TLV zároveň znamená „umím schopnosti" (i prázdná
+    // bitmapa) - odlišuje protějšek, který kanál zná, od staršího, co ho neposílá.
+    //
+    // Registr bitů - čísla se NIKDY nerecyklují (ani když funkce zanikne):
+    // | bit | jméno     | význam                    |
+    // |-----|-----------|---------------------------|
+    // | 0   | REACTIONS | umí zobrazit reakce emoji |
+    const val CAP_REACTIONS = 0
+
+    /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
+    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS)
+
+    /**
+     * Zabalí množinu bitů do bitmapy (LSB-first): bit `i` leží v bajtu `i/8`,
+     * na pozici `i%8`. Prázdná množina → prázdné pole (= protějšek zná kanál,
+     * ale žádnou volitelnou schopnost nemá).
+     */
+    internal fun encodeCapabilities(caps: Set<Int>): ByteArray {
+        val valid = caps.filter { it >= 0 }
+        if (valid.isEmpty()) return ByteArray(0)
+        val out = ByteArray(valid.max() / 8 + 1)
+        for (b in valid) out[b / 8] = (out[b / 8].toInt() or (1 shl (b % 8))).toByte()
+        return out
+    }
+
+    /** Opak [encodeCapabilities]. Neznámé (vyšší) bity se prostě přečtou taky. */
+    internal fun decodeCapabilities(bytes: ByteArray): Set<Int> {
+        val out = HashSet<Int>()
+        for (i in bytes.indices) {
+            val v = bytes[i].toInt() and 0xFF
+            if (v == 0) continue
+            for (bit in 0..7) if ((v ushr bit) and 1 == 1) out.add(i * 8 + bit)
+        }
+        return out
+    }
 
     // --- Stropy. Trailer plní protějšek, takže tady se nevěří ničemu. ---
 
@@ -215,6 +262,14 @@ object WireExt {
             get() = first(TYPE_MAX_MAJOR)?.takeIf { it.size == 1 }?.let { it[0].toInt() and 0xFF }
 
         /**
+         * Schopnosti (feature flags), které odesílatel inzeruje, nebo null když
+         * trailer bitmapu nenese (starší verze bez capability kanálu). Prázdná
+         * množina znamená „kanál zná, ale žádnou volitelnou schopnost nemá".
+         */
+        val capabilities: Set<Int>?
+            get() = first(TYPE_CAPABILITIES)?.let { decodeCapabilities(it) }
+
+        /**
          * Reakce, nebo null když ji trailer nenese nebo je vadná. Všechno v ní
          * pochází od protějšku, takže se ověřuje délka, mez i samotné emoji.
          */
@@ -289,6 +344,15 @@ object WireExt {
             require(major in 1..255) { "MAX_MAJOR mimo rozsah: $major" }
             return put(TYPE_MAX_MAJOR, byteArrayOf(major.toByte()))
         }
+
+        /**
+         * Inzerce bitmapy schopností. Posílá se v KAŽDÉ zprávě (i pro prázdnou
+         * množinu - přítomnost TLV sama značí „umím schopnosti"). Protějšek si ji
+         * zaznamená a nové funkce se pak gatují přes
+         * [WireCompat.peerHasCapability], takže NEMUSÍ zvyšovat wire minor.
+         */
+        fun putCapabilities(caps: Set<Int>): Builder =
+            put(TYPE_CAPABILITIES, encodeCapabilities(caps))
 
         /** Prázdné pole, když není co posílat - pak se trailer vůbec nezapíše. */
         fun build(): ByteArray {

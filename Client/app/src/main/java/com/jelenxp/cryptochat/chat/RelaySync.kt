@@ -479,13 +479,17 @@ object RelaySync {
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
                 val result = ChatEnvelope.open(blob, key, dir)
-                // Minor odesílatele a inzerovaný maxMajor jsou až uvnitř šifry,
-                // takže jsou známé (a autentizované) teprve teď.
+                // Minor odesílatele, inzerovaný maxMajor i bitmapa schopností
+                // jsou až uvnitř šifry, takže jsou známé (a autentizované) teprve
+                // teď.
                 when (result) {
-                    is ChatEnvelope.Result.Ok -> WireCompat.notePeer(
-                        context, contact.id, result.senderMinor,
-                        result.maxMajor ?: WireCompat.UNKNOWN
-                    )
+                    is ChatEnvelope.Result.Ok -> {
+                        WireCompat.notePeer(
+                            context, contact.id, result.senderMinor,
+                            result.maxMajor ?: WireCompat.UNKNOWN
+                        )
+                        WireCompat.notePeerCapabilities(context, contact.id, result.capabilities)
+                    }
                     is ChatEnvelope.Result.Unsupported ->
                         WireCompat.notePeerMinor(context, contact.id, result.senderMinor)
                     ChatEnvelope.Result.Unreadable -> Unit

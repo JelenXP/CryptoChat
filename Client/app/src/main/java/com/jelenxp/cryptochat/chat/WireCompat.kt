@@ -45,8 +45,9 @@ import androidx.compose.runtime.mutableStateMapOf
  *     - *CONTROL* - řídicí zpráva bez obsahu pro uživatele (reakce, potvrzení
  *       o přečtení). **Musí mít prázdnou datovou oblast** (viz [WireExt.Control]);
  *       verze, která tu funkci nezná, ji pak tiše zahodí.
- *     - *SUPPRESS* - protějšku, který to neumí, se to neposílá vůbec
- *       (viz [peerSupports], u řídicích zpráv [peerKnownSupports]).
+ *     - *SUPPRESS* - protějšku, který to neumí, se to neposílá vůbec. Gatuj
+ *       přes **[peerHasCapability]**, případně u řídicích zpráv, které starší
+ *       verze bezpečně zahodí, přes [peerKnownSupports].
  *
  *     Řídicí zprávu s neprázdným tělem **nemá smysl posílat**: příjemce ji
  *     podle prázdnosti těla rozpoznává, takže by ji s obsahem zpracoval jako
@@ -56,8 +57,14 @@ import androidx.compose.runtime.mutableStateMapOf
  *     s obsahem se nikdy nezahazuje - kvůli ozdobě se zpráva nesmí ztratit.
  *     Neznámý `kind` jde do karantény (novější verze ho možná přečte), NE
  *     k zahození.
- *  5. **Čísla typů a `feature id` se nerecyklují** (registr ve [WireExt]).
- *  6. **Zvyš [WIRE_MINOR]** a dopiš řádek do jeho historie.
+ *  5. **Čísla typů, `feature id` i bity schopností se nerecyklují**
+ *     (registry ve [WireExt]).
+ *  6. **Nová funkce si vezme BIT SCHOPNOSTI, ne nový minor.** Každá zpráva
+ *     inzeruje bitmapu schopností ([WireExt.LOCAL_CAPABILITIES]) a funkce se
+ *     gatuje přes [peerHasCapability]. Kompatibilitu řeší už přeskočení
+ *     neznámého TLV (pravidlo 4), takže **[WIRE_MINOR] se kvůli nové funkci
+ *     NEZVYŠUJE** - je to jen hrubý ukazatel „generace" pro banner a mění se
+ *     výjimečně. ENRICH funkce (ozdoba zprávy) nepotřebuje ani bit - stačí TLV.
  *  7. **Přidej zamražený vzorek do testů** (`ChatEnvelopeGoldenTest`). Roundtrip
  *     test rozbití formátu NECHYTÍ - zapečetí i otevře stejným kódem.
  */
@@ -292,14 +299,68 @@ object WireCompat {
         return m != UNKNOWN && m >= major
     }
 
-    /** Zapomene verzi kontaktu (při jeho smazání). */
+    /**
+     * Schopnosti (feature flags) protějšků podle kontaktu. Odděleně od
+     * [PeerVersion], protože je to množina, ne číslo - a protože pochází vždy
+     * z dešifrované (autentizované) zprávy, smí se ukládat na disk.
+     */
+    private val peerCaps = mutableStateMapOf<String, Set<Int>>()
+
+    /** Schopnosti inzerované protějškem daného kontaktu (prázdné = žádné/neznámé). */
+    fun peerCapabilities(context: Context, contactId: String): Set<Int> {
+        peerCaps[contactId]?.let { return it }
+        val loaded = try {
+            prefs(context).getStringSet(key(contactId, "caps"), null)
+                ?.mapNotNull { it.toIntOrNull() }?.toSet() ?: emptySet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+        peerCaps[contactId] = loaded
+        return loaded
+    }
+
+    /**
+     * Umí protějšek danou schopnost? **Gate pro NOVÉ funkce - používej tohle
+     * místo zvyšování [WIRE_MINOR].** Při neznámé/chybějící inzerci vrací
+     * **false** (protějšek schopnost nenabízí, dokud ji sám neinzeruje).
+     *
+     * Nehodí se pro řídicí zprávy typu reakce, které starší verze bezpečně
+     * ZAHODÍ - ty se posílají i protějšku bez schopnosti (viz [MINOR_CONTROL_SAFE]).
+     * Používej ho tam, kde by odeslání nepodporované funkce protějšku UŠKODILO
+     * nebo bylo úplně k ničemu.
+     */
+    fun peerHasCapability(context: Context, contactId: String, capability: Int): Boolean =
+        capability in peerCapabilities(context, contactId)
+
+    /**
+     * Zaznamená schopnosti inzerované v JEDNÉ dešifrované zprávě. `caps == null`
+     * = zpráva bitmapu nenesla (starší verze bez capability kanálu); stará
+     * hodnota se pak zachová. Prázdná i neprázdná množina se ULOŽÍ - přítomnost
+     * kanálu je informace sama o sobě.
+     */
+    fun notePeerCapabilities(context: Context, contactId: String, caps: Set<Int>?) {
+        if (caps == null) return
+        if (peerCapabilities(context, contactId) == caps) return
+        peerCaps[contactId] = caps
+        try {
+            prefs(context).edit()
+                .putStringSet(key(contactId, "caps"), caps.map { it.toString() }.toSet())
+                .apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Uložení schopností protějšku selhalo", e)
+        }
+    }
+
+    /** Zapomene verzi i schopnosti kontaktu (při jeho smazání). */
     fun clear(context: Context, contactId: String) {
         versions.remove(contactId)
+        peerCaps.remove(contactId)
         try {
             prefs(context).edit()
                 .remove(key(contactId, "major"))
                 .remove(key(contactId, "minor"))
                 .remove(key(contactId, "maxmajor"))
+                .remove(key(contactId, "caps"))
                 .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Úklid stavu kompatibility selhal", e)
