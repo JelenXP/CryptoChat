@@ -86,6 +86,39 @@ object AvatarStore {
         }
     }
 
+    /**
+     * Zapíše fotku ze syrových bajtů pod NOVÝM názvem a vrátí cestu, ale STARÉ
+     * fotky téhož kontaktu NEMAŽE (na rozdíl od [saveAvatarBytes]). Použij, když
+     * se stará smí smazat AŽ po potvrzení, že se nová propsala do záznamu (viz
+     * [pruneAvatars]) - jinak by selhání zápisu mezitím nechalo kontakt bez fotky.
+     */
+    fun writeAvatar(context: Context, contactId: String, bytes: ByteArray): String? {
+        return try {
+            val dir = File(context.filesDir, DIR).apply { mkdirs() }
+            val file = File(dir, "${safeId(contactId)}_${System.currentTimeMillis()}.jpg")
+            file.writeBytes(bytes)
+            file.absolutePath
+        } catch (e: Throwable) {
+            Log.e(TAG, "Zápis fotky se nepovedl (${e.javaClass.simpleName})")
+            null
+        }
+    }
+
+    /** Smaže všechny fotky kontaktu KROMĚ [keepPath] (úklid staré po nahrazení). */
+    fun pruneAvatars(context: Context, contactId: String, keepPath: String) {
+        try {
+            val dir = File(context.filesDir, DIR)
+            if (!dir.isDirectory) return
+            val prefix = "${safeId(contactId)}_"
+            val keepName = File(keepPath).name
+            dir.listFiles()?.forEach { f ->
+                if (f.name.startsWith(prefix) && f.name != keepName) f.delete()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Úklid starých fotek se nepovedl (${e.javaClass.simpleName})")
+        }
+    }
+
     /** Smaže všechny fotky daného kontaktu. */
     fun deleteAvatars(context: Context, contactId: String) {
         try {

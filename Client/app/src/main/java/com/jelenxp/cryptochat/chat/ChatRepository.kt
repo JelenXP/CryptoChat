@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /**
  * Lokální historie zpráv jednotlivých konverzací. Ukládá se jako JSON do
@@ -320,8 +321,13 @@ class ChatRepository(
         val seenWire = existing.mapNotNullTo(HashSet()) { it.wireId }
         val merged = ArrayList(existing)
         for (m in backup) {
-            if (m.id in seenIds) continue
-            if (m.wireId != null && m.wireId in seenWire) continue
+            if (m.id in seenIds || (m.wireId != null && m.wireId in seenWire)) {
+                // Duplicitní zpráva ze zálohy se nepřidá. Její médium (fotka) se
+                // ale při importu čerstvě uložilo na disk - když se zpráva zahodí,
+                // soubor by osiřel. Ukliď ho (existující zpráva má vlastní kopii).
+                m.mediaPath?.let { runCatching { File(it).delete() } }
+                continue
+            }
             seenIds.add(m.id)
             m.wireId?.let { seenWire.add(it) }
             merged.add(m)

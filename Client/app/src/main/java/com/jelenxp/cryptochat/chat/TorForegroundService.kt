@@ -353,10 +353,16 @@ class TorForegroundService : Service() {
                 // mohl běžet ještě z doby, než uživatel chat otevřel.
                 if (result.received > 0 && ActiveChat.currentId != contact.id) {
                     val lastIncoming = repo.getMessages(contact.id).lastOrNull { !it.outgoing }
+                    // Jméno čti ČERSTVÉ z repozitáře, ne ze snapshotu smyčky:
+                    // přejmenování kontaktu smyčku nerestartuje (fingerprint hlídá
+                    // jen klíč a roli), takže snapshot by v notifikaci ukázal staré
+                    // jméno až do restartu.
+                    val currentName = ContactRepository(ctx).getContacts()
+                        .find { it.id == contact.id }?.name ?: contact.name
                     ChatNotifications.notifyMessage(
                         ctx,
                         contact.id,
-                        contact.name,
+                        currentName,
                         lastIncoming?.text ?: getString(R.string.notif_new_message)
                     )
                 }

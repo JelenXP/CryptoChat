@@ -182,14 +182,18 @@ object ContactBackup {
             if (!contactRepo.addOrUpdate(contact)) continue
             count++
 
-            // Kontakt je uložený - teprve TEĎ je bezpečné nahradit fotku (smaže
-            // starou a zapíše novou). Když záloha fotku nenese, ponechá se stávající.
+            // Kontakt je uložený - teprve TEĎ nahraď fotku. Napřed zapiš NOVOU
+            // (starou zatím nemaž), propiš ji do záznamu, a AŽ POTOM smaž starou.
+            // Kdyby druhý zápis selhal, stará fotka i odkaz na ni zůstanou (kontakt
+            // o fotku nepřijde), jen se uklidí nedopsaná nová.
             var stored = contact
             if (avatarBytes != null) {
-                val newPath = AvatarStore.saveAvatarBytes(context, id, avatarBytes)
-                if (newPath != null) {
+                val newPath = AvatarStore.writeAvatar(context, id, avatarBytes)
+                if (newPath != null && contactRepo.addOrUpdate(contact.copy(avatarPath = newPath))) {
                     stored = contact.copy(avatarPath = newPath)
-                    contactRepo.addOrUpdate(stored)
+                    AvatarStore.pruneAvatars(context, id, newPath)
+                } else {
+                    newPath?.let { runCatching { File(it).delete() } }
                 }
             }
             existing[id] = stored   // aby další záznam téže zálohy viděl kolizi
