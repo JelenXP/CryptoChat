@@ -216,7 +216,7 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">• Replies — swipe a message from left to right, or hold it and pick Reply. The original is quoted above your answer.\n• Reactions — hold a message and pick one of six emoji. Tap the same one again to remove it.\n• Copy and delete — holding a message also lets you copy its text or delete it from this phone. The other person keeps their copy.\n• Update notifications — the app now lets you know when a new version is out.\n\nWorks with older versions too: a reply arrives there as an ordinary message. Reactions need the other phone to be updated as well, so they are not sent until it is.</string>
+    <string name="changelog_body">Bug fixes:\n• Reactions now work with contacts on version 1.1 — you can react and see it on your side; they simply won\'t (their app can\'t show reactions yet, but nothing breaks).\n• Select several messages at once — hold one, then tap others; copy or delete them together. Tap a selected message to unselect it.\n• The top bar stays visible while typing, so the contact name and actions no longer disappear behind the keyboard.\n• Tap the contact\'s name or photo at the top to open their profile.</string>
     <string name="btn_changelog_ok">Got it</string>
 
     <!-- About the app (Settings) -->

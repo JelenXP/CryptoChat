@@ -216,7 +216,7 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">• Odpovědi — přetáhni zprávu zleva doprava, nebo ji podrž a zvol Odpovědět. Původní zpráva se ukáže nad tvojí odpovědí.\n• Reakce — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zase zruší.\n• Kopírování a mazání — po podržení zprávy jde zkopírovat její text nebo ji smazat z tohohle telefonu. Protějšku jeho kopie zůstane.\n• Upozornění na aktualizace — appka teď dá vědět, když vyjde nová verze.\n\nSe staršími verzemi to funguje dál: odpověď tam dorazí jako běžná zpráva. Reakce potřebují aktualizovaný i druhý telefon, takže se do té doby neposílají.</string>
+    <string name="changelog_body">Opravy chyb:\n• Reakce teď fungují i s kontaktem na verzi 1.1 — můžeš reagovat a u sebe reakci vidíš; jemu se nezobrazí (jeho verze reakce ještě neumí, ale nic se nerozbije).\n• Výběr více zpráv naráz — podrž jednu, pak klepni na další; zkopíruj nebo smaž je společně. Klepnutím na vybranou zprávu ji odznačíš.\n• Horní lišta zůstává vidět i při psaní, takže jméno kontaktu a akce už nemizí za klávesnicí.\n• Klepnutím na jméno nebo fotku kontaktu nahoře otevřeš jeho profil.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->
