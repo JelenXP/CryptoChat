@@ -93,6 +93,17 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric potřebuje androidí prostředky (a SharedPreferences /
+            // filesDir / android.util.Base64) i v čistě JVM testech.
+            isIncludeAndroidResources = true
+            // Ať volání nezastíněných android.* metod v čistých JVM testech
+            // nepadají hned na „not mocked", ale vrátí rozumnou výchozí hodnotu.
+            isReturnDefaultValues = true
+        }
+    }
+
 
     packaging {
         resources {
@@ -141,9 +152,15 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Unit testy (běží na čistém JVM - krypto používá java.util.Base64, ne
-    // android.util.Base64, takže není potřeba Robolectric ani emulátor).
+    // Unit testy. Většina běží na čistém JVM (krypto i ChatEnvelope/Pairing
+    // používají java.util.Base64). Část chatové logiky ale sahá na android.util.Base64
+    // (RelayCrypto) nebo SharedPreferences/filesDir (ReplayGuard, BlobQuarantine,
+    // WireCompat stav) - ty jedou přes Robolectric, který android prostředí simuluje.
     testImplementation("junit:junit:4.13.2")
+    // Robolectric si za běhu stahuje 'android-all' jar -> potřebuje SÍŤ. Lokální
+    // offline stroj testy nespustí; autoritou je CI (build-chat-apk.yml).
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
 
     // Pozn.: instrumentované UI testy (androidTest) chatová verze zatím nemá.
     // Původní testovací závislosti (compose-ui-test, ui-test-manifest) byly
