@@ -61,6 +61,7 @@ import com.jelenxp.cryptochat.ui.onboarding.BackgroundOnboardingScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
+import com.jelenxp.cryptochat.ui.screens.BugReportScreen
 import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
 import com.jelenxp.cryptochat.ui.screens.ChatScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
@@ -481,6 +482,8 @@ fun CryptoChatApp(
         composable("design") { DesignScreen(navController) }
 
         composable("relay_settings") { RelaySettingsScreen(navController) }
+
+        composable("bug_report") { BugReportScreen(navController) }
 
         composable(
             route = "chat/{id}",

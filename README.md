@@ -72,6 +72,13 @@ Dvě cesty, `<id>` je 16–128 znaků z `A–Z a–z 0–9 _ -`:
     spojení otevřené, dokud nedorazí zpráva — pak odpoví hned. Díky tomu chodí
     zprávy skoro okamžitě a přes Tor jde výrazně míň spojení než při pollování.
 - **`GET /health`** — `200 ok` (kontrola dostupnosti).
+- **`POST /report`** — dobrovolné hlášení chyby z appky (JSON) → `204`.
+  Jediná věc, kterou server ukládá **na disk**: každé hlášení do vlastní složky
+  `reports/<timestamp>-<náhodný suffix>/report.json` (tělo přesně tak, jak přišlo,
+  nic o odesílateli). Kořen se dá přepnout přes `CC_REPORTS_DIR` (výchozí `./reports`),
+  strop velikosti přes `CC_MAX_REPORT_SIZE` (výchozí 256 KB).
+  Chyby: `411` (chybí délka), `413` (moc velké), `500` (nelze zapsat).
+  Obsah je anonymní už od klienta — žádné zprávy, klíče, jména kontaktů ani ID schránek.
 
 > **Delivery je best-effort:** vyzvednutím se blob smaže. Když se odpověď ztratí,
 > zpráva je pryč — klient to řeší tím, že další zprávy jdou na další (ratchet)

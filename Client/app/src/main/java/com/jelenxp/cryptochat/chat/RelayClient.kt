@@ -1,6 +1,7 @@
 package com.jelenxp.cryptochat.chat
 
 import android.util.Log
+import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -50,6 +51,12 @@ object RelayClient {
      */
     private const val MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
+    /** Content-Type pro [postJson]. */
+    private const val JSON_CONTENT_TYPE = "application/json"
+
+    /** Výchozí Content-Type (syrové bloby zpráv). */
+    private const val OCTET_CONTENT_TYPE = "application/octet-stream"
+
     /** Kolikrát zkusit navázat onion okruh, než to vzdáme. */
     private const val ONION_ATTEMPTS = 5
 
@@ -69,10 +76,42 @@ object RelayClient {
     /** Uloží blob do schránky. Vrací true při úspěchu (2xx). */
     fun put(baseUrl: String, mailboxId: String, blob: ByteArray): Boolean {
         val target = Target.parse(baseUrl, "/m/$mailboxId")
-        return if (TorManager.isOnion(target.host)) {
+        val ok = if (TorManager.isOnion(target.host)) {
             onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS).code in 200..204
         } else {
             directPut(baseUrl, mailboxId, blob)
+        }
+        // Jen velikost a výsledek - ID schránky se do diagnostiky NIKDY nedostane.
+        DiagnosticsLog.log(TAG, "odeslán blob ${blob.size} B: ${if (ok) "ok" else "odmítnuto"}")
+        return ok
+    }
+
+    /**
+     * Pošle JSON tělo metodou POST na danou cestu relaye (mimo schránky). Používá
+     * to jen dobrovolné hlášení chyby (`/report`) - jde stejnou cestou jako zprávy,
+     * tedy přes Tor, aby se neprozradila reálná IP uživatele. Vrací HTTP kód;
+     * síťová chyba je IOException.
+     */
+    fun postJson(baseUrl: String, path: String, json: ByteArray): Int {
+        val target = Target.parse(baseUrl, path)
+        return if (TorManager.isOnion(target.host)) {
+            onionRequest(target, "POST", json, ONION_READ_TIMEOUT_MS, contentType = JSON_CONTENT_TYPE).code
+        } else {
+            val conn = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+                useCaches = false
+                doOutput = true
+                setFixedLengthStreamingMode(json.size)
+                setRequestProperty("Content-Type", JSON_CONTENT_TYPE)
+            }
+            try {
+                conn.outputStream.use { it.write(json) }
+                conn.responseCode
+            } finally {
+                conn.disconnect()
+            }
         }
     }
 
@@ -96,7 +135,7 @@ object RelayClient {
         // ležet a dorazí příště - dřív by v takové chvíli byly nenávratně pryč.
         val query = if (waitSeconds > 0) "?ack=1&wait=$waitSeconds" else "?ack=1"
         val target = Target.parse(baseUrl, "/m/$mailboxId$query")
-        return if (TorManager.isOnion(target.host)) {
+        val fetched = if (TorManager.isOnion(target.host)) {
             // U long-pollu server drží spojení až waitSeconds - čtecí timeout
             // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
             val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
@@ -110,6 +149,10 @@ object RelayClient {
         } else {
             directGet(baseUrl, mailboxId, query)
         }
+        if (fetched.blobs.isNotEmpty()) {
+            DiagnosticsLog.log(TAG, "vyzvednuto ${fetched.blobs.size} blobů")
+        }
+        return fetched
     }
 
     /**
@@ -120,7 +163,7 @@ object RelayClient {
     fun ack(baseUrl: String, mailboxId: String, seq: Long): Boolean {
         if (seq < 0) return true
         val target = Target.parse(baseUrl, "/m/$mailboxId?upto=$seq")
-        return try {
+        val acked = try {
             if (TorManager.isOnion(target.host)) {
                 onionRequest(target, "DELETE", null, ONION_READ_TIMEOUT_MS).code in 200..204
             } else {
@@ -139,13 +182,17 @@ object RelayClient {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Potvrzení příjmu selhalo: ${e.javaClass.simpleName}")
+            DiagnosticsLog.warn(TAG, "potvrzení příjmu selhalo (${e.javaClass.simpleName})")
             false
         }
+        // Číslo `seq` je pořadí v rámci schránky, ne její ID - neprozrazuje nic.
+        if (acked) DiagnosticsLog.log(TAG, "příjem potvrzen (seq $seq)")
+        return acked
     }
 
     /** Ověří dostupnost relaye (GET /health). */
     fun health(baseUrl: String): Boolean {
-        return try {
+        val ok = try {
             val target = Target.parse(baseUrl, "/health")
             if (TorManager.isOnion(target.host)) {
                 onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS).code == 200
@@ -164,8 +211,11 @@ object RelayClient {
             // Adresu relaye nelogujeme - v release buildu (bez R8) by zůstala
             // v logcatu a prozradila, na jaký server se uživatel připojuje.
             Log.w(TAG, "health selhal: ${e.javaClass.simpleName}: ${e.message}")
+            DiagnosticsLog.warn(TAG, "relay nedostupný (${e.javaClass.simpleName})")
             false
         }
+        if (ok) DiagnosticsLog.log(TAG, "relay dostupný (health ok)")
+        return ok
     }
 
     /**
@@ -179,10 +229,12 @@ object RelayClient {
         method: String,
         body: ByteArray?,
         readTimeoutMs: Int,
-        attempts: Int = ONION_ATTEMPTS
+        attempts: Int = ONION_ATTEMPTS,
+        contentType: String = OCTET_CONTENT_TYPE
     ): Response {
         if (!TorManager.awaitReady(TOR_READY_TIMEOUT_MS)) {
             Log.w(TAG, "onion $method: Tor není včas připravený")
+            DiagnosticsLog.error(TAG, "Tor nenaběhl včas, $method přes onion se neposílá")
             throw IOException("Tor se nespustil nebo nenabootoval včas - zkus to za chvíli znovu")
         }
         val proxy = TorManager.socksHost to TorManager.socksPort
@@ -193,23 +245,33 @@ object RelayClient {
         repeat(attempts) { attempt ->
             try {
                 val t0 = System.currentTimeMillis()
-                val r = socksRequest(proxy, target, method, body, ONION_CONNECT_TIMEOUT_MS, readTimeoutMs)
-                Log.i(TAG, "onion $method -> HTTP ${r.code} " +
-                    "(${System.currentTimeMillis() - t0} ms, pokus ${attempt + 1})")
+                val r = socksRequest(
+                    proxy, target, method, body, ONION_CONNECT_TIMEOUT_MS, readTimeoutMs, contentType
+                )
+                val elapsed = System.currentTimeMillis() - t0
+                Log.i(TAG, "onion $method -> HTTP ${r.code} (${elapsed} ms, pokus ${attempt + 1})")
+                DiagnosticsLog.log(TAG, "onion $method -> HTTP ${r.code} ($elapsed ms, pokus ${attempt + 1})")
                 return r
             } catch (e: AfterSendException) {
                 // Neopakuj jen u PUT: zápis u serveru možná prošel a opakování by
                 // zprávu zdvojilo. GET je díky režimu s potvrzením nedestruktivní
                 // (server maže až na `ack`), takže ten se opakovat MUSÍ - jinak by
                 // rozpadlé spojení uprostřed odpovědi znamenalo ztracené zprávy.
-                if (method == "PUT") {
-                    Log.w(TAG, "onion PUT selhal až po odeslání, neopakuji: " +
+                //
+                // Totéž platí pro POST (hlášení chyby): opakování by hlášení
+                // na serveru založilo podruhé.
+                if (method == "PUT" || method == "POST") {
+                    Log.w(TAG, "onion $method selhal až po odeslání, neopakuji: " +
                         "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                    DiagnosticsLog.warn(TAG, "onion $method selhal po odeslání, neopakuji " +
+                        "(${e.cause?.javaClass?.simpleName})")
                     throw e
                 }
                 last = e
                 Log.w(TAG, "onion $method selhal po odeslání (pokus ${attempt + 1}/$attempts): " +
                     "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                DiagnosticsLog.warn(TAG, "onion $method selhal po odeslání " +
+                    "(pokus ${attempt + 1}/$attempts, ${e.cause?.javaClass?.simpleName})")
                 if (attempt < attempts - 1) {
                     try { Thread.sleep(ONION_RETRY_DELAY_MS) } catch (ie: InterruptedException) {
                         Thread.currentThread().interrupt()
@@ -220,6 +282,9 @@ object RelayClient {
                 last = e
                 Log.w(TAG, "onion $method selhal (pokus ${attempt + 1}/$attempts): " +
                     "${e.javaClass.simpleName}: ${e.message}")
+                // Text výjimky může obsahovat cílovou adresu - proto jen typ.
+                DiagnosticsLog.warn(TAG, "onion $method selhal " +
+                    "(pokus ${attempt + 1}/$attempts, ${e.javaClass.simpleName})")
                 if (attempt < attempts - 1) {
                     try { Thread.sleep(ONION_RETRY_DELAY_MS) } catch (ie: InterruptedException) {
                         Thread.currentThread().interrupt()
@@ -298,7 +363,8 @@ object RelayClient {
         method: String,
         body: ByteArray?,
         connectTimeoutMs: Int = TIMEOUT_MS,
-        readTimeoutMs: Int = TIMEOUT_MS
+        readTimeoutMs: Int = TIMEOUT_MS,
+        contentType: String = OCTET_CONTENT_TYPE
     ): Response {
         Socket().use { socket ->
             socket.connect(InetSocketAddress(proxy.first, proxy.second), connectTimeoutMs)
@@ -348,7 +414,7 @@ object RelayClient {
             head.append("$method ${target.path} HTTP/1.1\r\n")
             head.append("Host: ${target.host}\r\n")
             if (body != null) {
-                head.append("Content-Type: application/octet-stream\r\n")
+                head.append("Content-Type: $contentType\r\n")
                 head.append("Content-Length: ${body.size}\r\n")
             }
             head.append("Connection: close\r\n\r\n")

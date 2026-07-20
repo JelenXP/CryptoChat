@@ -131,7 +131,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             if (relayUrl.contains(".onion")) TorController.ensureStarted(context)
             TorForegroundService.ensureRunning(context)
             try {
-                // Přenačti historii, kdykoli do ní service něco přidá.
+                // Přenačti historii při KAŽDÉM návratu do popředí. `changes` je
+                // SharedFlow bez replaye, takže zprávy doručené, když obrazovka
+                // neposlouchala (uživatel byl jinde v appce), by se jinak
+                // neobjevily až do příchodu další zprávy.
+                messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
                 ChatRepository.changes
                     .filter { it == id }
                     .collect {
@@ -165,19 +169,19 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         input = ""
         scope.launch {
             val msg = withContext(Dispatchers.IO) { RelaySync.enqueue(context, contact, text) }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
 
     fun retry(message: ChatMessage) {
         if (contact == null) return
         scope.launch {
-            repo.updateStatus(id, message.id, ChatMessage.Status.SENDING)
-            messages = repo.getMessages(id)
+            withContext(Dispatchers.IO) { repo.updateStatus(id, message.id, ChatMessage.Status.SENDING) }
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, message) }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
 
@@ -196,9 +200,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 Toast.makeText(context, imageFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
 
@@ -236,9 +240,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 Toast.makeText(context, fileFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
-            messages = repo.getMessages(id)
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
     }
     val fileLauncher = rememberLauncherForActivityResult(

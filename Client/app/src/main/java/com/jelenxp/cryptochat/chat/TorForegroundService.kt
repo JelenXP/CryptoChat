@@ -13,6 +13,7 @@ import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.ContactRepository
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -69,6 +70,7 @@ class TorForegroundService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Tor se nepodařilo nastartovat ze service", e)
+            DiagnosticsLog.error(TAG, "Tor se nepodařilo nastartovat ze služby (${e.javaClass.simpleName})")
         }
         startSync()
         return START_STICKY
@@ -78,6 +80,7 @@ class TorForegroundService : Service() {
     private fun startSync() {
         if (syncStarted) return
         syncStarted = true
+        DiagnosticsLog.log(TAG, "služba na pozadí spuštěna, startuji synchronizaci")
         scope.launch {
             // Nejdřív ZAHŘEJ spojení jedním požadavkem (postaví onion okruh) a
             // teprve pak spusť pollování kontaktů. Jinak by health check i všechny
@@ -101,6 +104,7 @@ class TorForegroundService : Service() {
                     throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "Tik hlídače selhal", e)
+                    DiagnosticsLog.warn(TAG, "tik hlídače selhal (${e.javaClass.simpleName})")
                 }
                 // Čekej na další tik, ale nech se probudit dřív (nový kontakt,
                 // změna serveru) - jinak by čerstvě spárovaný kontakt čekal na
@@ -142,6 +146,8 @@ class TorForegroundService : Service() {
                 jobs.remove(contact.id)?.cancel()
                 fingerprints[contact.id] = fingerprint
                 jobs[contact.id] = scope.launch { syncLoop(contact) }
+                // Bez jména i bez ID kontaktu - stačí, že se smyčka (znovu) rozjela.
+                DiagnosticsLog.log(TAG, "spuštěna poll smyčka kontaktu")
             }
         }
         // Keepalive JEN když nic nepolluje. Běžící long-polly drží okruh
@@ -178,13 +184,17 @@ class TorForegroundService : Service() {
         while (scope.isActive && System.currentTimeMillis() < deadline) {
             if (SettingsRepository(ctx).getRelayUrl().isBlank()) return
             RelayStatus.refresh(ctx)          // blokuje než health doběhne; no-op při souběhu
-            if (RelayStatus.state == RelayConn.CONNECTED) return
+            if (RelayStatus.state == RelayConn.CONNECTED) {
+                DiagnosticsLog.log(TAG, "spojení zahřáto (relay dostupný)")
+                return
+            }
             // Rostoucí odstup: když server neběží (uspaný notebook), nemá smysl
             // pořád dokola stavět okruhy - to je nejdražší věc, co appka umí.
             delay(backoff)
             backoff = (backoff * 2).coerceAtMost(60_000L)
         }
         // Nepodařilo se zahřát - poll smyčky to zkusí dál s vlastním backoffem.
+        DiagnosticsLog.warn(TAG, "zahřátí spojení se nepovedlo, pokračují poll smyčky")
     }
 
     /** Nekonečná long-poll smyčka pro jeden kontakt: čeká na zprávy a notifikuje. */
@@ -216,6 +226,7 @@ class TorForegroundService : Service() {
                 }
                 if (result.failed) {
                     // Server nedostupný - zpomaluj, ať se donekonečna nestaví okruhy.
+                    DiagnosticsLog.warn(TAG, "poll selhal, zpomaluji (backoff $backoff ms)")
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS
@@ -223,6 +234,10 @@ class TorForegroundService : Service() {
             } catch (e: CancellationException) {
                 throw e                   // zrušení smyčky se musí šířit, ne spolknout
             } catch (e: Exception) {
+                DiagnosticsLog.error(
+                    TAG,
+                    "poll smyčka vyhodila výjimku (${e.javaClass.simpleName}), zpomaluji"
+                )
                 backoff = sleepBackoff(backoff)
             }
         }

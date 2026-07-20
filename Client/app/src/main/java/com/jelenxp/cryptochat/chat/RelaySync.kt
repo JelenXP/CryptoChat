@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import java.io.File
 import java.security.SecureRandom
 import java.util.UUID
@@ -22,6 +23,8 @@ import java.util.UUID
  * Metody blokují (síť) - volej z IO dispatcheru.
  */
 object RelaySync {
+
+    private const val TAG = "RelaySync"
 
     // Délka jedné epochy schránky (rotace). 1 den = rozumný kompromis mezi
     // soukromím (časté střídání ID) a spolehlivostí (server drží blob 24 h).
@@ -157,8 +160,14 @@ object RelaySync {
                 RelayClient.put(baseUrl, mailbox, blob)
             }
         } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "odeslání zprávy selhalo (${e.javaClass.simpleName})")
             false
         }
+        // Jen typ zprávy a výsledek - žádný obsah, žádné jméno kontaktu.
+        DiagnosticsLog.log(
+            TAG,
+            "odeslání zprávy (${message.kind}): ${if (delivered) "doručeno" else "selhalo"}"
+        )
         val finalStatus = if (delivered) ChatMessage.Status.SENT else ChatMessage.Status.FAILED
         ChatRepository(context).updateStatus(contact.id, message.id, finalStatus)
         return delivered
@@ -251,17 +260,25 @@ object RelaySync {
                 RelayClient.get(baseUrl, mailbox, waitSeconds)
             } catch (ex: Exception) {
                 failed = true
+                DiagnosticsLog.warn(TAG, "vyzvednutí zpráv selhalo (${ex.javaClass.simpleName})")
                 return 0
             }
             val blobs = fetched.blobs
             var n = 0
+            // Když se cokoli z dávky nepodaří bezpečně uložit ani odložit do
+            // karantény, NESMÍME poslat potvrzení - server by zprávu smazal a
+            // byla by nenávratně pryč. Radši ať dorazí znovu (duplicitu
+            // odfiltruje ReplayGuard).
+            var allSafe = true
             // Nepřečteno počítáme jen když konverzace není zrovna otevřená
             // (otevřený chat si zprávu rovnou přečte).
             fun arrived(message: ChatMessage) {
                 // Když se zápis nepovede, NEhlas příjem - jinak by přišla
-                // notifikace o zprávě, která v historii není (a na serveru už taky).
+                // notifikace o zprávě, která v historii není.
                 if (!repo.append(contact.id, message)) {
                     android.util.Log.e("RelaySync", "Zprávu se nepodařilo uložit do historie")
+                    DiagnosticsLog.error(TAG, "zápis zprávy do historie selhal")
+                    allSafe = false
                     return
                 }
                 if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
@@ -290,6 +307,11 @@ object RelaySync {
                 if (!WireCompat.acceptMajor(context, contact.id, blob)) {
                     // NEZAHAZOVAT: server blob při GETu smazal, takže by byl pryč
                     // navždy. Odlož ho a zkus znovu, až si obě strany sednou.
+                    DiagnosticsLog.warn(
+                        TAG,
+                        "nekompatibilní verze formátu (major=${WireCompat.readMajor(blob)}), " +
+                            "blob odložen do karantény"
+                    )
                     BlobQuarantine.save(context, contact.id, blob)
                     continue
                 }
@@ -402,20 +424,31 @@ object RelaySync {
                             "Blob se nepodařilo otevřít (${blob.size} B, major=" +
                                 "${WireCompat.readMajor(blob)}), odkládám do karantény"
                         )
+                        DiagnosticsLog.warn(
+                            TAG,
+                            "blob se nepodařilo dešifrovat (${blob.size} B, " +
+                                "major=${WireCompat.readMajor(blob)}), odložen do karantény"
+                        )
                         BlobQuarantine.save(context, contact.id, blob)
                     }
                 }
             } catch (ex: Exception) {
                 // Jeden vadný blob nesmí shodit zbytek dávky.
                 android.util.Log.w("RelaySync", "Zpracování blobu selhalo, pokračuji", ex)
+                DiagnosticsLog.warn(TAG, "zpracování blobu selhalo (${ex.javaClass.simpleName})")
+                allSafe = false
             }
 
-            // Teprve teď jsou zprávy bezpečně uložené (nebo odložené v karanténě),
-            // takže je server smí zahodit. Když potvrzení nedojde, doručí se
-            // příště znovu a ReplayGuard je odfiltruje - radši dvakrát než nikdy.
-            if (fetched.ackSeq >= 0) {
+            // Potvrzení POSÍLÁME JEN když je celá dávka bezpečně uložená nebo
+            // odložená v karanténě - teprve tehdy ji server smí zahodit. Jinak
+            // ať dorazí znovu; duplicitu odfiltruje ReplayGuard.
+            if (fetched.ackSeq >= 0 && allSafe) {
                 if (!RelayClient.ack(baseUrl, mailbox, fetched.ackSeq)) failed = true
+            } else if (!allSafe) {
+                DiagnosticsLog.warn(TAG, "dávka není celá uložená, potvrzení se neposílá")
+                failed = true
             }
+            if (n > 0) DiagnosticsLog.log(TAG, "přijato $n nových zpráv")
             return n
         }
 

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Refresh
@@ -328,6 +329,12 @@ fun SettingsScreen(navController: NavController) {
                     onClick = { runUpdateCheck() }
                 )
             }
+            NavCard(
+                icon = Icons.Default.BugReport,
+                title = stringResource(R.string.settings_bug_report_label),
+                description = stringResource(R.string.settings_bug_report_desc),
+                onClick = { navController.navigate("bug_report") }
+            )
             NavCard(
                 icon = Icons.AutoMirrored.Filled.OpenInNew,
                 title = stringResource(R.string.about_github_label),

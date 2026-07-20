@@ -2,6 +2,7 @@ package com.jelenxp.cryptochat.chat
 
 import android.content.Context
 import android.util.Log
+import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import io.matthewnelson.kmp.file.toFile
 import io.matthewnelson.kmp.tor.resource.exec.tor.ResourceLoaderTorExec
 import io.matthewnelson.kmp.tor.runtime.Action
@@ -30,6 +31,9 @@ import io.matthewnelson.kmp.tor.runtime.core.config.TorOption
 object TorController {
 
     private const val TAG = "TorController"
+
+    /** Z hlášky Toru „Bootstrapped 45% (…)" vytáhne jen procento. */
+    private val BOOTSTRAP_RE = Regex("Bootstrapped (\\d+)%")
 
     @Volatile
     private var runtime: TorRuntime? = null
@@ -60,21 +64,33 @@ object TorController {
                 val socks = listeners.socks.firstOrNull()
                 if (socks != null) {
                     Log.i(TAG, "SOCKS listener otevřen: ${socks.address.value}:${socks.port.value}")
+                    // Port je lokální (127.0.0.1) a náhodně přidělený - neprozrazuje nic.
+                    DiagnosticsLog.log(TAG, "Tor připraven, SOCKS listener otevřen")
                     TorManager.configure(socks.address.value, socks.port.value, ready = true)
                 } else {
                     Log.w(TAG, "SOCKS listener zavřen / žádný")
+                    DiagnosticsLog.warn(TAG, "SOCKS listener zavřen - Tor není k dispozici")
                     TorManager.markStopped()
                 }
             }
             // Logy Toru (NOTICE ukazuje bootstrap %, WARN/ERR případné problémy).
+            //
+            // Do diagnostiky jde z NOTICE JEN postup bootstrapu - celé řádky by
+            // mohly obsahovat cílové adresy. U WARN/ERR se navíc `.onion` adresy
+            // maskují (DiagnosticsLog.redact) a text se krátí.
             observerStatic(TorEvent.NOTICE, OnEvent.Executor.Immediate) { line ->
                 Log.i(TAG, "tor NOTICE: $line")
+                BOOTSTRAP_RE.find(line)?.let { match ->
+                    DiagnosticsLog.log(TAG, "bootstrap Toru ${match.groupValues[1]} %")
+                }
             }
             observerStatic(TorEvent.WARN, OnEvent.Executor.Immediate) { line ->
                 Log.w(TAG, "tor WARN: $line")
+                DiagnosticsLog.warn(TAG, "tor WARN: ${DiagnosticsLog.redact(line).take(160)}")
             }
             observerStatic(TorEvent.ERR, OnEvent.Executor.Immediate) { line ->
                 Log.e(TAG, "tor ERR: $line")
+                DiagnosticsLog.error(TAG, "tor ERR: ${DiagnosticsLog.redact(line).take(160)}")
             }
             required(TorEvent.NOTICE)
             required(TorEvent.ERR)
@@ -83,12 +99,14 @@ object TorController {
         runtime = rt
 
         Log.i(TAG, "Startuji zabudovaný Tor (StartDaemon)…")
+        DiagnosticsLog.log(TAG, "startuji zabudovaný Tor")
         // Nastartuj démona. enqueue je neblokující - bootstrap Toru (desítky
         // sekund) běží na pozadí, výsledek se projeví přes LISTENERS observer výše.
         rt.enqueue(
             action = Action.StartDaemon,
             onFailure = OnFailure { t ->
                 Log.e(TAG, "Tor StartDaemon selhal", t)
+                DiagnosticsLog.error(TAG, "start Toru selhal (${t.javaClass.simpleName})")
                 // Runtime MUSÍME zahodit, jinak by `ensureStarted` (které se
                 // vrací hned, když `runtime != null`) bylo napořád no-op a Tor
                 // by se do restartu procesu už nikdy nezkusil nastartovat.

@@ -408,4 +408,33 @@
     <string name="onb_skip_finish">Přeskočit a dokončit</string>
     <string name="onb_done_next">Hotovo, pokračovat</string>
     <string name="onb_status_enabled">Povoleno</string>
+    <!-- Hlaseni chyb (Nahlasit chybu) -->
+    <string name="settings_bug_report_label">Nahlásit chybu</string>
+    <string name="settings_bug_report_desc">Odeslat anonymní hlášení přes Tor a pomoct chybu opravit</string>
+    <string name="bug_report_title">Nahlásit chybu</string>
+    <string name="bug_report_intro">Popiš, co se pokazilo. Hlášení se posílá anonymně přes Tor, takže tvá skutečná IP adresa zůstane skrytá.</string>
+    <string name="bug_report_desc_label">Co se stalo?</string>
+    <string name="bug_report_desc_placeholder">Například: po restartu telefonu přestaly chodit zprávy od jednoho kontaktu.</string>
+    <string name="bug_report_desc_required">Nejdřív prosím popiš problém.</string>
+    <string name="bug_report_attach_header">Co se přiloží</string>
+    <string name="bug_report_attach_device">Verze aplikace a telefonu</string>
+    <string name="bug_report_attach_device_desc">Verze aplikace, verze Androidu a model telefonu</string>
+    <string name="bug_report_attach_log">Diagnostický log</string>
+    <string name="bug_report_attach_log_desc">Poslední události: stav Toru, připojení k serveru, počty doručených zpráv</string>
+    <string name="bug_report_attach_conn">Stav připojení</string>
+    <string name="bug_report_attach_conn_desc">Jestli běží Tor a jestli je server dostupný</string>
+    <string name="bug_report_attach_crash">Záznam o posledním pádu</string>
+    <string name="bug_report_attach_crash_desc">Technické podrobnosti o posledním pádu aplikace</string>
+    <string name="bug_report_attach_crash_none">Žádný pád není zaznamenaný</string>
+    <string name="bug_report_privacy">Zprávy, šifrovací klíče, jména kontaktů, ID schránek ani adresa serveru se nikdy nezaznamenávají a nejsou součástí hlášení. Odesláním souhlasíš s odesláním vypsaných anonymních údajů na server. Přenos jde přes Tor.</string>
+    <string name="bug_report_preview">Zobrazit, co se odešle</string>
+    <string name="bug_report_preview_title">Obsah hlášení</string>
+    <string name="bug_report_send">Odeslat hlášení</string>
+    <string name="bug_report_sending">Odesílám přes Tor, může to chvíli trvat…</string>
+    <string name="bug_report_result_ok">Hlášení odesláno. Díky!</string>
+    <string name="bug_report_error_no_relay">Není nastavený server chatu, hlášení nemá kam odejít.</string>
+    <string name="bug_report_error_tor">Tor se nestihl spustit. Hlášení se neodeslalo – napřímo by prozradilo tvou IP adresu.</string>
+    <string name="bug_report_error_network">Na server se nepodařilo dojít. Zkus to později znovu.</string>
+    <string name="bug_report_error_server">Server hlášení odmítl. Zkus to později znovu.</string>
+    <string name="bug_report_error_too_large">Hlášení je příliš velké. Zkrať popis nebo odznač některé přílohy.</string>
 </resources>

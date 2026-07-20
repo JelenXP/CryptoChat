@@ -408,4 +408,33 @@
     <string name="onb_skip_finish">Skip and finish</string>
     <string name="onb_done_next">I did it, continue</string>
     <string name="onb_status_enabled">Enabled</string>
+    <!-- Hlaseni chyb (Nahlasit chybu) -->
+    <string name="settings_bug_report_label">Report a problem</string>
+    <string name="settings_bug_report_desc">Send an anonymous report over Tor to help fix a bug</string>
+    <string name="bug_report_title">Report a problem</string>
+    <string name="bug_report_intro">Describe what went wrong. The report is sent anonymously over Tor, so your real IP address stays hidden.</string>
+    <string name="bug_report_desc_label">What happened?</string>
+    <string name="bug_report_desc_placeholder">For example: messages from one contact stopped arriving after restarting the phone.</string>
+    <string name="bug_report_desc_required">Please describe the problem first.</string>
+    <string name="bug_report_attach_header">What to attach</string>
+    <string name="bug_report_attach_device">App and phone version</string>
+    <string name="bug_report_attach_device_desc">App version, Android version and phone model</string>
+    <string name="bug_report_attach_log">Diagnostic log</string>
+    <string name="bug_report_attach_log_desc">Recent events: Tor state, relay connections, number of messages delivered</string>
+    <string name="bug_report_attach_conn">Connection state</string>
+    <string name="bug_report_attach_conn_desc">Whether Tor is running and whether the server is reachable</string>
+    <string name="bug_report_attach_crash">Last crash record</string>
+    <string name="bug_report_attach_crash_desc">Technical details of the last app crash</string>
+    <string name="bug_report_attach_crash_none">No crash has been recorded</string>
+    <string name="bug_report_privacy">Messages, encryption keys, contact names, mailbox IDs and the server address are never logged and are never part of a report. By sending it you agree to submit the listed anonymous data to the server. The transfer goes over Tor.</string>
+    <string name="bug_report_preview">Show what will be sent</string>
+    <string name="bug_report_preview_title">Contents of the report</string>
+    <string name="bug_report_send">Send report</string>
+    <string name="bug_report_sending">Sending over Tor, this can take a while…</string>
+    <string name="bug_report_result_ok">Report sent. Thank you!</string>
+    <string name="bug_report_error_no_relay">Chat server is not set, there is nowhere to send the report.</string>
+    <string name="bug_report_error_tor">Tor did not start in time. The report was not sent – sending it directly would reveal your IP address.</string>
+    <string name="bug_report_error_network">The server could not be reached. Try again later.</string>
+    <string name="bug_report_error_server">The server rejected the report. Try again later.</string>
+    <string name="bug_report_error_too_large">The report is too large. Shorten the description or untick some attachments.</string>
 </resources>

@@ -14,7 +14,11 @@ Co server NIKDY nevi (a ani vedet nemuze):
                            (HKDF) - server ho nikdy nevidel.
   - delku zpravy        -> klient bloby paddinguje na fixni velikosti.
 
-Server drzi vse jen v PAMETI (nic na disk), nezaznamenava zadne logy pristupu
+Jedina vyjimka je POST /report: dobrovolne hlaseni chyby, ktere uzivatel posle
+z appky (a predem vidi, co presne odesila). Uklada se do CC_REPORTS_DIR a je uz
+od klienta anonymni - zadne zpravy, klice, jmena kontaktu ani ID schranek.
+
+Jinak server drzi vse jen v PAMETI, nezaznamenava zadne logy pristupu
 a schranky maji kratkou zivotnost (TTL) + mazou se po prvnim vyzvednuti. I kdyby
 nekdo server zabavil, najde jen par sifrovanych blobku, ktere za chvili mizi.
 
@@ -24,6 +28,7 @@ Konfigurace pres promenne prostredi (viz nize), vse ma rozumny vychozi stav.
 
 import os
 import re
+import secrets
 import struct
 import threading
 import time
@@ -83,6 +88,17 @@ RATE_LIMIT_WINDOW = int(os.environ.get("CC_RATE_LIMIT_WINDOW", "60"))          #
 # cekajici GET probudi okamzite). Vlakno navic nic nestoji - jen ceka na Condition.
 LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "90"))                     # sekundy
 
+# --- Hlaseni chyb (POST /report) ---------------------------------------------
+#
+# Jedina vec, kterou server uklada na DISK. Hlaseni posila uzivatel dobrovolne
+# z obrazovky "Nahlasit chybu" a vidi predem, co presne odesle. Obsah je uz od
+# klienta anonymni (zadne zpravy, klice, jmena kontaktu ani ID schranek) a chodi
+# pres Tor, takze o odesilateli nic nevime - a nic o nem ani neukladame.
+REPORTS_DIR = os.environ.get("CC_REPORTS_DIR", "./reports")
+
+# Strop velikosti jednoho hlaseni. Klient si telo sam zkracuje pod tuto mez.
+MAX_REPORT_SIZE = int(os.environ.get("CC_MAX_REPORT_SIZE", str(256 * 1024)))   # 256 KB
+
 # Povoleny tvar mailbox ID: URL-safe base64 / hex, rozumna delka. Server ho bere
 # jako neprusvitny retezec - nezajima ho, co znamena.
 MAILBOX_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
@@ -101,7 +117,16 @@ class MailboxStore:
         # Condition (misto prosteho Locku) umoznuje long-polling: GET, ktery najde
         # prazdnou schranku, muze pockat, nez ho PUT probudi (notify_all).
         self._cond = threading.Condition()
-        # mailbox_id -> {"blobs": deque[(seq, bytes)], "expires": float, "next_seq": int}
+        # Poradove cislo je GLOBALNI a nikdy se neresetuje.
+        #
+        # Puvodne bylo per-schranka a zacinalo od 1. Jenze schranka po vyzvednuti
+        # (ack/drain/TTL) zanikne a dalsi PUT ji zalozi znovu - takze cislovani
+        # zacalo od zacatku. Opozdene potvrzeni "upto=5" (pres Tor se DELETE
+        # opakuje i desitky sekund) pak mohlo smazat uplne nove zpravy, ktere
+        # klient nikdy nevidel. Seed z casu navic zajisti, ze ani potvrzeni
+        # z doby pred restartem serveru nesmaze nic noveho.
+        self._next_seq = time.time_ns() // 1000
+        # mailbox_id -> {"blobs": deque[(seq, bytes)], "expires": float}
         #
         # Kazdy blob ma poradove cislo v ramci schranky. Diky nemu muze klient
         # rict "zpracoval jsem vse do N" a teprve tehdy se bloby smazou - viz
@@ -123,12 +148,12 @@ class MailboxStore:
                 return "full"
             box = self._boxes.get(mailbox_id)
             if box is None:
-                box = {"blobs": deque(), "expires": now + TTL_SECONDS, "next_seq": 1}
+                box = {"blobs": deque(), "expires": now + TTL_SECONDS}
                 self._boxes[mailbox_id] = box
             if len(box["blobs"]) >= MAX_MAILBOX_BLOBS:
                 return "box_full"
-            box["blobs"].append((box["next_seq"], blob))
-            box["next_seq"] += 1
+            self._next_seq += 1
+            box["blobs"].append((self._next_seq, blob))
             box["expires"] = now + TTL_SECONDS  # kazdy zapis prodlouzi zivotnost
             self._total_bytes += len(blob)
             # Probud pripadne long-poll cekatele (vsichni si znovu overi svou schranku).
@@ -249,6 +274,32 @@ class RateLimiter:
 
 
 LIMITER = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
+
+
+# --- Ukladani hlaseni chyb ----------------------------------------------------
+
+def store_report(body: bytes) -> bool:
+    """Ulozi hlaseni do vlastni slozky reports/<timestamp>-<suffix>/report.json.
+
+    Telo se uklada PRESNE tak, jak prislo - server ho nijak neparsuje ani
+    nedoplnuje. Zejmena se NEUKLADA nic o odesilateli (za Torem stejne nic neni:
+    vsechna spojeni chodi z 127.0.0.1).
+
+    Nahodny suffix ma dva duvody: kolize dvou hlaseni ve stejne sekunde a to,
+    aby se z nazvu slozek nedal odhadnout pocet ani poradi hlaseni.
+
+    Vraci True pri uspechu. Chybu zapisu NIKDY nepusti ven - hlaseni chyby nesmi
+    shodit relay, ktery jinak dorucuje zpravy.
+    """
+    try:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        folder = os.path.join(REPORTS_DIR, stamp + "-" + secrets.token_hex(4))
+        os.makedirs(folder)
+        with open(os.path.join(folder, "report.json"), "wb") as handle:
+            handle.write(body)
+        return True
+    except Exception:
+        return False
 
 
 # --- HTTP handler -------------------------------------------------------------
@@ -457,9 +508,40 @@ class RelayHandler(BaseHTTPRequestHandler):
         else:  # "full"
             self._send(507, b"server storage full\n", "text/plain")
 
-    # Nekteri klienti (OkHttp) posilaji radeji POST - povolime jako alias k PUT.
     def do_POST(self):
+        # /report je jediny POST s vlastni obsluhou; zbytek zustava aliasem
+        # k PUT (nekteri klienti posilaji radeji POST).
+        if self.path.split("?", 1)[0] == "/report":
+            self._handle_report()
+            return
         self.do_PUT()
+
+    def _handle_report(self):
+        """Prijme dobrovolne hlaseni chyby a ulozi ho na disk (viz store_report)."""
+        if not LIMITER.allow(self._client_key()):
+            self._send(429, b"rate limited\n", "text/plain")
+            return
+
+        length = self._content_length()
+        if length is None or length <= 0:
+            self._send(411, b"length required\n", "text/plain", close=True)
+            return
+        if length > MAX_REPORT_SIZE:
+            # Stejne jako u prilis velkeho blobu: zbytek "vypijeme", aby klient
+            # stihl precist 413, a pri extremni velikosti rovnou odpojime.
+            drained = self._drain_body(length)
+            self._send(413, b"report too large\n", "text/plain", close=not drained)
+            return
+
+        body = self.rfile.read(length)
+        if len(body) != length:
+            self._send(400, b"short body\n", "text/plain", close=True)
+            return
+
+        if store_report(body):
+            self._send(204)
+        else:
+            self._send(500, b"cannot store report\n", "text/plain")
 
 
 # --- Uklidove vlakno + spusteni ----------------------------------------------
@@ -520,6 +602,7 @@ def main():
     print(f"CryptoChat relay bezi na http://{HOST}:{PORT}")
     print(f"  max blob: {MAX_BLOB_SIZE} B | TTL: {TTL_SECONDS} s | "
           f"max pamet: {MAX_TOTAL_BYTES} B")
+    print(f"  hlaseni chyb (POST /report) -> {os.path.abspath(REPORTS_DIR)}")
     print("  (Ctrl+C pro ukonceni)")
     try:
         server.serve_forever()

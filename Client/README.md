@@ -91,6 +91,16 @@ By default the app uses the built-in relay over Tor. In **Chat server** you can 
 The server can see that *some* mailbox received *something* at a given time (otherwise it
 couldn't deliver). It cannot tell whose it is or what's in it.
 
+## Reporting a problem
+
+Found a bug? **Settings → Report a problem.** Describe what went wrong, tick what you
+want to attach (app and phone version, diagnostic log, connection state, last crash
+record) and send it. Before sending you can **read exactly what will be submitted**.
+
+Nothing sensitive is ever collected: no messages, encryption keys, contact names,
+mailbox IDs or the server address. The report goes out **over Tor**, so it never
+reveals your IP address — if Tor isn't running, nothing is sent.
+
 ## Language
 
 The app follows your phone's language automatically; you can also force
@@ -190,6 +200,16 @@ přepnout na **Vlastní** a zadat svou adresu (vlastní relay v místní síti n
 
 Server vidí, že *nějaká* schránka v nějaký čas *něco* dostala (jinak by nedoručil).
 Nepozná ale čí je ani co v ní je.
+
+## Hlášení chyby
+
+Narazil jsi na chybu? **Nastavení → Nahlásit chybu.** Popiš, co se pokazilo, zaškrtni,
+co se má přiložit (verze aplikace a telefonu, diagnostický log, stav připojení, záznam
+o posledním pádu) a odešli. Před odesláním si můžeš **přečíst přesně to, co se odešle**.
+
+Nic citlivého se nesbírá: žádné zprávy, šifrovací klíče, jména kontaktů, ID schránek
+ani adresa serveru. Hlášení jde **přes Tor**, takže neprozradí tvou IP adresu — když
+Tor neběží, neodešle se nic.
 
 ## Jazyk
 
