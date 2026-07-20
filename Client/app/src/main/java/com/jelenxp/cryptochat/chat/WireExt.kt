@@ -42,12 +42,14 @@ import java.security.SecureRandom
  *
  * ## Registr typů (NIKDY nepoužívat číslo znovu)
  *
- * | typ | jméno    | od minoru | význam                                     |
- * |-----|----------|-----------|--------------------------------------------|
- * | 1   | MSG_ID   | 2         | stabilní ID zprávy napříč zařízeními        |
- * | 2   | REPLY_TO | 2         | REZERVOVÁNO (odpovědi, v1.2)                |
- * | 3   | CONTROL  | 2         | řídicí zpráva, viz [Control]                |
- * | 4   | REACTION | 2         | REZERVOVÁNO (reakce, v1.2)                  |
+ * | typ | jméno     | od minoru | význam                                     |
+ * |-----|-----------|-----------|--------------------------------------------|
+ * | 1   | MSG_ID    | 2         | stabilní ID zprávy napříč zařízeními        |
+ * | 2   | REPLY_TO  | 2         | odpověď na zprávu (v1.2)                    |
+ * | 3   | CONTROL   | 2         | řídicí zpráva, viz [Control]                |
+ * | 4   | REACTION  | 2         | reakce emoji (v1.2)                         |
+ * | 5   | MAX_MAJOR | 4         | nejvyšší wire MAJOR, který odesílatel UMÍ    |
+ * |     |           |           | PŘEČÍST - pojistka pro budoucí major migraci |
  */
 object WireExt {
 
@@ -65,6 +67,7 @@ object WireExt {
     const val TYPE_REPLY_TO = 2
     const val TYPE_CONTROL = 3
     const val TYPE_REACTION = 4
+    const val TYPE_MAX_MAJOR = 5
 
     /** Délka stabilního ID zprávy. 16 B = stejná odolnost proti kolizi jako UUID. */
     const val MSG_ID_BYTES = 16
@@ -207,6 +210,10 @@ object WireExt {
         val replyToHex: String?
             get() = first(TYPE_REPLY_TO)?.takeIf { it.size == MSG_ID_BYTES }?.let { toHex(it) }
 
+        /** Nejvyšší wire MAJOR, který odesílatel umí přečíst, nebo null. */
+        val maxMajor: Int?
+            get() = first(TYPE_MAX_MAJOR)?.takeIf { it.size == 1 }?.let { it[0].toInt() and 0xFF }
+
         /**
          * Reakce, nebo null když ji trailer nenese nebo je vadná. Všechno v ní
          * pochází od protějšku, takže se ověřuje délka, mez i samotné emoji.
@@ -271,6 +278,16 @@ object WireExt {
         fun putReplyTo(replyTo: ByteArray): Builder {
             require(replyTo.size == MSG_ID_BYTES) { "REPLY_TO musí mít $MSG_ID_BYTES B" }
             return put(TYPE_REPLY_TO, replyTo)
+        }
+
+        /**
+         * Inzerce „nejvyšší wire MAJOR, který umím PŘEČÍST". Posílá se v každé
+         * zprávě, aby při budoucí major migraci odesílatel poznal, kdy smí
+         * protějšku bezpečně přepnout obálku na nový major (viz [WireCompat]).
+         */
+        fun putMaxMajor(major: Int): Builder {
+            require(major in 1..255) { "MAX_MAJOR mimo rozsah: $major" }
+            return put(TYPE_MAX_MAJOR, byteArrayOf(major.toByte()))
         }
 
         /** Prázdné pole, když není co posílat - pak se trailer vůbec nezapíše. */

@@ -129,12 +129,16 @@ object ChatEnvelope {
         return encrypt(payload, keyBase64, dir)
     }
 
-    /** Trailer s ID zprávy a případným odkazem na odpověď. */
+    /**
+     * Trailer s ID zprávy, odkazem na odpověď a VŽDY s inzercí [maxMajor]
+     * ([WireCompat.MAX_READABLE_MAJOR]) - ta jede v každé zprávě, aby při budoucí
+     * major migraci odesílatel poznal, kdy smí přepnout obálku (viz [WireCompat]).
+     */
     private fun trailerFor(msgId: ByteArray?, replyTo: ByteArray? = null): ByteArray {
-        if (msgId == null && replyTo == null) return ByteArray(0)
         val b = WireExt.Builder()
         msgId?.let { b.putMsgId(it) }
         replyTo?.let { b.putReplyTo(it) }
+        b.putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
         return b.build()
     }
 
@@ -162,6 +166,7 @@ object ChatEnvelope {
         val trailer = WireExt.Builder()
             .put(WireExt.TYPE_CONTROL, control)
             .put(WireExt.TYPE_REACTION, WireExt.buildReaction(target, emoji, remove))
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
             .build()
         // Do koše jako text - reakce tak na drátě vypadá jako krátká zpráva
         // a relay z velikosti nepozná, že jde o reakci.
@@ -236,7 +241,9 @@ object ChatEnvelope {
             val senderMinor: Int,
             val content: Opened,
             val msgIdHex: String? = null,
-            val replyToHex: String? = null
+            val replyToHex: String? = null,
+            /** Nejvyšší wire major, který odesílatel umí přečíst (z inzerce). */
+            val maxMajor: Int? = null
         ) : Result
 
         /**
@@ -341,7 +348,8 @@ object ChatEnvelope {
                     return Result.Ok(
                         senderMinor,
                         Opened.Reaction(timestamp, r.targetHex, r.emoji, r.remove),
-                        trailer.msgIdHex
+                        trailer.msgIdHex,
+                        maxMajor = trailer.maxMajor
                     )
                 }
             }
@@ -361,7 +369,7 @@ object ChatEnvelope {
         // Vnitřek manifestu/kousku se rozparsovat nepovedl - poškozený obsah,
         // ať dostane šanci v karanténě.
         if (content == null) return Result.Unreadable
-        return Result.Ok(senderMinor, content, trailer?.msgIdHex, trailer?.replyToHex)
+        return Result.Ok(senderMinor, content, trailer?.msgIdHex, trailer?.replyToHex, trailer?.maxMajor)
     }
 
     private fun parseManifest(timestamp: Long, data: ByteArray): Opened.FileManifest? {

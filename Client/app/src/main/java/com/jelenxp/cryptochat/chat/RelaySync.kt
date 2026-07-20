@@ -479,15 +479,16 @@ object RelaySync {
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
                 val result = ChatEnvelope.open(blob, key, dir)
-                // Minor odesílatele je až uvnitř šifry, takže je známý teprve teď.
-                // Zároveň je to jediný okamžik, kdy je jisté, že blob je pravý.
-                val senderMinor = when (result) {
-                    is ChatEnvelope.Result.Ok -> result.senderMinor
-                    is ChatEnvelope.Result.Unsupported -> result.senderMinor
-                    ChatEnvelope.Result.Unreadable -> null
-                }
-                if (senderMinor != null) {
-                    WireCompat.notePeerMinor(context, contact.id, senderMinor)
+                // Minor odesílatele a inzerovaný maxMajor jsou až uvnitř šifry,
+                // takže jsou známé (a autentizované) teprve teď.
+                when (result) {
+                    is ChatEnvelope.Result.Ok -> WireCompat.notePeer(
+                        context, contact.id, result.senderMinor,
+                        result.maxMajor ?: WireCompat.UNKNOWN
+                    )
+                    is ChatEnvelope.Result.Unsupported ->
+                        WireCompat.notePeerMinor(context, contact.id, result.senderMinor)
+                    ChatEnvelope.Result.Unreadable -> Unit
                 }
                 // Rozumíme šifře, ale ne obsahu (novější funkce). Karanténa by
                 // nepomohla - opakování to nikdy nerozluští, jen by se 30 dní
@@ -496,7 +497,7 @@ object RelaySync {
                     DiagnosticsLog.warn(
                         TAG,
                         "zpráva používá funkci, kterou tahle verze neumí " +
-                            "(minor protějšku $senderMinor), zahazuji"
+                            "(minor protějšku ${result.senderMinor}), zahazuji"
                     )
                     ReplayGuard.remember(context, contact.id, blob)
                     continue

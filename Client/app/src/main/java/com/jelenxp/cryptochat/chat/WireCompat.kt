@@ -101,8 +101,20 @@ object WireCompat {
      *  - 3: odpovědi na zprávu (REPLY_TO, strategie ENRICH - starší verze ukáže
      *       obyčejnou zprávu) a reakce emoji (CONTROL/REACTION, strategie
      *       CONTROL + SUPPRESS vůči minoru 1).
+     *  - 4: inzerce MAX_MAJOR v každé zprávě (nejvyšší wire major, který
+     *       odesílatel umí přečíst) - pojistka pro plynulou budoucí major
+     *       migraci. Starší minor TLV 5 přeskočí.
      */
-    const val WIRE_MINOR: Int = 3
+    const val WIRE_MINOR: Int = 4
+
+    /**
+     * Nejvyšší wire MAJOR, který TAHLE verze umí PŘEČÍST. Dnes = [WIRE_MAJOR]
+     * (posíláme i čteme jen jeden major). Až přijde major migrace, „bridge"
+     * verze bude číst {starý, nový}, takže tady bude nový major, zatímco odeslání
+     * zůstane na starém, dokud se nepotvrdí, že protějšek nový umí přečíst.
+     * Inzeruje se v traileru každé zprávy (viz [WireExt.TYPE_MAX_MAJOR]).
+     */
+    const val MAX_READABLE_MAJOR: Int = WIRE_MAJOR
 
     /** Minor, od kterého protějšek umí reakce ZOBRAZIT (v1.2). */
     const val MINOR_REACTIONS = 3
@@ -143,8 +155,16 @@ object WireCompat {
         val isBreaking: Boolean get() = this == MAJOR_OUTDATED || this == MAJOR_NEWER
     }
 
-    /** Zjištěná verze protějšku. [UNKNOWN], dokud od něj něco nedorazí. */
-    data class PeerVersion(val major: Int = UNKNOWN, val minor: Int = UNKNOWN)
+    /**
+     * Zjištěná verze protějšku. [UNKNOWN], dokud od něj něco nedorazí.
+     * [maxMajor] = nejvyšší wire major, který protějšek umí přečíst (z inzerce
+     * v traileru) - vstup pro budoucí major migraci.
+     */
+    data class PeerVersion(
+        val major: Int = UNKNOWN,
+        val minor: Int = UNKNOWN,
+        val maxMajor: Int = UNKNOWN
+    )
 
     /**
      * Verze protějšků podle kontaktu. `mutableStateMapOf`, aby na změnu rovnou
@@ -159,7 +179,8 @@ object WireCompat {
             val p = prefs(context)
             PeerVersion(
                 p.getInt(key(contactId, "major"), UNKNOWN),
-                p.getInt(key(contactId, "minor"), UNKNOWN)
+                p.getInt(key(contactId, "minor"), UNKNOWN),
+                p.getInt(key(contactId, "maxmajor"), UNKNOWN)
             )
         } catch (e: Exception) {
             PeerVersion()
@@ -239,7 +260,36 @@ object WireCompat {
      * tehdy je jisté, že major sedí a minor je pravý (autentizovaný GCM tagem).
      */
     fun notePeerMinor(context: Context, contactId: String, minor: Int) {
-        remember(context, contactId, PeerVersion(WIRE_MAJOR, minor))
+        notePeer(context, contactId, minor, UNKNOWN)
+    }
+
+    /**
+     * Zaznamená z JEDNÉ dešifrované zprávy minor odesílatele i jím inzerovaný
+     * [maxMajor] (nejvyšší major, který umí přečíst). Obojí je autentizované
+     * (uvnitř šifry), takže na tom smí stát budoucí rozhodnutí o major migraci.
+     * `maxMajor == UNKNOWN` = zpráva ho nenesla (starší minor) - stará hodnota
+     * se zachová.
+     */
+    fun notePeer(context: Context, contactId: String, minor: Int, maxMajor: Int) {
+        val cur = peerVersion(context, contactId)
+        remember(
+            context, contactId,
+            cur.copy(
+                major = WIRE_MAJOR,
+                minor = minor,
+                maxMajor = if (maxMajor != UNKNOWN) maxMajor else cur.maxMajor
+            )
+        )
+    }
+
+    /**
+     * Umí protějšek PŘEČÍST daný wire major? Vstup pro budoucí major migraci:
+     * envelopu na nový major smíš přepnout, teprve když je tohle `true`.
+     * Při neznámé inzerci vrací **false** - výchozí je držet se starého majoru.
+     */
+    fun peerCanReadMajor(context: Context, contactId: String, major: Int): Boolean {
+        val m = peerVersion(context, contactId).maxMajor
+        return m != UNKNOWN && m >= major
     }
 
     /** Zapomene verzi kontaktu (při jeho smazání). */
@@ -249,6 +299,7 @@ object WireCompat {
             prefs(context).edit()
                 .remove(key(contactId, "major"))
                 .remove(key(contactId, "minor"))
+                .remove(key(contactId, "maxmajor"))
                 .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Úklid stavu kompatibility selhal", e)
@@ -277,9 +328,10 @@ object WireCompat {
      * přestaly posílat až do restartu procesu.
      */
     private fun rememberEphemeral(contactId: String, version: PeerVersion) {
-        val knownMinor = versions[contactId]?.minor ?: UNKNOWN
+        val cur = versions[contactId]
         versions[contactId] = version.copy(
-            minor = if (version.minor == UNKNOWN) knownMinor else version.minor
+            minor = if (version.minor == UNKNOWN) (cur?.minor ?: UNKNOWN) else version.minor,
+            maxMajor = if (version.maxMajor == UNKNOWN) (cur?.maxMajor ?: UNKNOWN) else version.maxMajor
         )
     }
 
@@ -291,6 +343,7 @@ object WireCompat {
             prefs(context).edit()
                 .putInt(key(contactId, "major"), version.major)
                 .putInt(key(contactId, "minor"), version.minor)
+                .putInt(key(contactId, "maxmajor"), version.maxMajor)
                 .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Uložení stavu kompatibility selhalo", e)
