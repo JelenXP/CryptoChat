@@ -568,7 +568,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 }
 
 /** Emoji nabízená na dlouhý stisk. Protokol jich unese libovolně, UI zatím tyhle. */
-private val QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😭", "🙏")
+private val QUICK_REACTIONS = ChatScreenLogic.QUICK_REACTIONS
 
 /** Jak daleko se musí bublina odtáhnout, aby se odpověď spustila. */
 private const val SWIPE_REPLY_THRESHOLD_PX = 180f

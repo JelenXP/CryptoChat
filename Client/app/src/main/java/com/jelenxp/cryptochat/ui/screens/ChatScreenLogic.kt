@@ -15,6 +15,15 @@ import com.jelenxp.cryptochat.chat.ChatMessage
 object ChatScreenLogic {
 
     /**
+     * Emoji nabízená na dlouhý stisk. Zdroj pravdy je TADY (ne v composable),
+     * aby na ně šel napsat test: každé z nich musí projít [WireExt.isValidEmoji],
+     * jinak by se dalo vybrat emoji, které `sealReaction` odmítne a reakce by se
+     * tiše neodeslala (nález v1.2-15). Protokol jich unese libovolně, UI zatím
+     * nabízí tyhle.
+     */
+    val QUICK_REACTIONS: List<String> = listOf("👍", "❤️", "😂", "😮", "😭", "🙏")
+
+    /**
      * Vrátí id vybrané zprávy, jen pokud v seznamu pořád je - jinak `null`.
      *
      * Tohle je jádro nálezu v1.2-23: když vybraná zpráva zmizí (uživatel ji

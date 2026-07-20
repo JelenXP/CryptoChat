@@ -30,6 +30,14 @@ object ChatMediaStore {
     const val MAX_BYTES = 1_900_000
 
     /**
+     * Per-blob limit relaye (`CC_MAX_BLOB_SIZE` v server.py). Fotka i s obálkou
+     * a trailerem se pod něj musí vejít. [MAX_BYTES] má proto rezervu; test
+     * `ChatMediaStoreLimitTest` hlídá, aby při zvýšení [MAX_BYTES] ta rezerva
+     * nezmizela (nález v1.1-9).
+     */
+    const val RELAY_BLOB_LIMIT = 2 * 1024 * 1024
+
+    /**
      * Načte obrázek z [source], zmenší (max hrana [MAX_DIMENSION]) a zkomprimuje
      * do JPEG pod [MAX_BYTES]. Vrací bajty, nebo null (nešlo dostatečně zmenšit /
      * chyba).

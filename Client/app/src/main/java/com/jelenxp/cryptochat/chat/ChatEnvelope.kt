@@ -421,7 +421,9 @@ object ChatEnvelope {
         "ccdir:$dir|w:$wire".toByteArray(Charsets.US_ASCII)
 
     /** Nejbližší koš >= potřebné velikosti; nad nejvyšší koš zaokrouhlí na jeho násobek. */
-    private fun bucketFor(size: Int): Int {
+    // internal (ne private) kvůli přímému testu guardu proti přetečení - vstup,
+    // který ho spustí (~2 GB), nejde vyrobit reálnou zprávou (viz nález v1.1-8).
+    internal fun bucketFor(size: Int): Int {
         BUCKETS.firstOrNull { it >= size }?.let { return it }
         val top = BUCKETS.last()
         // Zaokrouhlení nahoru by u velikosti blízko Int.MAX_VALUE přeteklo do
