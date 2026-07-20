@@ -155,6 +155,15 @@ object MediaTransfers {
                     part.inputStream().use { it.copyTo(sink) }
                 }
             }
+            // Kontrola velikosti proti manifestu: zkrácený/poškozený kousek by
+            // jinak vyrobil soubor špatné délky a stav by se přepnul na „doručeno".
+            // Radši ho zahoď (→ FAILED), ať uživatel neotevře useknutý soubor.
+            val expected = meta.optLong("size", -1L)
+            if (expected >= 0 && out.length() != expected) {
+                Log.e(TAG, "Složený soubor má jinou velikost, než hlásí manifest")
+                out.delete()
+                return null
+            }
             cleanup(context, fileIdHex)
             out.absolutePath
         } catch (e: Exception) {

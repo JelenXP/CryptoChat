@@ -5,6 +5,8 @@ import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.crypto.BackupCrypto
+import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
+import com.jelenxp.cryptochat.crypto.StorageCrypto
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,9 +27,19 @@ object ContactBackup {
 
     private const val VERSION = 2
 
-    /** Zašifrovaná záloha všeho (celý obsah souboru). */
-    fun export(context: Context, contacts: List<Contact>, password: CharArray): ByteArray {
-        val chatRepo = ChatRepository(context)
+    /**
+     * Zašifrovaná záloha všeho (celý obsah souboru).
+     *
+     * [crypto] je šifrování historie - výchozí Keystore; testy si dosadí
+     * průhlednou implementaci, jinak by roundtrip zálohy nešel otestovat.
+     */
+    fun export(
+        context: Context,
+        contacts: List<Contact>,
+        password: CharArray,
+        crypto: StorageCrypto = KeystoreStorageCrypto
+    ): ByteArray {
+        val chatRepo = ChatRepository(context, crypto)
         val encoder = Base64.getEncoder()
         val array = JSONArray()
         contacts.forEach { c ->
@@ -97,12 +109,17 @@ object ContactBackup {
      * souboru (viz [BackupCrypto.decrypt]). Zpětně načte i starší verzi 1 (jen
      * kontakty + klíče).
      */
-    fun import(context: Context, blob: ByteArray, password: CharArray): Int {
+    fun import(
+        context: Context,
+        blob: ByteArray,
+        password: CharArray,
+        crypto: StorageCrypto = KeystoreStorageCrypto
+    ): Int {
         val json = String(BackupCrypto.decrypt(blob, password), Charsets.UTF_8)
         val root = JSONObject(json)
         val array = root.getJSONArray("contacts")
-        val contactRepo = ContactRepository(context)
-        val chatRepo = ChatRepository(context)
+        val contactRepo = ContactRepository(context, crypto)
+        val chatRepo = ChatRepository(context, crypto)
         val decoder = Base64.getDecoder()
         var count = 0
 
@@ -198,9 +215,12 @@ object ContactBackup {
         val out = HashMap<String, ChatMessage.Reaction>(2)
         for (reactor in obj.keys()) {
             val r = obj.optJSONObject(reactor) ?: continue
-            val emoji = r.optString("e")
-            if (emoji.isEmpty()) continue
-            out[reactor] = ChatMessage.Reaction(emoji, r.optLong("t"))
+            // Prázdné emoji je platný záznam - NÁHROBEK po zrušené reakci. Musí
+            // přežít import i s časem, jinak by opožděná reakce z karantény
+            // neměla co přebít a zrušenou reakci vzkřísila. (Shodně s
+            // ChatRepository.readReactions - dvě kopie serializace se nesmí
+            // rozejít; hlídá ContactBackupRoundtripTest.)
+            out[reactor] = ChatMessage.Reaction(r.optString("e"), r.optLong("t"))
         }
         return out
     }

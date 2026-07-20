@@ -79,8 +79,14 @@ object RelaySync {
     /** Kdy (ms) se u daného kontaktu naposledy kontrolovala předchozí schránka. */
     private val prevEpochCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    /** Velikost jednoho kousku souboru (relay bere blob do 2 MB, necháme rezervu). */
-    private const val CHUNK_SIZE = 1_800_000
+    /**
+     * Velikost jednoho kousku souboru. Kousek i s obálkou se MUSÍ vejít pod
+     * per-blob limit relaye ([ChatMediaStore.RELAY_BLOB_LIMIT]) - jinak server
+     * odmítne každý `put` a přenos souboru tiše selže. Rezervu hlídá
+     * `RelaySyncChunkLimitTest` (nález z mapy: rezerva pod limitem, dosud
+     * nechráněná a bez sdílené konstanty). `internal` kvůli tomu testu.
+     */
+    internal const val CHUNK_SIZE = 1_800_000
 
     private fun currentEpoch() = System.currentTimeMillis() / EPOCH_MS
 

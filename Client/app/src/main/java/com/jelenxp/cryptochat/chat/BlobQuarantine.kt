@@ -24,14 +24,14 @@ object BlobQuarantine {
     private const val DIR = "blob_quarantine"
 
     /** Kolik blobů nejvýš držet na kontakt (nejstarší se zahazují). */
-    private const val MAX_PER_CONTACT = 30
+    internal const val MAX_PER_CONTACT = 30
 
     /**
      * Strop v bajtech na kontakt. Bez něj by nedůvěryhodný relay (zná ID schránek,
      * sám je ukládá) nasypal do příchozí schránky odpad a zaplnil telefon -
      * 30 blobů po 2 MB je 60 MB, což je pořád moc.
      */
-    private const val MAX_BYTES_PER_CONTACT = 24L * 1024 * 1024
+    internal const val MAX_BYTES_PER_CONTACT = 24L * 1024 * 1024
 
     /** Kolik blobů nejvýš vrátit v jednom kole (aby se do paměti nenačetlo všechno). */
     private const val MAX_RETRY_BATCH = 5

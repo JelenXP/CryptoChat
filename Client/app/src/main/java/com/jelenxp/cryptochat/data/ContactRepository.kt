@@ -24,7 +24,15 @@ import org.json.JSONObject
  * selhání Keystore na konkrétním zařízení apod.) - nikdy appku nespadnou,
  * jen selžou a dají o tom vědět voláním kódu přes návratovou hodnotu Boolean.
  */
-class ContactRepository(context: Context) {
+class ContactRepository(
+    context: Context,
+    /**
+     * Šifrování jména a klíče at rest. Výchozí Keystore; testy si dosadí
+     * průhlednou implementaci (jinak by tenhle repozitář nešlo otestovat).
+     */
+    private val crypto: com.jelenxp.cryptochat.crypto.StorageCrypto =
+        com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
+) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -46,7 +54,7 @@ class ContactRepository(context: Context) {
                     // Jméno: zkusíme dešifrovat; když to selže (starý plaintext
                     // záznam), použijeme surovou hodnotu (migrace za běhu).
                     val rawName = obj.optString("name", "")
-                    val name = KeystoreCryptoHelper.decryptFromStorage(rawName) ?: rawName
+                    val name = crypto.decrypt(rawName) ?: rawName
                     result.add(
                         Contact(
                             id = obj.getString("id"),
@@ -54,7 +62,7 @@ class ContactRepository(context: Context) {
                             // Pokud dešifrování selže (např. neplatný Keystore klíč po
                             // obnově zařízení), vrátí se null - kontakt zůstane bez
                             // klíče a jde znovu spárovat, aplikace nespadne.
-                            keyBase64 = encryptedKey?.let { KeystoreCryptoHelper.decryptFromStorage(it) },
+                            keyBase64 = encryptedKey?.let { crypto.decrypt(it) },
                             // Cesta k fotce - necitlivá, ukládá se v plaintextu.
                             avatarPath = obj.optString("avatar", "").takeIf { it.isNotEmpty() },
                             // Role při online párování (chat); chybí u starších/osobních kontaktů.
@@ -146,14 +154,14 @@ class ContactRepository(context: Context) {
         val obj = JSONObject()
         obj.put("id", contact.id)
         // Jméno i klíč se ukládají zašifrované (stejný Keystore klíč).
-        obj.put("name", KeystoreCryptoHelper.encryptForStorage(contact.name))
+        obj.put("name", crypto.encrypt(contact.name))
         // Cesta k fotce (necitlivá) - plaintext; null = fotku nemá (pole se vynechá).
         contact.avatarPath?.takeIf { it.isNotEmpty() }?.let { obj.put("avatar", it) }
         // Role při online párování (necitlivá); null = pole se vynechá.
         contact.initiator?.let { obj.put("initiator", it) }
         when {
             contact.keyBase64 != null ->
-                obj.put("key", KeystoreCryptoHelper.encryptForStorage(contact.keyBase64))
+                obj.put("key", crypto.encrypt(contact.keyBase64))
             // Klíč v paměti chybí (nešel dešifrovat) - zachovej původní
             // zašifrovaný klíč ze stávajícího záznamu, ať se o něj kvůli
             // přechodnému selhání Keystore nepřijde.
