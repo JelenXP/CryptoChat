@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -114,6 +115,22 @@ android {
         jniLibs {
             useLegacyPackaging = true
         }
+    }
+}
+
+// Robolectric si za běhu stahuje 'android-all' jar ve FORKOVANÉ test JVM. Na
+// tomhle stroji AVG Antivirus odposlouchává TLS vlastním certifikátem, kterému
+// JDK nevěří - bez truststoru by download spadl na SSLHandshakeException.
+// Když existuje lokální truststore (kopie cacerts + AVG cert, viz
+// ~/.gradle/certs/truststore.jks), předáme ho i test JVM. Na CI soubor NEEXISTUJE,
+// blok se přeskočí a použije se výchozí truststore - CI tím není dotčené.
+tasks.withType<Test>().configureEach {
+    val localTrust = File(System.getProperty("user.home"), ".gradle/certs/truststore.jks")
+    if (localTrust.exists()) {
+        jvmArgs(
+            "-Djavax.net.ssl.trustStore=${localTrust.absolutePath}",
+            "-Djavax.net.ssl.trustStorePassword=changeit"
+        )
     }
 }
 
