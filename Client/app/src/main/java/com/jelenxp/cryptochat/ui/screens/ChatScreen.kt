@@ -394,7 +394,17 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             } else {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Klepnutí na avatar/jméno otevře profil kontaktu (detail + klíč).
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = contact != null) {
+                                navController.navigate("user_detail/$id")
+                            }
+                            .padding(vertical = 4.dp, horizontal = 4.dp)
+                    ) {
                         if (contact != null) {
                             ContactAvatar(name = contact.name, avatarPath = contact.avatarPath, size = 32.dp)
                         }
