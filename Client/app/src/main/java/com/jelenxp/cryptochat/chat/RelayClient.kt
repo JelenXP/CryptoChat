@@ -70,35 +70,76 @@ object RelayClient {
     fun put(baseUrl: String, mailboxId: String, blob: ByteArray): Boolean {
         val target = Target.parse(baseUrl, "/m/$mailboxId")
         return if (TorManager.isOnion(target.host)) {
-            val (code, _) = onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS)
-            code in 200..204
+            onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS).code in 200..204
         } else {
             directPut(baseUrl, mailboxId, blob)
         }
     }
 
     /**
-     * Vyzvedne (a na serveru smaže) všechny čekající bloby. Prázdná schránka =
-     * prázdný seznam. Když [waitSeconds] > 0, použije se long-polling: server drží
-     * spojení otevřené, dokud nedorazí zpráva (nebo tolik sekund) - zprávy tak
-     * chodí skoro okamžitě a přes Tor jde míň spojení.
+     * Vyzvednuté bloby a pořadové číslo, kterým se má příjem potvrdit ([ack]).
+     * [ackSeq] je -1, když není co potvrzovat.
      */
-    fun get(baseUrl: String, mailboxId: String, waitSeconds: Int = 0): List<ByteArray> {
-        val query = if (waitSeconds > 0) "?wait=$waitSeconds" else ""
+    data class Fetched(val blobs: List<ByteArray>, val ackSeq: Long)
+
+    /**
+     * Vyzvedne čekající bloby. Server je NEsmaže - to udělá až [ack] poté, co jsou
+     * bezpečně uložené. Prázdná schránka = prázdný seznam. Když [waitSeconds] > 0,
+     * použije se long-polling: server drží spojení otevřené, dokud nedorazí zpráva
+     * (nebo tolik sekund) - zprávy tak chodí skoro okamžitě a přes Tor jde míň spojení.
+     */
+
+    fun get(baseUrl: String, mailboxId: String, waitSeconds: Int = 0): Fetched {
+        // ack=1: server bloby NEsmaže, jen je vrátí i s pořadovým číslem. Smažou
+        // se až potvrzením, tedy až je máme bezpečně uložené. Kdyby se spojení
+        // rozpadlo uprostřed odpovědi (rozpadlý Tor okruh, přepnutá síť), zůstanou
+        // ležet a dorazí příště - dřív by v takové chvíli byly nenávratně pryč.
+        val query = if (waitSeconds > 0) "?ack=1&wait=$waitSeconds" else "?ack=1"
         val target = Target.parse(baseUrl, "/m/$mailboxId$query")
         return if (TorManager.isOnion(target.host)) {
             // U long-pollu server drží spojení až waitSeconds - čtecí timeout
             // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
             val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
             val attempts = if (waitSeconds > 0) ONION_POLL_ATTEMPTS else ONION_ATTEMPTS
-            val (code, body) = onionRequest(target, "GET", null, readTimeout, attempts)
-            when (code) {
-                204 -> emptyList()
-                200 -> unframe(body)
-                else -> throw IOException("Relay GET vrátil HTTP $code")
+            val response = onionRequest(target, "GET", null, readTimeout, attempts)
+            when (response.code) {
+                204 -> Fetched(emptyList(), -1)
+                200 -> Fetched(unframe(response.body), response.seq())
+                else -> throw IOException("Relay GET vrátil HTTP ${response.code}")
             }
         } else {
             directGet(baseUrl, mailboxId, query)
+        }
+    }
+
+    /**
+     * Potvrdí, že bloby až po [seq] jsou bezpečně uložené - server je teprve teď
+     * smaže. Vrací úspěch; při neúspěchu se prostě doručí znovu (klient si je
+     * odfiltruje podle otisků, viz [ReplayGuard]).
+     */
+    fun ack(baseUrl: String, mailboxId: String, seq: Long): Boolean {
+        if (seq < 0) return true
+        val target = Target.parse(baseUrl, "/m/$mailboxId?upto=$seq")
+        return try {
+            if (TorManager.isOnion(target.host)) {
+                onionRequest(target, "DELETE", null, ONION_READ_TIMEOUT_MS).code in 200..204
+            } else {
+                val url = URL(baseUrl.trimEnd('/') + "/m/" + mailboxId + "?upto=" + seq)
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "DELETE"
+                    connectTimeout = TIMEOUT_MS
+                    readTimeout = TIMEOUT_MS
+                    useCaches = false
+                }
+                try {
+                    conn.responseCode in 200..204
+                } finally {
+                    conn.disconnect()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Potvrzení příjmu selhalo: ${e.javaClass.simpleName}")
+            false
         }
     }
 
@@ -107,7 +148,7 @@ object RelayClient {
         return try {
             val target = Target.parse(baseUrl, "/health")
             if (TorManager.isOnion(target.host)) {
-                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS).first == 200
+                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS).code == 200
             } else {
                 val conn = (URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection)
                 try {
@@ -139,7 +180,7 @@ object RelayClient {
         body: ByteArray?,
         readTimeoutMs: Int,
         attempts: Int = ONION_ATTEMPTS
-    ): Pair<Int, ByteArray> {
+    ): Response {
         if (!TorManager.awaitReady(TOR_READY_TIMEOUT_MS)) {
             Log.w(TAG, "onion $method: Tor není včas připravený")
             throw IOException("Tor se nespustil nebo nenabootoval včas - zkus to za chvíli znovu")
@@ -153,14 +194,28 @@ object RelayClient {
             try {
                 val t0 = System.currentTimeMillis()
                 val r = socksRequest(proxy, target, method, body, ONION_CONNECT_TIMEOUT_MS, readTimeoutMs)
-                Log.i(TAG, "onion $method -> HTTP ${r.first} " +
+                Log.i(TAG, "onion $method -> HTTP ${r.code} " +
                     "(${System.currentTimeMillis() - t0} ms, pokus ${attempt + 1})")
                 return r
             } catch (e: AfterSendException) {
-                // Zápis u serveru možná prošel - opakováním bychom ho zdvojili.
-                Log.w(TAG, "onion $method selhal až po odeslání, neopakuji: " +
+                // Neopakuj jen u PUT: zápis u serveru možná prošel a opakování by
+                // zprávu zdvojilo. GET je díky režimu s potvrzením nedestruktivní
+                // (server maže až na `ack`), takže ten se opakovat MUSÍ - jinak by
+                // rozpadlé spojení uprostřed odpovědi znamenalo ztracené zprávy.
+                if (method == "PUT") {
+                    Log.w(TAG, "onion PUT selhal až po odeslání, neopakuji: " +
+                        "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                    throw e
+                }
+                last = e
+                Log.w(TAG, "onion $method selhal po odeslání (pokus ${attempt + 1}/$attempts): " +
                     "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
-                throw e
+                if (attempt < attempts - 1) {
+                    try { Thread.sleep(ONION_RETRY_DELAY_MS) } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw ie
+                    }
+                }
             } catch (e: Exception) {
                 last = e
                 Log.w(TAG, "onion $method selhal (pokus ${attempt + 1}/$attempts): " +
@@ -191,12 +246,15 @@ object RelayClient {
         }
     }
 
-    private fun directGet(baseUrl: String, mailboxId: String, query: String = ""): List<ByteArray> {
+    private fun directGet(baseUrl: String, mailboxId: String, query: String = ""): Fetched {
         val conn = openDirect(baseUrl, mailboxId, "GET", query)
         return try {
             when (val code = conn.responseCode) {
-                204 -> emptyList()
-                200 -> unframe(conn.inputStream.readBytes())
+                204 -> Fetched(emptyList(), -1)
+                200 -> Fetched(
+                    unframe(conn.inputStream.readBytes()),
+                    conn.getHeaderField("X-CC-Seq")?.toLongOrNull() ?: -1
+                )
                 else -> throw IOException("Relay GET vrátil HTTP $code")
             }
         } finally {
@@ -241,7 +299,7 @@ object RelayClient {
         body: ByteArray?,
         connectTimeoutMs: Int = TIMEOUT_MS,
         readTimeoutMs: Int = TIMEOUT_MS
-    ): Pair<Int, ByteArray> {
+    ): Response {
         Socket().use { socket ->
             socket.connect(InetSocketAddress(proxy.first, proxy.second), connectTimeoutMs)
             // Do navázání okruhu (SOCKS handshake vč. čekání na rendezvous) platí
@@ -343,16 +401,31 @@ object RelayClient {
         return buf
     }
 
-    /** Rozdělí HTTP odpověď na stavový kód a tělo (hlavičky/tělo dělí prázdný řádek). */
-    private fun parseHttpResponse(data: ByteArray): Pair<Int, ByteArray> {
+    /** HTTP odpověď rozložená na kód, hlavičky a tělo. */
+    private data class Response(
+        val code: Int,
+        val headers: Map<String, String>,
+        val body: ByteArray
+    ) {
+        /** Pořadové číslo pro potvrzení příjmu (`X-CC-Seq`), nebo -1. */
+        fun seq(): Long = headers["x-cc-seq"]?.toLongOrNull() ?: -1
+    }
+
+    /** Rozdělí HTTP odpověď na kód, hlavičky a tělo (dělí je prázdný řádek). */
+    private fun parseHttpResponse(data: ByteArray): Response {
         val sep = indexOfHeaderEnd(data)
         if (sep < 0) throw IOException("Neplatná HTTP odpověď")
         val header = String(data, 0, sep, Charsets.US_ASCII)
-        val statusLine = header.substringBefore("\r\n")
-        val code = statusLine.split(" ").getOrNull(1)?.toIntOrNull()
-            ?: throw IOException("Neplatný stavový řádek: $statusLine")
-        val body = data.copyOfRange(sep + 4, data.size)
-        return code to body
+        val lines = header.split("\r\n")
+        val code = lines.firstOrNull()?.split(" ")?.getOrNull(1)?.toIntOrNull()
+            ?: throw IOException("Neplatný stavový řádek: ${lines.firstOrNull()}")
+        // Názvy hlaviček na malá písmena, ať na velikosti nezáleží.
+        val headers = lines.drop(1).mapNotNull { line ->
+            val i = line.indexOf(':')
+            if (i <= 0) null
+            else line.substring(0, i).trim().lowercase() to line.substring(i + 1).trim()
+        }.toMap()
+        return Response(code, headers, data.copyOfRange(sep + 4, data.size))
     }
 
     /** Najde index prázdného řádku (\r\n\r\n) oddělujícího hlavičky od těla. */

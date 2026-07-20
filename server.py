@@ -101,7 +101,11 @@ class MailboxStore:
         # Condition (misto prosteho Locku) umoznuje long-polling: GET, ktery najde
         # prazdnou schranku, muze pockat, nez ho PUT probudi (notify_all).
         self._cond = threading.Condition()
-        # mailbox_id -> {"blobs": deque[bytes], "expires": float(monotonic)}
+        # mailbox_id -> {"blobs": deque[(seq, bytes)], "expires": float, "next_seq": int}
+        #
+        # Kazdy blob ma poradove cislo v ramci schranky. Diky nemu muze klient
+        # rict "zpracoval jsem vse do N" a teprve tehdy se bloby smazou - viz
+        # peek/ack nize.
         self._boxes = {}
         self._total_bytes = 0
 
@@ -119,11 +123,12 @@ class MailboxStore:
                 return "full"
             box = self._boxes.get(mailbox_id)
             if box is None:
-                box = {"blobs": deque(), "expires": now + TTL_SECONDS}
+                box = {"blobs": deque(), "expires": now + TTL_SECONDS, "next_seq": 1}
                 self._boxes[mailbox_id] = box
             if len(box["blobs"]) >= MAX_MAILBOX_BLOBS:
                 return "box_full"
-            box["blobs"].append(blob)
+            box["blobs"].append((box["next_seq"], blob))
+            box["next_seq"] += 1
             box["expires"] = now + TTL_SECONDS  # kazdy zapis prodlouzi zivotnost
             self._total_bytes += len(blob)
             # Probud pripadne long-poll cekatele (vsichni si znovu overi svou schranku).
@@ -133,23 +138,52 @@ class MailboxStore:
     def drain(self, mailbox_id: str):
         """Vrati a SMAZE vsechny cekajici bloby ze schranky (list[bytes])."""
         with self._cond:
-            return self._drain_locked(mailbox_id)
+            return [b for _seq, b in self._drain_locked(mailbox_id)]
 
     def drain_blocking(self, mailbox_id: str, timeout: float):
         """Jako [drain], ale kdyz je schranka prazdna, pocka az [timeout] sekund,
         nez ji nejaky PUT naplni. Vraci list[bytes] (prazdny = timeout bez zpravy).
         Drzi jedno serverove vlakno po dobu cekani - klient posila jen kdyz otevre
         chat, takze cekatelu je malo."""
+        return [b for _seq, b in self._peek_wait(mailbox_id, timeout, drain=True)]
+
+    def peek_blocking(self, mailbox_id: str, timeout: float):
+        """Jako [drain_blocking], ale bloby NEMAZE - vrati (seq, blob).
+
+        Proc: kdyz spojeni spadne uprostred odpovedi (rozpadly Tor okruh, prepnuta
+        wifi), klient data nedostane - a pri mazani pri cteni uz by na serveru
+        nebyla, tedy nenavratne ztracena zprava. Takhle zustanou lezet a smazou se
+        az potvrzenim [ack]. Opakovane doruceni si klient odfiltruje sam (zna
+        otisky uz zpracovanych blobu).
+        """
+        return self._peek_wait(mailbox_id, timeout, drain=False)
+
+    def _peek_wait(self, mailbox_id: str, timeout: float, drain: bool):
         deadline = time.monotonic() + timeout
         with self._cond:
             while True:
-                blobs = self._drain_locked(mailbox_id)
-                if blobs:
-                    return blobs
+                box = self._boxes.get(mailbox_id)
+                if box is not None and box["blobs"]:
+                    if drain:
+                        return self._drain_locked(mailbox_id)
+                    return list(box["blobs"])
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return []
                 self._cond.wait(remaining)
+
+    def ack(self, mailbox_id: str, upto_seq: int):
+        """Smaze bloby se seq <= upto_seq (klient je ma bezpecne ulozene)."""
+        with self._cond:
+            box = self._boxes.get(mailbox_id)
+            if box is None:
+                return
+            blobs = box["blobs"]
+            while blobs and blobs[0][0] <= upto_seq:
+                _seq, blob = blobs.popleft()
+                self._total_bytes -= len(blob)
+            if not blobs:
+                self._boxes.pop(mailbox_id, None)
 
     def _evict_locked(self, needed: int):
         """Uvolni misto zahozenim nejstarsich schranek. Vola se uz drzici self._cond.
@@ -167,13 +201,13 @@ class MailboxStore:
             self._drain_locked(mid)
 
     def _drain_locked(self, mailbox_id: str):
-        """Vyzvedne a smaze schranku. Vola se uz drzici self._cond."""
+        """Vyzvedne a smaze schranku. Vraci [(seq, blob)]. Vola se uz drzici self._cond."""
         box = self._boxes.pop(mailbox_id, None)
         if box is None:
             return []
-        blobs = list(box["blobs"])
-        self._total_bytes -= sum(len(b) for b in blobs)
-        return blobs
+        items = list(box["blobs"])
+        self._total_bytes -= sum(len(b) for _seq, b in items)
+        return items
 
     def purge_expired(self):
         """Odstrani expirovane schranky. Vola se periodicky z uklidoveho vlakna."""
@@ -182,7 +216,7 @@ class MailboxStore:
             dead = [mid for mid, box in self._boxes.items() if box["expires"] <= now]
             for mid in dead:
                 box = self._boxes.pop(mid)
-                self._total_bytes -= sum(len(b) for b in box["blobs"])
+                self._total_bytes -= sum(len(b) for _seq, b in box["blobs"])
 
 
 STORE = MailboxStore()
@@ -243,10 +277,12 @@ class RelayHandler(BaseHTTPRequestHandler):
         return self.client_address[0] if self.client_address else "unknown"
 
     def _send(self, code: int, body: bytes = b"", content_type: str = "application/octet-stream",
-              close: bool = False):
+              close: bool = False, extra_headers: dict = None):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         # Zadne cache, zadne stopy.
         self.send_header("Cache-Control", "no-store")
         if close:
@@ -320,6 +356,27 @@ class RelayHandler(BaseHTTPRequestHandler):
 
         # Long-poll: s ?wait=<s> pockame, nez dorazi zprava (jinak hned vyzvedneme).
         wait_s = self._longpoll_seconds()
+
+        # Rezim potvrzovaneho cteni (?ack=1): bloby se NEMAZOU, jen se vrati i s
+        # poradovym cislem. Klient je smaze az potvrzenim (DELETE ...?upto=N),
+        # tedy AZ kdyz je ma bezpecne ulozene. Bez toho by kazde spojeni prerusene
+        # uprostred odpovedi znamenalo nenavratne ztracenou zpravu.
+        # Bez parametru zustava puvodni (destruktivni) chovani kvuli starsim klientum.
+        if self._wants_ack():
+            items = (STORE.peek_blocking(mid, wait_s) if wait_s > 0
+                     else STORE.peek_blocking(mid, 0))
+            if not items:
+                self.send_response(204)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            out = bytearray()
+            for _seq, b in items:
+                out += struct.pack(">I", len(b))
+                out += b
+            self._send(200, bytes(out), extra_headers={"X-CC-Seq": str(items[-1][0])})
+            return
+
         blobs = STORE.drain_blocking(mid, wait_s) if wait_s > 0 else STORE.drain(mid)
         if not blobs:
             # Prazdna schranka - 204 No Content (kratke, bez tela).
@@ -336,6 +393,39 @@ class RelayHandler(BaseHTTPRequestHandler):
             out += struct.pack(">I", len(b))
             out += b
         self._send(200, bytes(out))
+
+    def do_DELETE(self):
+        """Potvrzeni prijmu: smaze bloby se seq <= upto (viz do_GET, rezim ack)."""
+        if not LIMITER.allow(self._client_key()):
+            self._send(429, b"rate limited\n", "text/plain")
+            return
+        mid = self._mailbox_id_from_path()
+        if mid is None:
+            self._send(404)
+            return
+        upto = self._query_int("upto", -1)
+        if upto < 0:
+            self._send(400)
+            return
+        STORE.ack(mid, upto)
+        self.send_response(204)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _wants_ack(self) -> bool:
+        return self._query_int("ack", 0) == 1
+
+    def _query_int(self, name: str, default: int) -> int:
+        split = self.path.split("?", 1)
+        if len(split) != 2:
+            return default
+        raw = urllib.parse.parse_qs(split[1]).get(name, [None])[0]
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
 
     def do_PUT(self):
         if not LIMITER.allow(self._client_key()):

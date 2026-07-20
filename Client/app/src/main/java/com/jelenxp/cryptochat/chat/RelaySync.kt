@@ -247,12 +247,13 @@ object RelaySync {
         // do `failed`, aby volající mohl zpomalit.
         fun fetch(e: Long, waitSeconds: Int): Int {
             val mailbox = RelayCrypto.mailboxId(key, dir, e)
-            val blobs = try {
+            val fetched = try {
                 RelayClient.get(baseUrl, mailbox, waitSeconds)
             } catch (ex: Exception) {
                 failed = true
                 return 0
             }
+            val blobs = fetched.blobs
             var n = 0
             // Nepřečteno počítáme jen když konverzace není zrovna otevřená
             // (otevřený chat si zprávu rovnou přečte).
@@ -407,6 +408,13 @@ object RelaySync {
             } catch (ex: Exception) {
                 // Jeden vadný blob nesmí shodit zbytek dávky.
                 android.util.Log.w("RelaySync", "Zpracování blobu selhalo, pokračuji", ex)
+            }
+
+            // Teprve teď jsou zprávy bezpečně uložené (nebo odložené v karanténě),
+            // takže je server smí zahodit. Když potvrzení nedojde, doručí se
+            // příště znovu a ReplayGuard je odfiltruje - radši dvakrát než nikdy.
+            if (fetched.ackSeq >= 0) {
+                if (!RelayClient.ack(baseUrl, mailbox, fetched.ackSeq)) failed = true
             }
             return n
         }

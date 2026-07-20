@@ -77,7 +77,7 @@ fun PairJoinScreen(
                 while (peerPublicKey == null && attempts < 12) {
                     peerPublicKey = withContext(Dispatchers.IO) {
                         try {
-                            RelayClient.get(baseUrl, initBox).firstNotNullOfOrNull { Pairing.unwrap(it, inviteKey) }
+                            RelayClient.get(baseUrl, initBox).blobs.firstNotNullOfOrNull { Pairing.unwrap(it, inviteKey) }
                         } catch (e: Exception) {
                             null
                         }

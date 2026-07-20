@@ -89,7 +89,7 @@ fun PairInviteScreen(
             while (isActive) {
                 val encapsulation = withContext(Dispatchers.IO) {
                     try {
-                        RelayClient.get(baseUrl, respBox).firstNotNullOfOrNull { Pairing.unwrap(it, inviteKey) }
+                        RelayClient.get(baseUrl, respBox).blobs.firstNotNullOfOrNull { Pairing.unwrap(it, inviteKey) }
                     } catch (e: Exception) {
                         null
                     }
