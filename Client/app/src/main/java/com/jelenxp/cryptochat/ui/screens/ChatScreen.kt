@@ -186,26 +186,33 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     // Odrolování na poslední zprávu. Poprvé (otevření chatu) SKOKEM, ať to při
     // příchodu na obrazovku neprobliká animovaným rolováním odshora; další nové
-    // zprávy pak plynule animovaně.
+    // zprávy pak plynule animovaně. Offset SCROLL_BOTTOM_OFFSET tlačí na SKUTEČNÉ
+    // dno - bez něj by se u vysoké poslední zprávy skončilo „skoro na konci".
     var initialScrollDone by remember(id) { mutableStateOf(false) }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             if (!initialScrollDone) {
-                listState.scrollToItem(messages.size - 1)
+                listState.scrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
                 initialScrollDone = true
             } else {
-                listState.animateScrollToItem(messages.size - 1)
+                listState.animateScrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
             }
         }
     }
 
-    // Když se otevře klávesnice, okno se zmenší (adjustResize) a poslední zpráva
-    // by se schovala za klávesnici. Dokud je vstup zaostřený, drž seznam u
-    // poslední zprávy - reaguje i na samotné zmenšení viewportu (přelom výšky).
-    LaunchedEffect(inputFocused) {
-        if (!inputFocused) return@LaunchedEffect
+    // Když se spodní část zvětší (klávesnice zmenší okno přes adjustResize, vstup
+    // naroste na víc řádků, nebo se objeví náhled odpovědi), poslední zpráva by
+    // se schovala za ni. Dokud uživatel píše (fokus) nebo odpovídá, drž seznam
+    // u skutečného dna a reaguj i na samotnou změnu výšky viewportu.
+    val composing = inputFocused || replyTo != null
+    LaunchedEffect(composing) {
+        if (!composing) return@LaunchedEffect
         snapshotFlow { listState.layoutInfo.viewportSize.height }
-            .collect { if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex) }
+            .collect {
+                if (messages.isNotEmpty()) {
+                    listState.scrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                }
+            }
     }
 
     fun sendCurrent() {
@@ -622,6 +629,14 @@ private val QUICK_REACTIONS = ChatScreenLogic.QUICK_REACTIONS
 
 /** Jak daleko se musí bublina odtáhnout, aby se odpověď spustila. */
 private const val SWIPE_REPLY_THRESHOLD_PX = 180f
+
+/**
+ * Offset pro „odroluj na úplné dno". Velký kladný scrollOffset u poslední
+ * položky posune seznam na jeho konec (LazyColumn ho ořízne), takže je vidět
+ * i spodek vysoké poslední zprávy. Bez něj `scrollToItem(last)` skončí s vrškem
+ * poslední zprávy nahoře = „skoro na konci".
+ */
+private const val SCROLL_BOTTOM_OFFSET = 1_000_000
 
 /**
  * Jeden řádek konverzace: zvýraznění při výběru, pruh emoji, citace nad
