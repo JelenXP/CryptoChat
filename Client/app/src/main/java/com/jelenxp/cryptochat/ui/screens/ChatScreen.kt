@@ -49,7 +49,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -224,16 +226,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         }
     }
 
-    /** Přepne naši reakci: stejné emoji podruhé ji zruší. */
     val reactionsUnsupported = stringResource(R.string.chat_reactions_unsupported)
-    fun react(message: ChatMessage, emoji: String) {
+    /** Nastaví/zruší naši reakci (`next == null` = zrušit) a pošle ji. */
+    fun applyReaction(message: ChatMessage, next: String?) {
         val ref = message.wireRef ?: return
         if (contact == null) return
         selectedIds = emptySet()
         scope.launch {
-            val next = ChatScreenLogic.toggledReaction(
-                message.reactionOf(ChatMessage.REACTOR_ME), emoji
-            )
             val result = withContext(Dispatchers.IO) {
                 RelaySync.sendReaction(context, contact, ref, next)
             }
@@ -245,6 +244,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             }
         }
     }
+
+    /** Z palety: stejné emoji podruhé ji zruší, jiné ji nahradí. */
+    fun react(message: ChatMessage, emoji: String) =
+        applyReaction(message, ChatScreenLogic.toggledReaction(message.reactionOf(ChatMessage.REACTOR_ME), emoji))
+
+    /** Dvojklep: nemám-li reakci, přidá 👍; mám-li jakoukoli, sundá ji. */
+    fun doubleTapReact(message: ChatMessage) =
+        applyReaction(message, ChatScreenLogic.doubleTapReaction(message.reactionOf(ChatMessage.REACTOR_ME)))
 
     fun deleteForMe(toDelete: List<ChatMessage>) {
         scope.launch {
@@ -509,6 +516,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             onSelect = { selectedIds = selectedIds + m.id },
                             onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
                             onReact = { emoji -> react(m, emoji) },
+                            onDoubleTapReact = { doubleTapReact(m) },
                             onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
                             onRetry = { retry(m) }
                         )
@@ -633,6 +641,7 @@ private fun MessageRow(
     onSelect: () -> Unit,
     onTapInSelection: () -> Unit,
     onReact: (String) -> Unit,
+    onDoubleTapReact: () -> Unit,
     onReplySwipe: () -> Unit,
     onRetry: () -> Unit
 ) {
@@ -704,22 +713,44 @@ private fun MessageRow(
                     onSelect()
                 },
                 // Ve výběrovém režimu klepnutí přidává/odebírá zprávu z výběru.
-                onTap = if (selectionMode) onTapInSelection else null
+                onTap = if (selectionMode) onTapInSelection else null,
+                // Dvojklep = rychlá reakce; jen mimo výběr a když jde reagovat.
+                onDoubleTap = if (!selectionMode && canReact) onDoubleTapReact else null
             )
             // Pruh emoji jako plovoucí Popup NAD bublinou - nerezervuje místo a
             // klidně překryje zprávu nad ní (jako WhatsApp). Nefokusovatelný, ať
             // dál jdou gesta na zbytek konverzace.
-            if (showReactionPicker && canReact) {
+            //
+            // Animace: při vyskočení scale 0.85→1 + fade in, při skrytí fade out.
+            // Popup držíme namontovaný, dokud fade ven nedojede (alpha > 0), aby
+            // se skrytí opravdu ukázalo, ne jen zmizelo.
+            val pickerWanted = showReactionPicker && canReact
+            val pickerAlpha by animateFloatAsState(
+                targetValue = if (pickerWanted) 1f else 0f, label = "pickerAlpha"
+            )
+            val pickerScale by animateFloatAsState(
+                targetValue = if (pickerWanted) 1f else 0.85f, label = "pickerScale"
+            )
+            if (pickerWanted || pickerAlpha > 0.01f) {
                 Popup(
                     popupPositionProvider = remember(message.outgoing) {
                         AboveAnchorPosition(alignEnd = message.outgoing)
                     },
                     properties = PopupProperties(focusable = false)
                 ) {
-                    ReactionPicker(
-                        mine = message.reactionOf(ChatMessage.REACTOR_ME),
-                        onPick = onReact
-                    )
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            alpha = pickerAlpha
+                            scaleX = pickerScale
+                            scaleY = pickerScale
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                        }
+                    ) {
+                        ReactionPicker(
+                            mine = message.reactionOf(ChatMessage.REACTOR_ME),
+                            onPick = onReact
+                        )
+                    }
                 }
             }
         }
@@ -931,7 +962,8 @@ private fun MessageBubble(
     peerName: String = "",
     onRetry: () -> Unit,
     onLongPress: (() -> Unit)? = null,
-    onTap: (() -> Unit)? = null
+    onTap: (() -> Unit)? = null,
+    onDoubleTap: (() -> Unit)? = null
 ) {
     val outgoing = message.outgoing
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
@@ -959,6 +991,7 @@ private fun MessageBubble(
                 .then(
                     if (onLongPress != null) Modifier.combinedClickable(
                         onLongClick = onLongPress,
+                        onDoubleClick = onDoubleTap,
                         onClick = {
                             when {
                                 onTap != null -> onTap()

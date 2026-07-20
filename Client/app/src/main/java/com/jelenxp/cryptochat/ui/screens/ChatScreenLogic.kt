@@ -96,4 +96,16 @@ object ChatScreenLogic {
      */
     fun toggledReaction(mine: String?, tapped: String): String? =
         if (mine == tapped) null else tapped
+
+    /** Výchozí emoji pro rychlou reakci (double-tap). */
+    const val DEFAULT_REACTION = "👍"
+
+    /**
+     * Nová hodnota MOJÍ reakce po DVOJKLEPNUTÍ: když už jakoukoli reakci mám,
+     * dvojklep ji sundá (`null`); jinak přidá [DEFAULT_REACTION]. Na rozdíl od
+     * [toggledReaction] tady nezáleží na tom, KTERÉ emoji mám - dvojklep vždy
+     * jen přepíná „mám reakci / nemám".
+     */
+    fun doubleTapReaction(mine: String?): String? =
+        if (mine != null) null else DEFAULT_REACTION
 }
