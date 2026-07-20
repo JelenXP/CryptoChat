@@ -62,12 +62,12 @@ class ContactRepository(context: Context) {
                         )
                     )
                 } catch (e: Exception) {
-                    Log.e(TAG, "Přeskakuji poškozený záznam kontaktu na indexu $i", e)
+                    Log.e(TAG, "Přeskakuji poškozený záznam kontaktu na indexu $i (${e.javaClass.simpleName})")
                 }
             }
             result
         } catch (e: Exception) {
-            Log.e(TAG, "Nepodařilo se načíst uložené kontakty, vracím prázdný seznam", e)
+            Log.e(TAG, "Nepodařilo se načíst uložené kontakty (${e.javaClass.simpleName})")
             emptyList()
         }
     }
@@ -80,7 +80,7 @@ class ContactRepository(context: Context) {
             writeArray(array)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Nepodařilo se uložit kontakt", e)
+            Log.e(TAG, "Nepodařilo se uložit kontakt (${e.javaClass.simpleName})")
             false
         }
     }
@@ -97,7 +97,7 @@ class ContactRepository(context: Context) {
             writeArray(array)
             contacts.size
         } catch (e: Exception) {
-            Log.e(TAG, "Hromadné uložení kontaktů selhalo", e)
+            Log.e(TAG, "Hromadné uložení kontaktů selhalo (${e.javaClass.simpleName})")
             0
         }
     }

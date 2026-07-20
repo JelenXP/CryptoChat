@@ -52,11 +52,15 @@ object RelayClient {
     private const val ONION_READ_TIMEOUT_MS = 60_000
 
     /**
-     * Strop na velikost odpovědi relaye. Schránka drží nejvýš 200 blobů po 2 MB,
-     * ale takhle velká dávka reálně nechodí - 64 MB je bohatá rezerva a zároveň
-     * ochrana proti nepřátelskému serveru, který by chtěl vyčerpat paměť.
+     * Strop na velikost odpovědi relaye.
+     *
+     * Server sám vrací nejvýš ~8 MB na jedno vyzvednutí (zbytek pošle v dalším
+     * kole), takže víc není potřeba. Vyšší hodnota by byla nebezpečná: buffer se
+     * při `toByteArray()` zkopíruje, takže špička je dvojnásobek - u 64 MB by to
+     * bylo ~128 MB a nepřátelský server by službu položil právě tím limitem,
+     * který ji má chránit.
      */
-    private const val MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+    private const val MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
     /** Content-Type pro [postJson]. */
     private const val JSON_CONTENT_TYPE = "application/json"
@@ -217,7 +221,7 @@ object RelayClient {
         } catch (e: Exception) {
             // Adresu relaye nelogujeme - v release buildu (bez R8) by zůstala
             // v logcatu a prozradila, na jaký server se uživatel připojuje.
-            Log.w(TAG, "health selhal: ${e.javaClass.simpleName}: ${e.message}")
+            Log.w(TAG, "health selhal: ${e.javaClass.simpleName}")
             DiagnosticsLog.warn(TAG, "relay nedostupný (${e.javaClass.simpleName})")
             false
         }
@@ -277,14 +281,14 @@ object RelayClient {
                 // na serveru založilo podruhé.
                 if (method == "PUT" || method == "POST") {
                     Log.w(TAG, "onion $method selhal až po odeslání, neopakuji: " +
-                        "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                        "${e.cause?.javaClass?.simpleName}")
                     DiagnosticsLog.warn(TAG, "onion $method selhal po odeslání, neopakuji " +
                         "(${e.cause?.javaClass?.simpleName})")
                     throw e
                 }
                 last = e
                 Log.w(TAG, "onion $method selhal po odeslání (pokus ${attempt + 1}/$attempts): " +
-                    "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                    "${e.cause?.javaClass?.simpleName}")
                 DiagnosticsLog.warn(TAG, "onion $method selhal po odeslání " +
                     "(pokus ${attempt + 1}/$attempts, ${e.cause?.javaClass?.simpleName})")
                 if (attempt < attempts - 1) {
@@ -296,7 +300,7 @@ object RelayClient {
             } catch (e: Exception) {
                 last = e
                 Log.w(TAG, "onion $method selhal (pokus ${attempt + 1}/$attempts): " +
-                    "${e.javaClass.simpleName}: ${e.message}")
+                    "${e.javaClass.simpleName}")
                 // Text výjimky může obsahovat cílovou adresu - proto jen typ.
                 DiagnosticsLog.warn(TAG, "onion $method selhal " +
                     "(pokus ${attempt + 1}/$attempts, ${e.javaClass.simpleName})")
@@ -569,7 +573,10 @@ object RelayClient {
                 ((data[i + 2].toInt() and 0xFF) shl 8) or
                 (data[i + 3].toInt() and 0xFF)
             i += 4
-            if (len < 0 || i + len > data.size) break
+            // Odečítáme, ne přičítáme: `i + len` u len blízko 2^31 přeteče,
+            // podmínka projde a copyOfRange pak vyhodí výjimku - schránka by
+            // se stala trvale nečitelnou.
+            if (len < 0 || len > data.size - i) break
             out.add(data.copyOfRange(i, i + len))
             i += len
         }

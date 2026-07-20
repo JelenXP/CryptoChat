@@ -48,7 +48,7 @@ object AvatarStore {
             }
             rotated.recycle()
             file.absolutePath
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Uložení fotky se nepovedlo", e)
             null
         }
@@ -65,7 +65,7 @@ object AvatarStore {
             val file = File(dir, "${safeId(contactId)}_${System.currentTimeMillis()}.jpg")
             file.writeBytes(bytes)
             file.absolutePath
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Uložení fotky ze zálohy se nepovedlo", e)
             null
         }
@@ -80,7 +80,7 @@ object AvatarStore {
             val dir = File(context.cacheDir, "camera").apply { mkdirs() }
             val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
             FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Nepodařilo se vytvořit cíl pro foťák", e)
             null
         }
@@ -95,7 +95,7 @@ object AvatarStore {
             dir.listFiles()?.forEach { f ->
                 if (f.name.startsWith(prefix)) f.delete()
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Mazání fotek se nepovedlo", e)
         }
     }
@@ -148,7 +148,7 @@ object AvatarStore {
             val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             if (rotated != bitmap) bitmap.recycle()
             rotated
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             bitmap
         }
     }

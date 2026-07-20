@@ -370,10 +370,18 @@ object RelaySync {
                     // se stavem „přijímá se" (kousky dorazí vzápětí).
                     is ChatEnvelope.Opened.FileManifest -> {
                         val idHex = MediaTransfers.hex(opened.fileId)
-                        MediaTransfers.startReceive(
-                            context, idHex, opened.totalChunks, opened.totalSize,
-                            opened.mimeType, opened.fileName
-                        )
+                        if (!MediaTransfers.startReceive(
+                                context, idHex, opened.totalChunks, opened.totalSize,
+                                opened.mimeType, opened.fileName
+                            )
+                        ) {
+                            // Bez metadat by kousky nešlo složit a manifest by se
+                            // mezitím potvrdil a smazal ze serveru.
+                            DiagnosticsLog.error(TAG, "založení příjmu souboru selhalo")
+                            BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                            allSafe = false
+                            continue
+                        }
                         MediaTransfers.setProgress(idHex, 0f)
                         // Id zprávy je odvozené z fileId, takže opakovaně poslaný
                         // manifest téhož souboru by vytvořil DVĚ zprávy se stejným
@@ -411,7 +419,16 @@ object RelaySync {
                     // Kousek souboru: ulož a po posledním slož výsledek.
                     is ChatEnvelope.Opened.FileChunk -> {
                         val idHex = MediaTransfers.hex(opened.fileId)
-                        val complete = MediaTransfers.saveChunk(context, idHex, opened.index, opened.bytes)
+                        val stored = MediaTransfers.storeChunk(context, idHex, opened.index, opened.bytes)
+                        if (!stored.written) {
+                            // Kousek se nepodařilo uložit (plný disk). Bez tohohle
+                            // by se potvrdil a soubor by nešlo nikdy složit.
+                            DiagnosticsLog.error(TAG, "uložení kousku souboru selhalo")
+                            BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                            allSafe = false
+                            continue
+                        }
+                        val complete = stored.complete
                         val total = MediaTransfers.totalChunks(context, idHex)
                         if (total > 0) {
                             MediaTransfers.setProgress(

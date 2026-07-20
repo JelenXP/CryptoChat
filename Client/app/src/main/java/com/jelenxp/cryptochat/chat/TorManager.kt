@@ -65,9 +65,21 @@ object TorManager {
     /** Označí Tor za nedostupný (zastavený / listener zavřený). */
     fun markStopped() {
         synchronized(lock) {
+            // `bootstrapped` se ZÁMĚRNĚ nemaže: hlášku „Bootstrapped 100%" vydá Tor
+            // jen jednou za start démona. Kdyby ji tohle shodilo (stačí přechodné
+            // zavření listeneru), už by se nikdy nevrátila a každý požadavek by
+            // marně čekal na timeout - tichá smrt doručování až do restartu appky.
+            // Resetuje se jen při zahození runtime (viz TorController.forgetRuntime).
             ready = false
-            bootstrapped = false
             socksPort = -1
+            lock.notifyAll()
+        }
+    }
+
+    /** Zapomene i bootstrap - volá se, když se zahazuje celý runtime Toru. */
+    fun resetBootstrap() {
+        synchronized(lock) {
+            bootstrapped = false
             lock.notifyAll()
         }
     }

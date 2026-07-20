@@ -116,6 +116,7 @@ object TorController {
                 // vrací hned, když `runtime != null`) bylo napořád no-op a Tor
                 // by se do restartu procesu už nikdy nezkusil nastartovat.
                 forgetRuntime()
+                TorManager.resetBootstrap()
                 TorManager.markStopped()
             },
             onSuccess = OnSuccess.noOp(),

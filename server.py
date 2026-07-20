@@ -130,6 +130,15 @@ REPORTS_DIR = _pick_reports_dir()
 # Strop velikosti jednoho hlaseni. Klient si telo sam zkracuje pod tuto mez.
 MAX_REPORT_SIZE = int(os.environ.get("CC_MAX_REPORT_SIZE", str(256 * 1024)))   # 256 KB
 
+# Kolik bajtu nejvys vratit v JEDNE odpovedi na peek. Klient ma vlastni strop na
+# velikost odpovedi; kdyby ho schranka prekrocila, nesla by uz nikdy precist.
+MAX_PEEK_BYTES = int(os.environ.get("CC_MAX_PEEK_BYTES", str(8 * 1024 * 1024)))  # 8 MB
+
+# Strop pro hlaseni chyb na disku: pocet slozek a celkova velikost. Bez nej by
+# kdokoli se znalosti onion adresy zaplnil disk serveru.
+MAX_REPORTS = int(os.environ.get("CC_MAX_REPORTS", "500"))
+MAX_REPORTS_BYTES = int(os.environ.get("CC_MAX_REPORTS_BYTES", str(64 * 1024 * 1024)))
+
 # Povoleny tvar mailbox ID: URL-safe base64 / hex, rozumna delka. Server ho bere
 # jako neprusvitny retezec - nezajima ho, co znamena.
 MAILBOX_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
@@ -222,7 +231,20 @@ class MailboxStore:
                 if box is not None and box["blobs"]:
                     if drain:
                         return self._drain_locked(mailbox_id)
-                    return list(box["blobs"])
+                    # Vratime jen tolik, kolik se vejde do rozumne odpovedi.
+                    # Schranka smi drzet az MAX_MAILBOX_BLOBS * MAX_BLOB_SIZE
+                    # (stovky MB) - poslat to najednou by klient nemel kam ulozit
+                    # a schranka by byla TRVALE necitelna. Diky poradovym cislum
+                    # staci vratit prefix; klient ho potvrdi a zbytek dostane
+                    # v dalsim kole.
+                    out = []
+                    total = 0
+                    for seq, blob in box["blobs"]:
+                        if out and total + len(blob) > MAX_PEEK_BYTES:
+                            break
+                        out.append((seq, blob))
+                        total += len(blob)
+                    return out
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return []

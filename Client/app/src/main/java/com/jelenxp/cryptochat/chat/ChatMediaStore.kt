@@ -48,7 +48,7 @@ object ChatMediaStore {
             } while (bytes.size > MAX_BYTES && quality >= 35)
             rotated.recycle()
             if (bytes.size > MAX_BYTES) null else bytes
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Komprese obrázku selhala", e)
             null
         }
@@ -61,7 +61,7 @@ object ChatMediaStore {
             val file = File(dir, "${UUID.randomUUID()}.jpg")
             file.writeBytes(jpeg)
             file.absolutePath
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Uložení obrázku selhalo", e)
             null
         }
@@ -88,7 +88,7 @@ object ChatMediaStore {
             }
             val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
             FileInfo(name, mime, size)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Nepodařilo se přečíst údaje o souboru", e)
             null
         }
@@ -105,7 +105,7 @@ object ChatMediaStore {
                 out.outputStream().use { input.copyTo(it) }
             } ?: return null
             out.absolutePath
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Kopírování souboru selhalo", e)
             null
         }
@@ -121,7 +121,7 @@ object ChatMediaStore {
                 .setDataAndType(uri, mimeType ?: "*/*")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Otevření souboru selhalo", e)
         }
     }
@@ -136,7 +136,7 @@ object ChatMediaStore {
                 inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, maxPx)
             }
             BitmapFactory.decodeFile(path, opts)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Načtení obrázku selhalo", e)
             null
         }
@@ -184,7 +184,7 @@ object ChatMediaStore {
             val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             if (rotated != bitmap) bitmap.recycle()
             rotated
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             bitmap
         }
     }

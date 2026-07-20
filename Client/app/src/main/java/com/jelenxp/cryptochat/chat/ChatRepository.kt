@@ -76,7 +76,7 @@ class ChatRepository(context: Context) {
             }
             result
         } catch (e: Exception) {
-            Log.e(TAG, "Nepodařilo se načíst historii", e)
+            Log.e(TAG, "Nepodařilo se načíst historii (${e.javaClass.simpleName})")
             null
         }
     }
@@ -98,7 +98,6 @@ class ChatRepository(context: Context) {
         val current = loadLocked(contactId)
         if (current.any { it.id == message.id }) return false
         saveLocked(contactId, current + message)
-        true
     }
 
     /** Nastaví stav existující zprávy (např. SENDING -> SENT/FAILED). */
@@ -148,7 +147,9 @@ class ChatRepository(context: Context) {
 
     /** Přepíše celou historii konverzace (použije se při obnově ze zálohy). */
     fun restore(contactId: String, messages: List<ChatMessage>): Boolean = synchronized(lock) {
-        saveLocked(contactId, messages)
+        // Duplicitní id by shodila obrazovku chatu (LazyColumn je klíčovaný id),
+        // a záloha může přijít odkudkoli - proto se tady odfiltrují.
+        saveLocked(contactId, messages.distinctBy { it.id })
     }
 
     /** Smaže celou historii konverzace (např. při smazání kontaktu). */
@@ -187,7 +188,7 @@ class ChatRepository(context: Context) {
             _changes.tryEmit(contactId)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Nepodařilo se uložit historii", e)
+            Log.e(TAG, "Nepodařilo se uložit historii (${e.javaClass.simpleName})")
             // Cache po neúspěšném zápisu zahoď, ať v paměti nezůstane stav, který
             // na disku není - příště se načte znovu z disku.
             cache.remove(contactId)

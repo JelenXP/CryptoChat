@@ -2,6 +2,9 @@ package com.jelenxp.cryptochat.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.ReplayGuard
@@ -40,11 +43,16 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     fun deleteContact(id: String): Boolean {
         val success = repository.delete(id)
         val ctx = getApplication<Application>()
-        runCatching { ChatRepository(ctx).clear(id) }
-        runCatching { ReplayGuard.clear(ctx, id) }
-        runCatching { WireCompat.clear(ctx, id) }
-        runCatching { BlobQuarantine.clear(ctx, id) }
-        runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
+        // Úklid (mazání adresářů, prefs) běží mimo hlavní vlákno - volá se přímo
+        // z kliknutí a rekurzivní mazání by jinak zamrzlo UI. Na výsledek se
+        // nečeká: kontakt sám je smazaný hned a seznam se překreslí.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { ChatRepository(ctx).clear(id) }
+            runCatching { ReplayGuard.clear(ctx, id) }
+            runCatching { WireCompat.clear(ctx, id) }
+            runCatching { BlobQuarantine.clear(ctx, id) }
+            runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
+        }
         refresh()
         return success
     }

@@ -71,7 +71,17 @@ object MediaTransfers {
     }
 
     /** Uloží jeden kousek. Vrací true, když už jsou všechny (lze skládat). */
-    fun saveChunk(context: Context, fileIdHex: String, index: Int, bytes: ByteArray): Boolean {
+    /** Výsledek uložení kousku: zapsal se vůbec, a je už soubor kompletní? */
+    data class ChunkResult(val written: Boolean, val complete: Boolean)
+
+    /**
+     * Uloží jeden kousek a rozliší CHYBU ZÁPISU od „ještě nejsou všechny".
+     *
+     * Dřív obojí vracelo `false`, takže volající neměl jak poznat, že se kousek
+     * vůbec neuložil - potvrdil ho serveru, ten ho smazal a soubor už nešlo nikdy
+     * složit (bublina zůstala navždy ve stavu „přijímá se").
+     */
+    fun storeChunk(context: Context, fileIdHex: String, index: Int, bytes: ByteArray): ChunkResult {
         return try {
             // Adresář zakládáme i BEZ manifestu. Dřív se kousek bez něj zahodil -
             // jenže server ho po vyzvednutí smazal, takže ztracený manifest
@@ -81,13 +91,17 @@ object MediaTransfers {
             val total = meta(context, fileIdHex)?.optInt("chunks", -1) ?: -1
             // Index mimo rozsah (poškozený nebo podvržený kousek) by nafoukl
             // počet přijatých a spustil předčasné „hotovo" - přenos by pak
-            // navždy uvázl ve stavu FAILED.
-            if (total > 0 && index >= total) return false
+            // navždy uvázl ve stavu FAILED. Zahodit ho je v pořádku (je vadný),
+            // proto `written = true` - není co odkládat.
+            if (total > 0 && index >= total) return ChunkResult(written = true, complete = false)
             File(d, index.toString()).writeBytes(bytes)
-            total > 0 && receivedCount(context, fileIdHex) >= total
-        } catch (e: Exception) {
-            Log.e(TAG, "Uložení kousku selhalo", e)
-            false
+            ChunkResult(
+                written = true,
+                complete = total > 0 && receivedCount(context, fileIdHex) >= total
+            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "Uložení kousku selhalo (${e.javaClass.simpleName})")
+            ChunkResult(written = false, complete = false)
         }
     }
 
@@ -103,8 +117,8 @@ object MediaTransfers {
             root.listFiles()?.forEach { d ->
                 if (d.isDirectory && d.lastModified() < cutoff) d.deleteRecursively()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Úklid rozpracovaných přenosů selhal", e)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Úklid rozpracovaných přenosů selhal (${e.javaClass.simpleName})")
         }
     }
 
