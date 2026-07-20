@@ -391,9 +391,13 @@ object ChatEnvelope {
             val mime = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
             val name = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
             if (totalChunks <= 0 || totalSize < 0) return null
+            // Název i MIME plně řídí protějšek. Očisti je od obousměrných
+            // přepínačů a řídicích znaků, ať RLO (U+202E) nezamaskuje příponu
+            // v bublině (na disk se ukládá zvlášť sanitizovaný název).
             Opened.FileManifest(
                 timestamp, fileId, totalChunks, totalSize,
-                String(mime, Charsets.UTF_8), String(name, Charsets.UTF_8)
+                WireExt.sanitizeForDisplay(String(mime, Charsets.UTF_8)),
+                WireExt.sanitizeForDisplay(String(name, Charsets.UTF_8))
             )
         } catch (e: Exception) {
             null

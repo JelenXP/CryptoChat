@@ -5,10 +5,13 @@ package com.jelenxp.cryptochat.data
  * nalezenou novější verzi - **čistě funkčně, bez Androidu**.
  *
  * Vytaženo z `LaunchedEffect` v `MainActivity` (netriviální logika nepatří do
- * composable): dřív tam žila stejná pravidla jako v [UpdateNotifyPolicy.shouldNotify]
- * (cesta na pozadí), ale duplicitně a bez testu - úprava jednoho místa se snadno
- * rozešla s druhým. Tady je to obyčejná funkce nad čísly a řetězci, pokrytá
- * `UpdateStartupPolicyTest`.
+ * composable), aby to šlo otestovat (`UpdateStartupPolicyTest`).
+ *
+ * **Pozor - tohle NENÍ totéž co [UpdateNotifyPolicy.shouldNotify]** (cesta na
+ * pozadí). Jsou to dva ZÁMĚRNĚ jiné kanály: tady blokující overlay při startu,
+ * který zavřenou verzi po `remindIntervalMs` připomene znovu a důležitou ukáže
+ * vždy; tam JEDNORÁZOVÁ notifikace, která zavřenou verzi (i důležitou) už
+ * nepřipomíná. Nesjednocovat je do jednoho predikátu - liší se úmyslně.
  */
 object UpdateStartupPolicy {
 

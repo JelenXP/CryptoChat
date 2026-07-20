@@ -24,18 +24,8 @@ object ChatScreenLogic {
     val QUICK_REACTIONS: List<String> = listOf("👍", "❤️", "😂", "😮", "😭", "🙏")
 
     /**
-     * Vrátí id vybrané zprávy, jen pokud v seznamu pořád je - jinak `null`.
-     *
-     * Tohle je jádro nálezu v1.2-23: když vybraná zpráva zmizí (uživatel ji
-     * smazal, nebo se přenačetla historie), výběr se musí zrušit, jinak lišta
-     * výběru visí bez cílové zprávy.
-     */
-    fun survivingId(messages: List<ChatMessage>, selectedId: String?): String? =
-        selectedId?.takeIf { id -> messages.any { it.id == id } }
-
-    /**
      * Vrátí zprávu, na kterou se odpovídá, jen pokud v seznamu pořád je.
-     * Stejný důvod jako [survivingId] - nechceme odpovídat na zmizelou zprávu.
+     * Stejný důvod jako [survivingIds] - nechceme odpovídat na zmizelou zprávu.
      */
     fun survivingReply(messages: List<ChatMessage>, replyTo: ChatMessage?): ChatMessage? =
         replyTo?.takeIf { r -> messages.any { it.id == r.id } }

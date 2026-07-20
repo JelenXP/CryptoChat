@@ -126,6 +126,15 @@ object MediaTransfers {
     fun receivedCount(context: Context, fileIdHex: String): Int =
         dir(context, fileIdHex).listFiles()?.count { it.name != META } ?: 0
 
+    /**
+     * Existuje ještě rozpracovaný přenos (dočasný adresář) tohoto souboru?
+     * Používá se k rozpoznání natrvalo zaseklého příjmu podle LOKÁLNÍHO stavu:
+     * když [purgeStale] tmp adresář smazal (24 h od posledního doteku), přenos
+     * je definitivně mrtvý - bez ohledu na (klidně rozjetý) čas odesílatele.
+     */
+    fun hasPending(context: Context, fileIdHex: String): Boolean =
+        dir(context, fileIdHex).isDirectory
+
     /** Celkový počet kousků z manifestu (0 když se neví). */
     fun totalChunks(context: Context, fileIdHex: String): Int =
         meta(context, fileIdHex)?.optInt("chunks", 0) ?: 0

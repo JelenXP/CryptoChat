@@ -125,8 +125,10 @@ object ContactBackup {
         val decoder = Base64.getDecoder()
         var count = 0
 
-        // Kontakty, které už v appce jsou - kvůli kontrole kolizí id níže.
-        val existing = contactRepo.getContacts().associateBy { it.id }
+        // Kontakty, které už v appce jsou - kvůli kontrole kolizí id níže. Do téže
+        // mapy přidáváme i právě naimportované, aby se kolize řešila i UVNITŘ jedné
+        // zálohy (dva záznamy se stejným id a jiným klíčem = druhý nesmí přepsat první).
+        val existing = contactRepo.getContacts().associateBy { it.id }.toMutableMap()
 
         for (i in 0 until array.length()) try {
             val obj = array.getJSONObject(i)
@@ -171,7 +173,13 @@ object ContactBackup {
                 // optBoolean (ne getBoolean): typově vadné pole nesmí shodit celý import.
                 initiator = if (obj.has("initiator")) obj.optBoolean("initiator") else null
             )
-            if (contactRepo.addOrUpdate(contact)) count++
+            // Když se kontakt neuloží (přechodné selhání Keystore), NEobnovuj pod
+            // jeho id historii ani nepřečtené - jinak by na disku zůstala osiřelá
+            // data bez kontaktu (a při pozdějším znovuzaložení téhož id by se
+            // „vzkřísila"). Obnova jen ve větvi, kde uložení uspělo.
+            if (!contactRepo.addOrUpdate(contact)) continue
+            count++
+            existing[id] = contact   // aby další záznam téže zálohy viděl kolizi
 
             // Historie chatu.
             if (obj.has("messages")) {

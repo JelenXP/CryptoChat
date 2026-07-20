@@ -189,6 +189,25 @@ object WireExt {
         return true
     }
 
+    /**
+     * Odstraní z textu obousměrné přepínače a řídicí znaky (stejná sada jako
+     * [isForbidden] u emoji). Řetězec plně řídí protějšek - u názvu souboru /
+     * MIME z manifestu by RLO (U+202E) mohl zamaskovat příponu (`faktura‮gnp.js`
+     * → vypadá jako `.png`) nebo řídicími znaky rozbít vykreslení. Na disk se
+     * ukládá samostatně očištěný název; tohle je pro BEZPEČNÉ ZOBRAZENÍ.
+     */
+    fun sanitizeForDisplay(text: String): String {
+        if (text.isEmpty()) return text
+        val sb = StringBuilder(text.length)
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            if (!isForbidden(cp)) sb.appendCodePoint(cp)
+            i += Character.charCount(cp)
+        }
+        return sb.toString()
+    }
+
     private fun isForbidden(cp: Int): Boolean =
         cp < 0x20 ||                    // C0 (řídicí znaky, konce řádků)
         cp == 0x7F ||                   // DEL

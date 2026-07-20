@@ -36,6 +36,17 @@ object RelayStatus {
         if (state != RelayConn.CONNECTED) state = RelayConn.CONNECTED
     }
 
+    /**
+     * Poznač spojení jako NEDOSTUPNÉ na základě OPAKOVANĚ selhaného pollu. Bez
+     * tohohle by indikátor (i notifikace) zůstal na „Připojeno" z posledního
+     * úspěchu, i když server dávno spí (uspaný notebook) a zprávy nechodí -
+     * poll je jediný, kdo na pozadí selhání zjistí. Volat AŽ po pár selháních
+     * za sebou, ať indikátor při jednom výpadku nebliká.
+     */
+    fun markUnreachable() {
+        if (state == RelayConn.CONNECTED || state == RelayConn.UNKNOWN) state = RelayConn.FAILED
+    }
+
     // Aby neběželo víc testů spojení naráz (zbytečné dotazy přes Tor), pustí se
     // vždy jen jeden; další volání během něj se přeskočí.
     private val inFlight = AtomicBoolean(false)

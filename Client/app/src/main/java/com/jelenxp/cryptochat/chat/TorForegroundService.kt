@@ -107,7 +107,12 @@ class TorForegroundService : Service() {
                     ContactRepository(ctx).getContacts().forEach { c ->
                         repo.getMessages(c.id)
                             .filter { it.status == ChatMessage.Status.RECEIVING }
-                            .filter { System.currentTimeMillis() - it.timestamp > 24L * 60 * 60 * 1000 }
+                            // Zaseklé pozná LOKÁLNÍ stav: purgeStale výše smazal
+                            // tmp adresář (24 h od posledního doteku), takže když
+                            // už neexistuje, přenos je definitivně mrtvý. Dřív se
+                            // to řídilo časem ODESÍLATELE - rozjeté hodiny protějšku
+                            // pak bublinu nechaly „přijímá se" napořád.
+                            .filter { !MediaTransfers.hasPending(ctx, it.id) }
                             .forEach { m ->
                                 repo.updateMedia(c.id, m.id, null, ChatMessage.Status.FAILED)
                                 MediaTransfers.clearProgress(m.id)
@@ -322,6 +327,10 @@ class TorForegroundService : Service() {
         val ctx = this@TorForegroundService
         val repo = ChatRepository(ctx)
         var backoff = BACKOFF_START_MS
+        // Kolik pollů po sobě selhalo. Po pár selháních srovnej indikátor na
+        // „nedostupné" - jinak by zůstal na „Připojeno" z posledního úspěchu,
+        // i když server dávno spí.
+        var failStreak = 0
         while (scope.isActive) {
             // Prázdná adresa = chat vypnutý. Bez téhle pojistky by se `poll()`
             // vracel okamžitě a smyčka by se roztočila na plné CPU.
@@ -348,9 +357,11 @@ class TorForegroundService : Service() {
                 if (result.failed) {
                     // Server nedostupný - zpomaluj, ať se donekonečna nestaví okruhy.
                     DiagnosticsLog.warn(TAG, "poll selhal, zpomaluji (backoff $backoff ms)")
+                    if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS
+                    failStreak = 0
                     // Poll prošel = server je dosažitelný. Srovnej indikátor i
                     // trvalou notifikaci na „připojeno", i když se health ve
                     // warmUpu nestihl (jinak by uvázly na „připojuji").
@@ -368,6 +379,7 @@ class TorForegroundService : Service() {
                     TAG,
                     "poll smyčka vyhodila výjimku (${e.javaClass.simpleName}), zpomaluji"
                 )
+                if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
                 backoff = sleepBackoff(backoff)
             }
         }
@@ -502,5 +514,8 @@ class TorForegroundService : Service() {
 
         /** Strop backoffu při zhasnuté obrazovce (šetříme nejvíc). */
         private const val BACKOFF_MAX_SCREEN_OFF_MS = 5L * 60 * 1000
+
+        /** Po kolika pollech za sebou označit spojení za nedostupné (indikátor). */
+        private const val UNREACHABLE_AFTER_FAILS = 2
     }
 }
