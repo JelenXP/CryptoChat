@@ -27,6 +27,7 @@ import com.jelenxp.cryptochat.crypto.PostQuantumKem
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
+import com.jelenxp.cryptochat.ui.util.LockPortraitWhileVisible
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -48,6 +49,14 @@ fun PairInviteScreen(
     viewModel: ContactsViewModel,
     contactId: String? = null
 ) {
+    // Zamkne orientaci po dobu párování. Bez toho by otočení telefonu ve fázi
+    // WAITING zrekreovalo obrazovku, LaunchedEffect by se spustil znovu a
+    // vygeneroval NOVÝ ML-KEM keypair - protistrana už ale zapouzdřila vůči
+    // původnímu klíči, takže by iniciátor odvodil JINÝ klíč i SAS (ML-KEM při
+    // špatném klíči nevyhodí výjimku) a kontakt by se uložil s neshodným klíčem.
+    // Stejně jako RemoteInitScreen/RemoteCompleteScreen.
+    LockPortraitWhileVisible()
+
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val settings = remember { SettingsRepository(context) }

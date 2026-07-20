@@ -70,10 +70,21 @@ object TorController {
                 } else {
                     Log.w(TAG, "SOCKS listener zavřen / žádný")
                     DiagnosticsLog.warn(TAG, "SOCKS listener zavřen - Tor není k dispozici")
-                    // Zahoď i runtime. Bez toho by `ensureStarted` (vrací se hned,
-                    // když runtime != null) bylo po pádu démona napořád no-op a
-                    // chat by byl mrtvý až do restartu procesu - každý požadavek
-                    // by jen marně čekal na timeout.
+                    // Než runtime zahodíme, zkusíme démona KOREKTNĚ zastavit. Kdyby
+                    // šlo jen o přechodné zavření listeneru (démon žije dál),
+                    // `forgetRuntime` by osiřel běžící proces a příští `ensureStarted`
+                    // by spustil DRUHÉHO démona kolidujícího na zámku pracovního
+                    // adresáře - start by selhal a chat by byl mrtvý až do restartu.
+                    try {
+                        runtime?.enqueue(Action.StopDaemon, OnFailure {}, OnSuccess.noOp())
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "StopDaemon při úklidu selhal (${e.javaClass.simpleName})")
+                    }
+                    // Zahoď runtime. Bez toho by `ensureStarted` (vrací se hned, když
+                    // runtime != null) bylo po pádu démona napořád no-op a chat by byl
+                    // mrtvý až do restartu procesu - každý požadavek by marně čekal na
+                    // timeout. resetBootstrap až po zastavení: fresh démon si bootstrap
+                    // udělá znovu a awaitReady tak nepustí request do nehotové sítě.
                     forgetRuntime()
                     TorManager.resetBootstrap()
                     TorManager.markStopped()

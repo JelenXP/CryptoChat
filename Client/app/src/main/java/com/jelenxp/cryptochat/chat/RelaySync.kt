@@ -6,6 +6,7 @@ import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import java.io.File
+import java.io.InputStream
 import java.security.SecureRandom
 import java.util.UUID
 
@@ -206,9 +207,14 @@ object RelaySync {
                     var ok = true
                     file.inputStream().use { input ->
                         val buffer = ByteArray(CHUNK_SIZE)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read <= 0) break
+                        // Krájíme PŘESNĚ totalChunks kousků. read() nemusí naplnit
+                        // celý buffer ani uprostřed souboru (krátké čtení), proto
+                        // readChunkFully - jinak by vzniklo víc kousků než totalChunks,
+                        // příjemce by přebytek zahodil a složil ZKRÁCENÝ soubor.
+                        // U 0bajtového souboru (totalChunks=1) se pošle jeden prázdný
+                        // kousek, jinak by příjemce uvázl navždy v RECEIVING.
+                        while (index < totalChunks) {
+                            val read = readChunkFully(input, buffer)
                             val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
                             val blob = ChatEnvelope.sealFileChunk(
                                 fileId, index, chunk, message.timestamp, key, dir
@@ -517,4 +523,26 @@ object RelaySync {
         // takže chodí skoro okamžitě a mezitím se nic nebudí.
         return PollResult(fetch(epoch, waitSeconds = LONGPOLL_SECONDS), failed)
     }
+}
+
+/**
+ * Přečte z [input] až [buffer].size bajtů: opakuje `read()`, dokud buffer nenaplní
+ * nebo nenarazí na konec streamu. Vrací počet skutečně načtených bajtů (0 = hned
+ * konec).
+ *
+ * [InputStream.read] NEGARANTUJE naplnění celého bufferu - klidně vrátí míň i
+ * uprostřed souboru. Kdyby se kousky souboru krájely přímo podle návratové hodnoty
+ * `read()`, krátké čtení by vyrobilo VÍC kousků, než kolik hlásí manifest
+ * (`totalChunks`); příjemce by přebytek zahodil a složil ZKRÁCENÝ soubor označený
+ * jako doručený. Proto se každý kousek plní až po `CHUNK_SIZE` a kratší je jen
+ * poslední, na skutečném konci souboru.
+ */
+internal fun readChunkFully(input: InputStream, buffer: ByteArray): Int {
+    var filled = 0
+    while (filled < buffer.size) {
+        val r = input.read(buffer, filled, buffer.size - filled)
+        if (r < 0) break
+        filled += r
+    }
+    return filled
 }
