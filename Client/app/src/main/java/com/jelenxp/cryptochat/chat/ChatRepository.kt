@@ -3,6 +3,8 @@ package com.jelenxp.cryptochat.chat
 import android.content.Context
 import android.util.Log
 import com.jelenxp.cryptochat.crypto.KeystoreCryptoHelper
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -134,7 +136,8 @@ class ChatRepository(context: Context) {
     }
 
     /** Označí konverzaci za přečtenou (volá se při otevření chatu). */
-    fun markRead(contactId: String) {
+    fun markRead(contactId: String) = synchronized(lock) {
+        // Pod zámkem, ať nepřepíše souběžný incrementUnread z poll smyčky.
         prefs.edit().putInt(unreadKey(contactId), 0).apply()
     }
 
@@ -176,8 +179,12 @@ class ChatRepository(context: Context) {
                 )
             }
             val encrypted = KeystoreCryptoHelper.encryptForStorage(array.toString())
-            prefs.edit().putString(key(contactId), encrypted).apply()
+            // commit(), ne apply(): příchozí zprávu už relay smazal, takže
+            // asynchronní zápis by ji při zabití procesu ztratil nenávratně.
+            // Jsme na IO vlákně, takže synchronní zápis nikoho neblokuje.
+            prefs.edit().putString(key(contactId), encrypted).commit()
             cache[contactId] = messages
+            _changes.tryEmit(contactId)
             true
         } catch (e: Exception) {
             Log.e(TAG, "Nepodařilo se uložit historii", e)
@@ -199,5 +206,15 @@ class ChatRepository(context: Context) {
 
         /** Rozparsovaná historie v paměti, klíčovaná id kontaktu. */
         private val cache = HashMap<String, List<ChatMessage>>()
+
+        private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 64)
+
+        /**
+         * Ohlásí id kontaktu, jehož historie se právě změnila. Zprávy vyzvedává
+         * ze sítě foreground service, ale zobrazuje je `ChatScreen` - bez tohohle
+         * signálu by se otevřená konverzace o nové zprávě dozvěděla až se
+         * zpožděním (nebo vůbec).
+         */
+        val changes = _changes.asSharedFlow()
     }
 }

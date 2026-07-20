@@ -143,8 +143,12 @@ object WireCompat {
     fun acceptMajor(context: Context, contactId: String, blob: ByteArray): Boolean {
         val major = readMajor(blob) ?: (WIRE_MAJOR - 1)  // bez bajtu verze = starší formát
         if (major != WIRE_MAJOR) {
-            // Minor u cizího majoru neznáme (nešlo by ho přečíst) - zahoď ho.
-            remember(context, contactId, PeerVersion(major, UNKNOWN))
+            // POZOR: tenhle bajt NENÍ autentizovaný (u cizího majoru neumíme
+            // ověřit GCM tag). Nedůvěryhodný relay by tedy mohl podstrčit blob
+            // s falešnou verzí a natrvalo uživateli zobrazit „aktualizuj si
+            // appku" - pěkný předstupeň sociálního inženýrství. Držíme ho proto
+            // jen v paměti (do restartu procesu) a NEukládáme na disk.
+            rememberEphemeral(contactId, PeerVersion(major, UNKNOWN))
             return false
         }
         return true
@@ -183,6 +187,12 @@ object WireCompat {
         return if (v == 0) null else v
     }
 
+    /** Zapamatuje verzi jen v paměti (neautentizovaný zdroj - viz [acceptMajor]). */
+    private fun rememberEphemeral(contactId: String, version: PeerVersion) {
+        versions[contactId] = version
+    }
+
+    /** Zapamatuje a ULOŽÍ verzi. Jen z autentizovaného zdroje (po dešifrování). */
     private fun remember(context: Context, contactId: String, version: PeerVersion) {
         if (versions[contactId] == version) return
         versions[contactId] = version

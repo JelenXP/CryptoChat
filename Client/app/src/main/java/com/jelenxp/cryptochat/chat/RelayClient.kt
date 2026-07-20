@@ -43,6 +43,13 @@ object RelayClient {
      */
     private const val ONION_READ_TIMEOUT_MS = 60_000
 
+    /**
+     * Strop na velikost odpovědi relaye. Schránka drží nejvýš 200 blobů po 2 MB,
+     * ale takhle velká dávka reálně nechodí - 64 MB je bohatá rezerva a zároveň
+     * ochrana proti nepřátelskému serveru, který by chtěl vyčerpat paměť.
+     */
+    private const val MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
     /** Kolikrát zkusit navázat onion okruh, než to vzdáme. */
     private const val ONION_ATTEMPTS = 5
 
@@ -295,7 +302,7 @@ object RelayClient {
             // odpovědi proto označíme zvlášť - opakovat PUT by znamenalo uložit
             // blob podruhé a příjemci by zpráva dorazila dvakrát.
             return try {
-                parseHttpResponse(input.readBytes())
+                parseHttpResponse(readCapped(input))
             } catch (e: Exception) {
                 throw AfterSendException(e)
             }
@@ -304,6 +311,25 @@ object RelayClient {
 
     /** Selhání, které nastalo až po odeslání požadavku (viz [socksRequest]). */
     private class AfterSendException(cause: Throwable) : IOException(cause)
+
+    /**
+     * Přečte odpověď, ale nejvýš [MAX_RESPONSE_BYTES]. Bez stropu by nepřátelský
+     * relay poslal stovky MB a shodil foreground service na `OutOfMemoryError` -
+     * tedy trvalý výpadek příjmu zpráv.
+     */
+    private fun readCapped(input: InputStream): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            if (out.size() + read > MAX_RESPONSE_BYTES) {
+                throw IOException("Odpověď relaye je přes limit ($MAX_RESPONSE_BYTES B)")
+            }
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
+    }
 
     /** Přečte přesně [n] bajtů, nebo vyhodí výjimku při předčasném konci. */
     private fun readExactly(input: InputStream, n: Int): ByteArray {

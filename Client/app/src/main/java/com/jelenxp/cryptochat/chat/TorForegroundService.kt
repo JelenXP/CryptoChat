@@ -3,10 +3,12 @@ package com.jelenxp.cryptochat.chat
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.ContactRepository
@@ -14,6 +16,8 @@ import com.jelenxp.cryptochat.data.SettingsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -37,6 +41,9 @@ class TorForegroundService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = HashMap<String, Job>()
+
+    /** Otisk (klíč + role) kontaktu, se kterým běží jeho smyčka - viz watchdogTick. */
+    private val fingerprints = HashMap<String, String>()
     @Volatile private var syncStarted = false
 
     /** Poslední text trvalé notifikace - přepisujeme ji jen při skutečné změně. */
@@ -91,7 +98,10 @@ class TorForegroundService : Service() {
                 } catch (e: Exception) {
                     Log.w(TAG, "Tik hlídače selhal", e)
                 }
-                delay(WATCHDOG_INTERVAL_MS)  // přenačtení kontaktů + případný keepalive
+                // Čekej na další tik, ale nech se probudit dřív (nový kontakt,
+                // změna serveru) - jinak by čerstvě spárovaný kontakt čekal na
+                // svou poll smyčku až dvě minuty.
+                withTimeoutOrNull(WATCHDOG_INTERVAL_MS) { wake.receive() }
             }
         }
     }
@@ -102,17 +112,31 @@ class TorForegroundService : Service() {
      */
     private suspend fun watchdogTick() {
         val ctx = this@TorForegroundService
-        if (SettingsRepository(ctx).getRelayUrl().isBlank()) return
+        if (SettingsRepository(ctx).getRelayUrl().isBlank()) {
+            // Chat vypnutý - zastav všechny smyčky, ať netočí naprázdno.
+            jobs.values.forEach { it.cancel() }
+            jobs.clear()
+            return
+        }
 
         val contacts = ContactRepository(ctx).getContacts().filter { it.keyBase64 != null }
         val liveIds = contacts.map { it.id }.toSet()
 
         // Smazaný kontakt = zruš jeho smyčku, ať zbytečně nepollovává cizí schránku.
         jobs.keys.toList().forEach { id ->
-            if (id !in liveIds) jobs.remove(id)?.cancel()
+            if (id !in liveIds) {
+                jobs.remove(id)?.cancel()
+                fingerprints.remove(id)
+            }
         }
         for (contact in contacts) {
-            if (jobs[contact.id]?.isActive != true) {
+            // Smyčka drží kontakt jako snapshot. Když se změní klíč nebo role při
+            // párování, musí se restartovat - jinak by navždy pollovala starou
+            // schránku (starý klíč / opačný směr) a zprávy by tiše nedorazily.
+            val fingerprint = "${contact.keyBase64}|${contact.initiator}"
+            if (jobs[contact.id]?.isActive != true || fingerprints[contact.id] != fingerprint) {
+                jobs.remove(contact.id)?.cancel()
+                fingerprints[contact.id] = fingerprint
                 jobs[contact.id] = scope.launch { syncLoop(contact) }
             }
         }
@@ -165,16 +189,19 @@ class TorForegroundService : Service() {
         val repo = ChatRepository(ctx)
         var backoff = BACKOFF_START_MS
         while (scope.isActive) {
-            // Otevřená konverzace si pollovává sama (ChatScreen) - nepouštěj na
-            // stejnou schránku druhé spojení, byla by to dvojnásobná spotřeba.
-            if (ActiveChat.currentId == contact.id) {
-                delay(2000)
+            // Prázdná adresa = chat vypnutý. Bez téhle pojistky by se `poll()`
+            // vracel okamžitě a smyčka by se roztočila na plné CPU.
+            if (SettingsRepository(ctx).getRelayUrl().isBlank()) {
+                delay(30_000)
                 continue
             }
             try {
                 // long-poll: drží se, dokud nedorazí zpráva (nebo ~60 s)
                 val result = RelaySync.poll(ctx, contact)
-                if (result.received > 0) {
+                // Notifikaci NE pro konverzaci, kterou má uživatel otevřenou -
+                // tu si zprávu zobrazí sama. Kontroluje se AŽ TEĎ, protože poll
+                // mohl běžet ještě z doby, než uživatel chat otevřel.
+                if (result.received > 0 && ActiveChat.currentId != contact.id) {
                     val lastIncoming = repo.getMessages(contact.id).lastOrNull { !it.outgoing }
                     ChatNotifications.notifyMessage(
                         ctx,
@@ -258,6 +285,33 @@ class TorForegroundService : Service() {
 
     companion object {
         private const val TAG = "TorForegroundService"
+
+        /**
+         * Probouzí hlídače. CONFLATED: víc žádostí za sebou splyne v jednu,
+         * takže se hlídač nerozjede zbytečně vícekrát.
+         */
+        private val wake = Channel<Unit>(Channel.CONFLATED)
+
+        /**
+         * Zajistí, že služba běží, a popožene hlídače, ať hned přenačte kontakty
+         * a rozjede jejich poll smyčky.
+         *
+         * Volá se při otevření konverzace: služba je totiž JEDINÝ příjemce zpráv
+         * (obrazovka sama nepollovává), takže kdyby zrovna neběžela, nedorazilo
+         * by nic. Zároveň tím odpadá čekání na pravidelný tik hlídače u čerstvě
+         * spárovaného kontaktu.
+         */
+        fun ensureRunning(context: Context) {
+            try {
+                ContextCompat.startForegroundService(
+                    context.applicationContext,
+                    Intent(context.applicationContext, TorForegroundService::class.java)
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Službu se nepodařilo spustit", e)
+            }
+            wake.trySend(Unit)
+        }
 
         /**
          * Jak často hlídač přenačte kontakty (a případně udrží okruh teplý).

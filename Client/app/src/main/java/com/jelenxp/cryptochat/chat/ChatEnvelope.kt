@@ -156,7 +156,10 @@ object ChatEnvelope {
             val key = CryptoManager.keyFromBase64(keyBase64)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.updateAAD(aad(dir, major))
+            // AAD se skládá z NAŠÍ konstanty, ne z bajtu přečteného z blobu -
+            // aby ho nikdy nemohl řídit útočník (výše sice musí sedět, ale
+            // spoléhat se na to je zbytečně křehké).
+            cipher.updateAAD(aad(dir, WireCompat.WIRE_MAJOR))
             val payload = cipher.doFinal(cipherBytes)
             if (payload.size < HEADER) return null
             val kind = payload[0]
@@ -164,7 +167,8 @@ object ChatEnvelope {
             val buf = ByteBuffer.wrap(payload, 2, HEADER - 2)
             val timestamp = buf.long
             val len = buf.int
-            if (len < 0 || HEADER + len > payload.size) return null
+            // Odečítáme, ne přičítáme - HEADER + len by u obřího len přeteklo.
+            if (len < 0 || len > payload.size - HEADER) return null
             val data = payload.copyOfRange(HEADER, HEADER + len)
             val content = when (kind) {
                 KIND_IMAGE -> Opened.Image(timestamp, data)
@@ -228,8 +232,8 @@ object ChatEnvelope {
         val iv = ByteArray(IV_SIZE_BYTES).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        cipher.updateAAD(aad(dir, WireCompat.WIRE_VERSION))
-        return byteArrayOf(WireCompat.WIRE_VERSION.toByte()) + iv + cipher.doFinal(payload)
+        cipher.updateAAD(aad(dir, WireCompat.WIRE_MAJOR))
+        return byteArrayOf(WireCompat.WIRE_MAJOR.toByte()) + iv + cipher.doFinal(payload)
     }
 
     /**

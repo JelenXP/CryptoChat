@@ -60,6 +60,7 @@ import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.MediaTransfers
 import com.jelenxp.cryptochat.chat.RelaySync
+import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.TorController
 import com.jelenxp.cryptochat.data.SettingsRepository
@@ -67,6 +68,7 @@ import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -111,34 +113,31 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Pollování a příznak „aktivní chat" jen když je obrazovka v POPŘEDÍ (RESUMED).
-    // Na pozadí se poll zastaví a `ActiveChat` se uvolní - příjem a notifikace pak
-    // převezme foreground service (jinak by ChatScreen na pozadí bral zprávy sám
-    // a service by nikdy neposlal notifikaci).
+    // ChatScreen ZÁMĚRNĚ NEPOLLUJE. Relay je dead-drop - GET zprávu smaže, takže
+    // dva nezávislí příjemci téže schránky by o každou zprávu závodili: jednou by
+    // ji sebrala obrazovka, podruhé service (a ta by pak poslala notifikaci ke
+    // konverzaci, kterou má uživatel právě otevřenou). Jediným příjemcem je proto
+    // foreground service; obrazovka je čistá prezentace nad historií.
+    //
+    // `ActiveChat` už neřídí, kdo pollovává - říká jen „tuhle konverzaci uživatel
+    // právě čte", takže se pro ni potlačí notifikace.
     LaunchedEffect(id, canChat) {
         if (contact == null || !canChat) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             ActiveChat.currentId = id
-            repo.markRead(id)  // otevřená konverzace = přečteno
+            withContext(Dispatchers.IO) { repo.markRead(id) }  // otevřená konverzace = přečteno
+            // Pro .onion relay nastartuj zabudovaný Tor (idempotentní) a popožeň
+            // službu, ať pro čerstvě spárovaný kontakt nečekáme na hlídač.
+            if (relayUrl.contains(".onion")) TorController.ensureStarted(context)
+            TorForegroundService.ensureRunning(context)
             try {
-                // Pro .onion relay nastartuj zabudovaný Tor (idempotentní).
-                if (relayUrl.contains(".onion")) TorController.ensureStarted(context)
-                // Backoff při nedostupném serveru - bez něj by se donekonečna
-                // stavěly Tor okruhy (nejdražší věc, co appka dělá).
-                var backoff = 3_000L
-                while (true) {
-                    // poll() sám blokuje (long-poll drží spojení, dokud nedorazí
-                    // zpráva nebo ~60 s), takže tady se nic pravidelně nebudí.
-                    val result = withContext(Dispatchers.IO) { RelaySync.poll(context, contact) }
-                    messages = repo.getMessages(id)
-                    if (result.failed) {
-                        delay(backoff)
-                        backoff = (backoff * 2).coerceAtMost(30_000L)
-                    } else {
-                        backoff = 3_000L
-                        delay(300)  // pojistka proti sevřené smyčce, kdyby poll skončil hned
+                // Přenačti historii, kdykoli do ní service něco přidá.
+                ChatRepository.changes
+                    .filter { it == id }
+                    .collect {
+                        messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+                        withContext(Dispatchers.IO) { repo.markRead(id) }
                     }
-                }
             } finally {
                 if (ActiveChat.currentId == id) ActiveChat.currentId = null
             }

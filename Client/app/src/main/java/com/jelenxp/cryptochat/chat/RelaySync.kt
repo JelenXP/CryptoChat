@@ -260,7 +260,10 @@ object RelaySync {
                 n++
             }
 
-            for (blob in blobs) {
+            // Každý blob zvlášť: výjimka u jednoho (poškozená data, chyba zápisu)
+            // nesmí shodit zpracování zbytku dávky - ty zprávy už relay smazal,
+            // takže by byly nenávratně pryč.
+            for (blob in blobs) try {
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
                 if (!ReplayGuard.isNew(context, contact.id, blob)) continue
                 // Zprávu s jiným MAJOR nemá smysl zkoušet otevřít - jen si
@@ -271,8 +274,11 @@ object RelaySync {
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
                 val decoded = ChatEnvelope.open(blob, key, dir)
                 // Minor odesílatele je až uvnitř šifry, takže je známý teprve teď.
+                // Zároveň je to jediný okamžik, kdy je jisté, že blob je pravý -
+                // proto se až tady zapíše i otisk proti replay.
                 if (decoded != null) {
                     WireCompat.notePeerMinor(context, contact.id, decoded.senderMinor)
+                    ReplayGuard.remember(context, contact.id, blob)
                 }
                 when (val opened = decoded?.content) {
                     is ChatEnvelope.Opened.Text -> arrived(
@@ -364,8 +370,11 @@ object RelaySync {
                         }
                     }
 
-                    null -> continue
+                    null -> {}
                 }
+            } catch (ex: Exception) {
+                // Jeden vadný blob nesmí shodit zbytek dávky.
+                android.util.Log.w("RelaySync", "Zpracování blobu selhalo, pokračuji", ex)
             }
             return n
         }
