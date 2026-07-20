@@ -179,8 +179,10 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core:1.6.1")
 
-    // Pozn.: instrumentované UI testy (androidTest) chatová verze zatím nemá.
-    // Původní testovací závislosti (compose-ui-test, ui-test-manifest) byly
-    // odebrány, protože nejsou v offline Gradle cache a blokovaly by lokální
-    // assembleDebug. Až bude potřeba, přidají se zpět (v CI, kde je síť).
+    // Instrumentované testy (androidTest) - běží na emulátoru/zařízení. Slouží pro
+    // e2e integrační test (chat/RelayIntegrationTest): reálný Tor -> onion relay,
+    // párování přes pozvánku, výměna zpráv. Runner je AndroidJUnitRunner (výše).
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
