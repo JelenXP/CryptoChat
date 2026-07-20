@@ -112,7 +112,13 @@ object RelaySync {
      * Selhání hlásíme ven, aby volající mohl zpomalit (backoff) místo toho, aby
      * při nedostupném serveru donekonečna stavěl Tor okruhy a pálil baterii.
      */
-    data class PollResult(val received: Int, val failed: Boolean)
+    /**
+     * Výsledek jednoho pollu. [failed] = má se zpomalit (síťová I lokální chyba,
+     * hammering nemá smysl ani u disku). [reachable] = server SKUTEČNĚ odpověděl
+     * (get prošel) - odlišuje síťový výpadek od lokálního selhání úložiště, aby
+     * indikátor dostupnosti nehlásil „odpojeno" kvůli plnému disku.
+     */
+    data class PollResult(val received: Int, val failed: Boolean, val reachable: Boolean = false)
 
     /** Směr, na který kontakt POSÍLÁ. Iniciátor = 0, odpovídající = 1. */
     private fun sendDir(contact: Contact) = sendDirFor(contact.initiator)
@@ -376,6 +382,8 @@ object RelaySync {
         val dir = recvDir(contact)
         val epoch = currentEpoch()
         var failed = false
+        // Server aspoň jednou odpověděl (get prošel) - pro indikátor dostupnosti.
+        var reachable = false
         // Karanténu procházej jen jednou za poll (ne v každém fetchi zvlášť).
         var retryQuarantine = true
 
@@ -391,6 +399,8 @@ object RelaySync {
                 DiagnosticsLog.warn(TAG, "vyzvednutí zpráv selhalo (${ex.javaClass.simpleName})")
                 return 0
             }
+            // Get prošel = server je dosažitelný (i kdyby pak selhalo uložení).
+            reachable = true
             val blobs = fetched.blobs
             var n = 0
             // Když se cokoli z dávky nepodaří bezpečně uložit ani odložit do
@@ -749,11 +759,11 @@ object RelaySync {
                 prevEpochChecked[contact.id] = epoch
                 prevEpochCheckedAt[contact.id] = System.currentTimeMillis()
             }
-            if (prev > 0) return PollResult(prev, failed)
+            if (prev > 0) return PollResult(prev, failed, reachable)
         }
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,
         // takže chodí skoro okamžitě a mezitím se nic nebudí.
-        return PollResult(fetch(epoch, waitSeconds = LONGPOLL_SECONDS), failed)
+        return PollResult(fetch(epoch, waitSeconds = LONGPOLL_SECONDS), failed, reachable)
     }
 
     /**

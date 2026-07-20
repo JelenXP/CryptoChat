@@ -20,6 +20,7 @@ import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
@@ -331,7 +332,12 @@ class TorForegroundService : Service() {
         // „nedostupné" - jinak by zůstal na „Připojeno" z posledního úspěchu,
         // i když server dávno spí.
         var failStreak = 0
-        while (scope.isActive) {
+        // POZOR: `coroutineContext.isActive` (tenhle job), NE `scope.isActive`
+        // (rodič). Když watchdogTick zruší jednotlivou smyčku (smazaný / znovu
+        // spárovaný kontakt), rodičovský scope žije dál - se `scope.isActive` by
+        // se zrušená smyčka po návratu blokujícího `poll` (bez suspend bodu na
+        // úspěšné větvi) roztočila znovu a pollovala starou schránku napořád.
+        while (coroutineContext.isActive) {
             // Prázdná adresa = chat vypnutý. Bez téhle pojistky by se `poll()`
             // vracel okamžitě a smyčka by se roztočila na plné CPU.
             if (SettingsRepository(ctx).getRelayUrl().isBlank()) {
@@ -355,9 +361,17 @@ class TorForegroundService : Service() {
                     )
                 }
                 if (result.failed) {
-                    // Server nedostupný - zpomaluj, ať se donekonečna nestaví okruhy.
                     DiagnosticsLog.warn(TAG, "poll selhal, zpomaluji (backoff $backoff ms)")
-                    if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
+                    if (result.reachable) {
+                        // Server ODPOVĚDĚL, ale uložení selhalo (plný disk apod.) -
+                        // spojení je v pořádku, indikátor nechat „připojeno". Zpomal
+                        // ale stejně, ať se nehameruje disk.
+                        failStreak = 0
+                        RelayStatus.markConnected()
+                    } else if (++failStreak >= UNREACHABLE_AFTER_FAILS) {
+                        // Server nedostupný (uspaný notebook) - srovnej indikátor.
+                        RelayStatus.markUnreachable()
+                    }
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS

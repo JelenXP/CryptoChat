@@ -177,7 +177,12 @@ object ContactBackup {
             // jeho id historii ani nepřečtené - jinak by na disku zůstala osiřelá
             // data bez kontaktu (a při pozdějším znovuzaložení téhož id by se
             // „vzkřísila"). Obnova jen ve větvi, kde uložení uspělo.
-            if (!contactRepo.addOrUpdate(contact)) continue
+            if (!contactRepo.addOrUpdate(contact)) {
+                // Fotka se uložila na disk PŘED uložením kontaktu. Když kontakt
+                // neuloží, ukliď ji - jinak zůstane osiřelý JPEG bez kontaktu.
+                avatarPath?.let { runCatching { File(it).delete() } }
+                continue
+            }
             count++
             existing[id] = contact   // aby další záznam téže zálohy viděl kolizi
 
