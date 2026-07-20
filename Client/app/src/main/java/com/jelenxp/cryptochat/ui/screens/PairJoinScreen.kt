@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,11 +48,14 @@ fun PairJoinScreen(
     val baseUrl = remember { settings.getRelayUrl() }
     val scope = rememberCoroutineScope()
 
-    var phase by remember { mutableStateOf(if (baseUrl.isBlank()) JoinPhase.NO_RELAY else JoinPhase.INPUT) }
-    var code by remember { mutableStateOf("") }
-    var sas by remember { mutableStateOf("") }
-    var aesKey by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf("") }
+    // rememberSaveable: otočení telefonu ve fázi ověřování by jinak zahodilo
+    // dohodnutý klíč, ačkoli zapouzdření už je nahrané na relayi - iniciátor by
+    // kontakt uložil, tahle strana ne (jednostranné, na pohled záhadné párování).
+    var phase by rememberSaveable { mutableStateOf(if (baseUrl.isBlank()) JoinPhase.NO_RELAY else JoinPhase.INPUT) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var sas by rememberSaveable { mutableStateOf("") }
+    var aesKey by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf("") }
 
     fun startJoin() {
         val canonical = Pairing.normalize(code)

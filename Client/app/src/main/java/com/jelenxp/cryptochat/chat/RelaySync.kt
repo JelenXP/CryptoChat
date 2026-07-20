@@ -55,7 +55,7 @@ object RelaySync {
      * kontrola přeskočí, takže na cyklus vychází jeden onion request místo dvou.
      */
     private fun shouldCheckPrevEpoch(contactId: String, epoch: Long): Boolean {
-        if (prevEpochChecked.put(contactId, epoch) != epoch) return true
+        if (prevEpochChecked[contactId] != epoch) return true
         return System.currentTimeMillis() % EPOCH_MS < EPOCH_OVERLAP_MS
     }
 
@@ -320,6 +320,17 @@ object RelaySync {
                             if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
                             n++
                         }
+                        // Kousky mohly dorazit dřív než manifest (zaparkované) -
+                        // pak je soubor hotový už teď a nikdo by ho nesložil.
+                        if (MediaTransfers.receivedCount(context, idHex) >= opened.totalChunks) {
+                            val path = MediaTransfers.assemble(context, idHex)
+                            MediaTransfers.clearProgress(idHex)
+                            repo.updateMedia(
+                                contact.id, idHex, path,
+                                if (path != null) ChatMessage.Status.RECEIVED
+                                else ChatMessage.Status.FAILED
+                            )
+                        }
                     }
 
                     // Kousek souboru: ulož a po posledním slož výsledek.
@@ -355,6 +366,11 @@ object RelaySync {
         // každý cyklus platil onion request navíc.
         if (shouldCheckPrevEpoch(contact.id, epoch)) {
             val prev = fetch(epoch - 1, waitSeconds = 0)
+            // Za vyřízenou ji považuj AŽ po úspěšném dotazu. Kdyby se označila
+            // rovnou, jediný neúspěšný pokus (nedostupný server) by kontrolu
+            // spotřeboval a zpráva odeslaná těsně před přelomem dne by se už
+            // nikdy nevyzvedla - tichá a nevratná ztráta.
+            if (!failed) prevEpochChecked[contact.id] = epoch
             if (prev > 0) return PollResult(prev, failed)
         }
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,

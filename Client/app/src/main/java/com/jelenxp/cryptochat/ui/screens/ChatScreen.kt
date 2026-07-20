@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +86,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val settings = remember { SettingsRepository(context) }
     val scope = rememberCoroutineScope()
 
-    val contact = remember(id) { viewModel.getContact(id) }
+    // Kontakt čti ŽIVĚ z ViewModelu, ne jednorázově. Zachycená kopie by po
+    // obnově klíče držela ten starý a zprávy by protistrana nerozšifrovala.
+    val allContacts by viewModel.contacts.collectAsState()
+    val contact = remember(allContacts, id) { allContacts.find { it.id == id } }
     // Historii NEnačítej v kompozici - `getMessages` dešifruje Keystorem a u delší
     // konverzace by to na hlavním vlákně znamenalo zamrznutí až ANR.
     var messages by remember(id) { mutableStateOf(emptyList<ChatMessage>()) }
@@ -199,7 +203,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         ActivityResultContracts.PickVisualMedia()
     ) { uri -> if (uri != null) sendImage(uri) }
 
-    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    // rememberSaveable: při focení může systém proces zabít (málo RAM). Bez
+    // uložení by se po návratu cameraUri ztratilo a pořízená fotka by se tiše
+    // zahodila. Uri je Parcelable, takže se uloží samo.
+    var cameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { ok -> val u = cameraUri; if (ok && u != null) sendImage(u) }

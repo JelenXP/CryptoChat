@@ -149,6 +149,11 @@ object RelayClient {
                 Log.i(TAG, "onion $method -> HTTP ${r.first} " +
                     "(${System.currentTimeMillis() - t0} ms, pokus ${attempt + 1})")
                 return r
+            } catch (e: AfterSendException) {
+                // Zápis u serveru možná prošel - opakováním bychom ho zdvojili.
+                Log.w(TAG, "onion $method selhal až po odeslání, neopakuji: " +
+                    "${e.cause?.javaClass?.simpleName}: ${e.cause?.message}")
+                throw e
             } catch (e: Exception) {
                 last = e
                 Log.w(TAG, "onion $method selhal (pokus ${attempt + 1}/$attempts): " +
@@ -286,10 +291,19 @@ object RelayClient {
             if (body != null) out.write(body)
             out.flush()
 
-            val response = input.readBytes()
-            return parseHttpResponse(response)
+            // Od téhle chvíle už požadavek u serveru JE. Selhání při čtení
+            // odpovědi proto označíme zvlášť - opakovat PUT by znamenalo uložit
+            // blob podruhé a příjemci by zpráva dorazila dvakrát.
+            return try {
+                parseHttpResponse(input.readBytes())
+            } catch (e: Exception) {
+                throw AfterSendException(e)
+            }
         }
     }
+
+    /** Selhání, které nastalo až po odeslání požadavku (viz [socksRequest]). */
+    private class AfterSendException(cause: Throwable) : IOException(cause)
 
     /** Přečte přesně [n] bajtů, nebo vyhodí výjimku při předčasném konci. */
     private fun readExactly(input: InputStream, n: Int): ByteArray {

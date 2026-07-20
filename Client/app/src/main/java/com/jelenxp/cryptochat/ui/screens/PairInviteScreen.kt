@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,16 +54,22 @@ fun PairInviteScreen(
     val baseUrl = remember { settings.getRelayUrl() }
 
     // Jednorázová pozvánka (kanonická podoba pro výpočty, formát jen pro zobrazení).
-    val invite = remember { Pairing.generateInvite() }
+    // MUSÍ přežít otočení telefonu - jinak by se vygeneroval nový kód do jiné
+    // schránky a ten, který protistrana právě opisuje, by přestal platit.
+    val invite = rememberSaveable { Pairing.generateInvite() }
 
-    var phase by remember { mutableStateOf(if (baseUrl.isBlank()) InvitePhase.NO_RELAY else InvitePhase.WAITING) }
-    var sas by remember { mutableStateOf("") }
-    var aesKey by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf("") }
+    var phase by rememberSaveable { mutableStateOf(if (baseUrl.isBlank()) InvitePhase.NO_RELAY else InvitePhase.WAITING) }
+    var sas by rememberSaveable { mutableStateOf("") }
+    var aesKey by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf("") }
 
     // Nahraje veřejný klíč do rendezvous schránky a čeká na odpověď protistrany.
     LaunchedEffect(Unit) {
         if (baseUrl.isBlank()) return@LaunchedEffect
+        // Po otočení telefonu se efekt spustí znovu. Když už je klíč dohodnutý,
+        // nesmí se protokol rozjet nanovo - přepsal by rendezvous schránku a
+        // protistraně by ověření selhalo.
+        if (aesKey.isNotEmpty()) return@LaunchedEffect
         try {
             val keyPair = withContext(Dispatchers.IO) { PostQuantumKem.generateKeyPair() }
             val inviteKey = RelayCrypto.inviteKeyBase64(invite)

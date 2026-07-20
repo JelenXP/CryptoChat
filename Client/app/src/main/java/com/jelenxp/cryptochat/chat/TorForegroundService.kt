@@ -76,6 +76,9 @@ class TorForegroundService : Service() {
             // teprve pak spusť pollování kontaktů. Jinak by health check i všechny
             // polly cold-connectily naráz a konkurovaly si o stavbu prvního okruhu
             // (nestabilní / pomalé první připojení).
+            // Nedokončené přenosy z dřívějška (přerušené, se ztraceným manifestem…)
+            // jinak leží na disku navždy. Den je bezpečně za TTL relaye.
+            runCatching { MediaTransfers.purgeStale(this@TorForegroundService, 24L * 60 * 60 * 1000) }
             runCatching { warmUp() }
             while (isActive) {
                 // Celý tik hlídače je pod try/catch: jediná nechycená výjimka by
@@ -223,6 +226,18 @@ class TorForegroundService : Service() {
         // spustit, ať spojení na pozadí přežije. Funguje to, když je appka vyjmutá
         // z optimalizace baterie (jinak ji systém stejně zabije - viz onboarding).
         try {
+            // Restart z alarmu NENÍ na Androidu 12+ výjimka z omezení startu
+            // foreground service. Bez vyjmutí z optimalizace baterie by systém
+            // při spuštění vyhodil ForegroundServiceStartNotAllowedException -
+            // a to už mimo tenhle try, takže by to appku shodilo.
+            val power = getSystemService(POWER_SERVICE) as? android.os.PowerManager
+            val exempt = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                power?.isIgnoringBatteryOptimizations(packageName) == true
+            if (!exempt) {
+                Log.i(TAG, "Restart po odebrání z recents přeskočen (chybí výjimka z optimalizace baterie)")
+                super.onTaskRemoved(rootIntent)
+                return
+            }
             val restart = Intent(applicationContext, TorForegroundService::class.java)
             val flags = PendingIntent.FLAG_ONE_SHOT or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)

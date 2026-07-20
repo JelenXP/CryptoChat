@@ -87,8 +87,21 @@ object TorController {
         // sekund) běží na pozadí, výsledek se projeví přes LISTENERS observer výše.
         rt.enqueue(
             action = Action.StartDaemon,
-            onFailure = OnFailure { t -> Log.e(TAG, "Tor StartDaemon selhal", t) },
+            onFailure = OnFailure { t ->
+                Log.e(TAG, "Tor StartDaemon selhal", t)
+                // Runtime MUSÍME zahodit, jinak by `ensureStarted` (které se
+                // vrací hned, když `runtime != null`) bylo napořád no-op a Tor
+                // by se do restartu procesu už nikdy nezkusil nastartovat.
+                forgetRuntime()
+                TorManager.markStopped()
+            },
             onSuccess = OnSuccess.noOp(),
         )
+    }
+
+    /** Zapomene neúspěšný runtime, aby šel start zkusit znovu. */
+    @Synchronized
+    private fun forgetRuntime() {
+        runtime = null
     }
 }

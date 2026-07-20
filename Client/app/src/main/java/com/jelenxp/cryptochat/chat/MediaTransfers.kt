@@ -73,14 +73,38 @@ object MediaTransfers {
     /** Uloží jeden kousek. Vrací true, když už jsou všechny (lze skládat). */
     fun saveChunk(context: Context, fileIdHex: String, index: Int, bytes: ByteArray): Boolean {
         return try {
-            val d = dir(context, fileIdHex)
-            if (!d.isDirectory) return false
-            File(d, index.toString()).writeBytes(bytes)
+            // Adresář zakládáme i BEZ manifestu. Dřív se kousek bez něj zahodil -
+            // jenže server ho po vyzvednutí smazal, takže ztracený manifest
+            // znamenal tiše a nenávratně ztracený soubor. Radši kousky zaparkuj;
+            // až manifest dorazí, jen se k nim doplní metadata.
+            val d = dir(context, fileIdHex).apply { mkdirs() }
             val total = meta(context, fileIdHex)?.optInt("chunks", -1) ?: -1
+            // Index mimo rozsah (poškozený nebo podvržený kousek) by nafoukl
+            // počet přijatých a spustil předčasné „hotovo" - přenos by pak
+            // navždy uvázl ve stavu FAILED.
+            if (total > 0 && index >= total) return false
+            File(d, index.toString()).writeBytes(bytes)
             total > 0 && receivedCount(context, fileIdHex) >= total
         } catch (e: Exception) {
             Log.e(TAG, "Uložení kousku selhalo", e)
             false
+        }
+    }
+
+    /**
+     * Uklidí rozpracované přenosy starší než [maxAgeMs]. Přerušený přenos by
+     * jinak nechal v `files/media_tmp/` desítky MB navždy - to je hlavní důvod,
+     * proč appka bez jediného kontaktu umí nabobtnat na stovky MB.
+     */
+    fun purgeStale(context: Context, maxAgeMs: Long) {
+        try {
+            val root = File(context.filesDir, TMP_DIR)
+            val cutoff = System.currentTimeMillis() - maxAgeMs
+            root.listFiles()?.forEach { d ->
+                if (d.isDirectory && d.lastModified() < cutoff) d.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Úklid rozpracovaných přenosů selhal", e)
         }
     }
 
