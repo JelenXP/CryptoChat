@@ -170,6 +170,15 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e("MainActivity", "Nepodařilo se spustit chat service", e)
         }
+        // Záchranná síť: kdo v úvodním průvodci klikl „Přeskočit", nikdy o povolení
+        // notifikací požádán nebyl - a bez něj mu na Androidu 13+ nepřijde ani jedna
+        // (messenger by tak tiše nefungoval). Systém dialog ukáže jen jednou, pak
+        // je volání neškodné no-op.
+        try {
+            maybeRequestNotificationPermission()
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Žádost o povolení notifikací selhala", e)
+        }
     }
 
     /** Na Androidu 13+ si vyžádá povolení notifikací (jinak by je systém skryl). */

@@ -28,7 +28,26 @@ object TorManager {
     var ready: Boolean = false
         private set
 
+    /**
+     * Dokončil Tor bootstrap (100 %)?
+     *
+     * SOCKS listener se otevře výrazně dřív, než má Tor postavené okruhy. Posílat
+     * do té doby požadavky na onion službu nemá smysl - connect se utne timeoutem
+     * a další pokus začíná od nuly, takže první připojení trvalo i minuty.
+     */
+    @Volatile
+    var bootstrapped: Boolean = false
+        private set
+
     private val lock = Object()
+
+    /** Zaznamená dokončený bootstrap a probudí čekatele. */
+    fun markBootstrapped() {
+        synchronized(lock) {
+            bootstrapped = true
+            lock.notifyAll()
+        }
+    }
 
     /**
      * Nastaví adresu SOCKS proxy (volá se z observeru Toru po otevření listeneru)
@@ -47,6 +66,7 @@ object TorManager {
     fun markStopped() {
         synchronized(lock) {
             ready = false
+            bootstrapped = false
             socksPort = -1
             lock.notifyAll()
         }
@@ -59,9 +79,12 @@ object TorManager {
      */
     fun awaitReady(timeoutMs: Long): Boolean {
         synchronized(lock) {
-            if (ready && socksPort > 0) return true
+            // Čekáme i na dokončený bootstrap, ne jen na otevřený listener -
+            // jinak by první požadavek odešel do nehotové sítě a utnul se.
+            fun usable() = ready && socksPort > 0 && bootstrapped
+            if (usable()) return true
             val deadline = System.currentTimeMillis() + timeoutMs
-            while (!(ready && socksPort > 0)) {
+            while (!usable()) {
                 val remaining = deadline - System.currentTimeMillis()
                 if (remaining <= 0L) return false
                 try {

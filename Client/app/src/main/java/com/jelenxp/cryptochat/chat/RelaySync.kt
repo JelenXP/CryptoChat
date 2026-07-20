@@ -298,7 +298,11 @@ object RelaySync {
             // Každý blob zvlášť: výjimka u jednoho (poškozená data, chyba zápisu)
             // nesmí shodit zpracování zbytku dávky - ty zprávy už relay smazal,
             // takže by byly nenávratně pryč.
-            for (blob in pending + blobs) try {
+            // Odložené bloby si nesou čas prvního odložení, ať se jim při
+            // opakovaném uložení neresetuje stáří; čerstvé ze sítě začínají teď.
+            val batch = pending + blobs.map { BlobQuarantine.Pending(it, System.currentTimeMillis()) }
+            for (item in batch) try {
+                val blob = item.blob
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
                 if (!ReplayGuard.isNew(context, contact.id, blob)) continue
                 // Zprávu s jiným MAJOR nemá smysl zkoušet otevřít - jen si
@@ -312,7 +316,7 @@ object RelaySync {
                         "nekompatibilní verze formátu (major=${WireCompat.readMajor(blob)}), " +
                             "blob odložen do karantény"
                     )
-                    BlobQuarantine.save(context, contact.id, blob)
+                    BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
                     continue
                 }
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
@@ -323,8 +327,11 @@ object RelaySync {
                 // proto se až tady zapíše i otisk proti replay.
                 if (decoded != null) {
                     WireCompat.notePeerMinor(context, contact.id, decoded.senderMinor)
-                    ReplayGuard.remember(context, contact.id, blob)
                 }
+                // Otisk proti replay se zapíše AŽ po úspěšném zpracování (viz níž).
+                // Kdyby se zapsal teď a uložení selhalo, další pokus by blob
+                // zahodil jako duplicitu - a potvrzení by ho smazalo ze serveru.
+                val safeBefore = allSafe
                 when (val opened = decoded?.content) {
                     is ChatEnvelope.Opened.Text -> arrived(
                         ChatMessage(
@@ -337,7 +344,15 @@ object RelaySync {
                     )
 
                     is ChatEnvelope.Opened.Image -> {
-                        val path = ChatMediaStore.save(context, opened.bytes) ?: continue
+                        val path = ChatMediaStore.save(context, opened.bytes)
+                        if (path == null) {
+                            // Zápis fotky selhal (plný disk). NEZAHAZOVAT - odlož
+                            // a nepotvrzuj, ať ji server podrží na další pokus.
+                            DiagnosticsLog.error(TAG, "uložení přijaté fotky selhalo")
+                            BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
+                            allSafe = false
+                            continue
+                        }
                         arrived(
                             ChatMessage(
                                 id = UUID.randomUUID().toString(),
@@ -429,14 +444,22 @@ object RelaySync {
                             "blob se nepodařilo dešifrovat (${blob.size} B, " +
                                 "major=${WireCompat.readMajor(blob)}), odložen do karantény"
                         )
-                        BlobQuarantine.save(context, contact.id, blob)
+                        BlobQuarantine.save(context, contact.id, blob, item.firstSeenAt)
                     }
+                }
+                // Zpracováno bez zádrhelu - teprve teď si blob zapamatuj,
+                // ať ho příště nezpracujeme podruhé.
+                if (decoded != null && allSafe == safeBefore) {
+                    ReplayGuard.remember(context, contact.id, blob)
                 }
             } catch (ex: Exception) {
                 // Jeden vadný blob nesmí shodit zbytek dávky.
                 android.util.Log.w("RelaySync", "Zpracování blobu selhalo, pokračuji", ex)
                 DiagnosticsLog.warn(TAG, "zpracování blobu selhalo (${ex.javaClass.simpleName})")
-                allSafe = false
+                // Blob odlož: pokud přišel z karantény, `takeAll` ho z disku už
+                // smazal a ze serveru je dávno pryč - bez tohohle by byl ztracený.
+                // Díky odložení smíme dávku potvrdit a schránka se neucpe.
+                runCatching { BlobQuarantine.save(context, contact.id, item.blob, item.firstSeenAt) }
             }
 
             // Potvrzení POSÍLÁME JEN když je celá dávka bezpečně uložená nebo

@@ -79,17 +79,22 @@ object TorController {
             // mohly obsahovat cílové adresy. U WARN/ERR se navíc `.onion` adresy
             // maskují (DiagnosticsLog.redact) a text se krátí.
             observerStatic(TorEvent.NOTICE, OnEvent.Executor.Immediate) { line ->
-                Log.i(TAG, "tor NOTICE: $line")
+                // Syrový řádek NELOGOVAT - obsahuje cílovou .onion adresu.
+                // R8 je vypnutý, takže v release buildu by zůstal v logcatu.
                 BOOTSTRAP_RE.find(line)?.let { match ->
-                    DiagnosticsLog.log(TAG, "bootstrap Toru ${match.groupValues[1]} %")
+                    val percent = match.groupValues[1]
+                    DiagnosticsLog.log(TAG, "bootstrap Toru $percent %")
+                    // Teprve po 100 % má Tor postavené okruhy a má smysl posílat
+                    // požadavky na onion službu (viz TorManager.awaitReady).
+                    if (percent == "100") TorManager.markBootstrapped()
                 }
             }
             observerStatic(TorEvent.WARN, OnEvent.Executor.Immediate) { line ->
-                Log.w(TAG, "tor WARN: $line")
+                Log.w(TAG, "tor WARN: ${DiagnosticsLog.redact(line).take(160)}")
                 DiagnosticsLog.warn(TAG, "tor WARN: ${DiagnosticsLog.redact(line).take(160)}")
             }
             observerStatic(TorEvent.ERR, OnEvent.Executor.Immediate) { line ->
-                Log.e(TAG, "tor ERR: $line")
+                Log.e(TAG, "tor ERR: ${DiagnosticsLog.redact(line).take(160)}")
                 DiagnosticsLog.error(TAG, "tor ERR: ${DiagnosticsLog.redact(line).take(160)}")
             }
             required(TorEvent.NOTICE)

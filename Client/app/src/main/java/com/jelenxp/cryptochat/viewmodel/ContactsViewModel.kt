@@ -2,6 +2,7 @@ package com.jelenxp.cryptochat.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.ReplayGuard
 import com.jelenxp.cryptochat.chat.WireCompat
@@ -42,6 +43,8 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         runCatching { ChatRepository(ctx).clear(id) }
         runCatching { ReplayGuard.clear(ctx, id) }
         runCatching { WireCompat.clear(ctx, id) }
+        runCatching { BlobQuarantine.clear(ctx, id) }
+        runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
         refresh()
         return success
     }
@@ -49,11 +52,6 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     fun getContact(id: String): Contact? =
         _contacts.value.find { it.id == id } ?: repository.getContacts().find { it.id == id }
 
-    /**
-     * Uloží právě vyměněný klíč. Když je [contactId] daný a kontakt existuje,
-     * jen mu vymění klíč (zachová jméno i fotku - re-key / obnova klíče). Jinak
-     * založí nový kontakt s novým id. Vrátí true při úspěchu.
-     */
     /**
      * Uloží kontakt po výměně klíče.
      *

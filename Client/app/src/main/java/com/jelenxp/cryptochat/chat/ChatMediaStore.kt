@@ -193,7 +193,7 @@ object ChatMediaStore {
         var sample = 1
         var w = width
         var h = height
-        while (w / 2 >= target && h / 2 >= target) {
+        while (w / 2 >= target || h / 2 >= target) {
             w /= 2
             h /= 2
             sample *= 2

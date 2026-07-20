@@ -35,8 +35,15 @@ object RelayClient {
     // čtení odpovědi. První připojení na službu bývá pomalé - proto radši KRATŠÍ
     // connect timeout a VÍC pokusů: jakmile Tor stáhne deskriptor služby, další
     // pokus se „chytne" hned, místo aby první visel na plném timeoutu.
-    /** Timeout na navázání onion okruhu (jeden pokus). */
+    /** Timeout na navázání onion okruhu (opakovaný pokus). */
     private const val ONION_CONNECT_TIMEOUT_MS = 18_000
+
+    /**
+     * Timeout PRVNÍHO pokusu. Studený Tor musí stáhnout deskriptor onion služby
+     * a domluvit rendezvous - to běžně trvá déle než 18 s. Utnout ho a zkoušet
+     * znovu je horší než počkat: každý další pokus začíná od nuly.
+     */
+    private const val ONION_FIRST_CONNECT_TIMEOUT_MS = 45_000
 
     /**
      * Výchozí timeout na čtení odpovědi (u long-pollu se prodlouží). Delší kvůli
@@ -77,7 +84,7 @@ object RelayClient {
     fun put(baseUrl: String, mailboxId: String, blob: ByteArray): Boolean {
         val target = Target.parse(baseUrl, "/m/$mailboxId")
         val ok = if (TorManager.isOnion(target.host)) {
-            onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS).code in 200..204
+            onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS, isolation = mailboxId).code in 200..204
         } else {
             directPut(baseUrl, mailboxId, blob)
         }
@@ -95,7 +102,7 @@ object RelayClient {
     fun postJson(baseUrl: String, path: String, json: ByteArray): Int {
         val target = Target.parse(baseUrl, path)
         return if (TorManager.isOnion(target.host)) {
-            onionRequest(target, "POST", json, ONION_READ_TIMEOUT_MS, contentType = JSON_CONTENT_TYPE).code
+            onionRequest(target, "POST", json, ONION_READ_TIMEOUT_MS, contentType = JSON_CONTENT_TYPE, isolation = "report").code
         } else {
             val conn = (URL(baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -140,7 +147,7 @@ object RelayClient {
             // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
             val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
             val attempts = if (waitSeconds > 0) ONION_POLL_ATTEMPTS else ONION_ATTEMPTS
-            val response = onionRequest(target, "GET", null, readTimeout, attempts)
+            val response = onionRequest(target, "GET", null, readTimeout, attempts, isolation = mailboxId)
             when (response.code) {
                 204 -> Fetched(emptyList(), -1)
                 200 -> Fetched(unframe(response.body), response.seq())
@@ -165,7 +172,7 @@ object RelayClient {
         val target = Target.parse(baseUrl, "/m/$mailboxId?upto=$seq")
         val acked = try {
             if (TorManager.isOnion(target.host)) {
-                onionRequest(target, "DELETE", null, ONION_READ_TIMEOUT_MS).code in 200..204
+                onionRequest(target, "DELETE", null, ONION_READ_TIMEOUT_MS, isolation = mailboxId).code in 200..204
             } else {
                 val url = URL(baseUrl.trimEnd('/') + "/m/" + mailboxId + "?upto=" + seq)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -195,7 +202,7 @@ object RelayClient {
         val ok = try {
             val target = Target.parse(baseUrl, "/health")
             if (TorManager.isOnion(target.host)) {
-                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS).code == 200
+                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS, isolation = "health").code == 200
             } else {
                 val conn = (URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection)
                 try {
@@ -230,7 +237,8 @@ object RelayClient {
         body: ByteArray?,
         readTimeoutMs: Int,
         attempts: Int = ONION_ATTEMPTS,
-        contentType: String = OCTET_CONTENT_TYPE
+        contentType: String = OCTET_CONTENT_TYPE,
+        isolation: String = "default"
     ): Response {
         if (!TorManager.awaitReady(TOR_READY_TIMEOUT_MS)) {
             Log.w(TAG, "onion $method: Tor není včas připravený")
@@ -245,8 +253,15 @@ object RelayClient {
         repeat(attempts) { attempt ->
             try {
                 val t0 = System.currentTimeMillis()
+                // Prvnímu pokusu dáme delší čas na navázání: studený Tor musí
+                // stáhnout deskriptor onion služby a domluvit rendezvous, což
+                // trvá déle než běžný connect. Krátký timeout tady znamenal, že
+                // se první pokus utnul těsně před cílem a celé připojení se
+                // protáhlo na minuty (5 × 18 s marných pokusů).
+                val connectTimeout =
+                    if (attempt == 0) ONION_FIRST_CONNECT_TIMEOUT_MS else ONION_CONNECT_TIMEOUT_MS
                 val r = socksRequest(
-                    proxy, target, method, body, ONION_CONNECT_TIMEOUT_MS, readTimeoutMs, contentType
+                    proxy, target, method, body, connectTimeout, readTimeoutMs, contentType, isolation
                 )
                 val elapsed = System.currentTimeMillis() - t0
                 Log.i(TAG, "onion $method -> HTTP ${r.code} (${elapsed} ms, pokus ${attempt + 1})")
@@ -364,7 +379,8 @@ object RelayClient {
         body: ByteArray?,
         connectTimeoutMs: Int = TIMEOUT_MS,
         readTimeoutMs: Int = TIMEOUT_MS,
-        contentType: String = OCTET_CONTENT_TYPE
+        contentType: String = OCTET_CONTENT_TYPE,
+        isolation: String = "default"
     ): Response {
         Socket().use { socket ->
             socket.connect(InetSocketAddress(proxy.first, proxy.second), connectTimeoutMs)
@@ -374,12 +390,22 @@ object RelayClient {
             val out = socket.getOutputStream()
             val input = socket.getInputStream()
 
-            // SOCKS5 pozdrav: verze 5, 1 metoda, bez autentizace.
-            out.write(byteArrayOf(0x05, 0x01, 0x00))
+            // SOCKS5 pozdrav. Nabízíme "bez autentizace" i "jméno/heslo" - Tor má
+            // ve výchozím stavu zapnuté IsolateSOCKSAuth, takže požadavky s RŮZNÝM
+            // jménem posílá PŘES RŮZNÉ OKRUHY.
+            //
+            // Proč na tom záleží: bez izolace by odchozí PUT (schránka dir 0) a
+            // příchozí GET (schránka dir 1) dorazily k onion službě přes tentýž
+            // okruh - a relay by si je spojil, tedy zjistil, kdo komu píše. To je
+            // přesně to, čemu má celá appka bránit.
+            out.write(byteArrayOf(0x05, 0x02, 0x00, 0x02))
             out.flush()
             val greeting = readExactly(input, 2)
-            if (greeting[0].toInt() != 0x05 || greeting[1].toInt() != 0x00) {
-                throw IOException("SOCKS5 handshake selhal")
+            if (greeting[0].toInt() != 0x05) throw IOException("SOCKS5 handshake selhal")
+            when (greeting[1].toInt() and 0xFF) {
+                0x00 -> { /* bez autentizace - izolace nebude, ale spojení funguje */ }
+                0x02 -> socksUserPassAuth(out, input, isolation)
+                else -> throw IOException("SOCKS5 handshake selhal (metoda ${greeting[1].toInt()})")
             }
 
             // CONNECT na doménu (ATYP 0x03) - host řeší proxy (Tor).
@@ -455,6 +481,25 @@ object RelayClient {
         return out.toByteArray()
     }
 
+    /**
+     * SOCKS5 autentizace jménem/heslem (RFC 1929). Tor obsah neověřuje - používá
+     * ho jen jako klíč izolace okruhů, takže heslo může být cokoli.
+     */
+    private fun socksUserPassAuth(out: java.io.OutputStream, input: InputStream, isolation: String) {
+        val user = isolation.take(255).toByteArray(Charsets.US_ASCII)
+        val pass = byteArrayOf(0x78) // "x" - Tor heslo neřeší
+        val auth = ByteArrayOutputStream()
+        auth.write(0x01)
+        auth.write(user.size)
+        auth.write(user)
+        auth.write(pass.size)
+        auth.write(pass)
+        out.write(auth.toByteArray())
+        out.flush()
+        val reply = readExactly(input, 2)
+        if (reply[1].toInt() != 0x00) throw IOException("SOCKS5 autentizace selhala")
+    }
+
     /** Přečte přesně [n] bajtů, nebo vyhodí výjimku při předčasném konci. */
     private fun readExactly(input: InputStream, n: Int): ByteArray {
         val buf = ByteArray(n)
@@ -491,7 +536,15 @@ object RelayClient {
             if (i <= 0) null
             else line.substring(0, i).trim().lowercase() to line.substring(i + 1).trim()
         }.toMap()
-        return Response(code, headers, data.copyOfRange(sep + 4, data.size))
+        val body = data.copyOfRange(sep + 4, data.size)
+        // Useknuté tělo (rozpadlý okruh) vypadá jako čistý konec streamu. Bez téhle
+        // kontroly by klient zpracoval jen část blobů, ale potvrdil celou dávku -
+        // a server by smazal i to, co nikdy nedorazilo.
+        val declared = headers["content-length"]?.toIntOrNull()
+        if (declared != null && body.size != declared) {
+            throw IOException("Neúplná odpověď (${body.size} z $declared B)")
+        }
+        return Response(code, headers, body)
     }
 
     /** Najde index prázdného řádku (\r\n\r\n) oddělujícího hlavičky od těla. */

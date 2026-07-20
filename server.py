@@ -31,6 +31,7 @@ import re
 import secrets
 import struct
 import threading
+import tempfile
 import time
 import urllib.parse
 from collections import deque
@@ -94,7 +95,37 @@ LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "90"))                     
 # z obrazovky "Nahlasit chybu" a vidi predem, co presne odesle. Obsah je uz od
 # klienta anonymni (zadne zpravy, klice, jmena kontaktu ani ID schranek) a chodi
 # pres Tor, takze o odesilateli nic nevime - a nic o nem ani neukladame.
-REPORTS_DIR = os.environ.get("CC_REPORTS_DIR", "./reports")
+def _pick_reports_dir():
+    """Vybere prvni ZAPISOVATELNY adresar pro hlaseni chyb.
+
+    Sluzba bezi pod vlastnim uzivatelem a s WorkingDirectory v /opt, ktere patri
+    rootovi - relativni "./reports" tam nejde vytvorit a kazde hlaseni koncilo
+    chybou 500. Zkousime proto poradi kandidatu a prvni funkcni si necháme.
+    Explicitni CC_REPORTS_DIR ma vzdy prednost.
+    """
+    candidates = []
+    explicit = os.environ.get("CC_REPORTS_DIR")
+    if explicit:
+        candidates.append(explicit)
+    candidates.append("/var/lib/cryptochat-relay/reports")
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        candidates.append(os.path.join(home, "cryptochat-reports"))
+    candidates.append(os.path.join(tempfile.gettempdir(), "cryptochat-reports"))
+    for path in candidates:
+        try:
+            os.makedirs(path, exist_ok=True)
+            probe = os.path.join(path, ".write-test")
+            with open(probe, "wb") as handle:
+                handle.write(b"x")
+            os.remove(probe)
+            return path
+        except Exception:
+            continue
+    return None
+
+
+REPORTS_DIR = _pick_reports_dir()
 
 # Strop velikosti jednoho hlaseni. Klient si telo sam zkracuje pod tuto mez.
 MAX_REPORT_SIZE = int(os.environ.get("CC_MAX_REPORT_SIZE", str(256 * 1024)))   # 256 KB
@@ -291,6 +322,8 @@ def store_report(body: bytes) -> bool:
     Vraci True pri uspechu. Chybu zapisu NIKDY nepusti ven - hlaseni chyby nesmi
     shodit relay, ktery jinak dorucuje zpravy.
     """
+    if REPORTS_DIR is None:
+        return False
     try:
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
         folder = os.path.join(REPORTS_DIR, stamp + "-" + secrets.token_hex(4))
@@ -602,7 +635,7 @@ def main():
     print(f"CryptoChat relay bezi na http://{HOST}:{PORT}")
     print(f"  max blob: {MAX_BLOB_SIZE} B | TTL: {TTL_SECONDS} s | "
           f"max pamet: {MAX_TOTAL_BYTES} B")
-    print(f"  hlaseni chyb (POST /report) -> {os.path.abspath(REPORTS_DIR)}")
+    print("  hlaseni chyb (POST /report) -> " + (os.path.abspath(REPORTS_DIR) if REPORTS_DIR else "VYPNUTO (zadny zapisovatelny adresar)"))
     print("  (Ctrl+C pro ukonceni)")
     try:
         server.serve_forever()
