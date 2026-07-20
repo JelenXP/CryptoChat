@@ -257,22 +257,24 @@ object RelaySync {
             fun arrived(message: ChatMessage) {
                 repo.append(contact.id, message)
                 if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
-                // Zpráva se opravdu otevřela - protějšek tedy mluví naším
-                // formátem (bajt verze sám o sobě by nestačil, mohl být poškozený).
-                WireCompat.markCompatible(context, contact.id)
                 n++
             }
 
             for (blob in blobs) {
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
                 if (!ReplayGuard.isNew(context, contact.id, blob)) continue
-                // Zprávu z jiné verze formátu nemá smysl zkoušet otevřít - jen
-                // si poznamenej, kdo je pozadu, ať to appka umí uživateli říct
+                // Zprávu s jiným MAJOR nemá smysl zkoušet otevřít - jen si
+                // poznamenej, kdo je pozadu, ať to appka umí uživateli říct
                 // (dřív se takový blob tiše zahodil a "zprávy prostě nechodily").
-                if (!WireCompat.accept(context, contact.id, blob)) continue
+                if (!WireCompat.acceptMajor(context, contact.id, blob)) continue
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
-                when (val opened = ChatEnvelope.open(blob, key, dir)) {
+                val decoded = ChatEnvelope.open(blob, key, dir)
+                // Minor odesílatele je až uvnitř šifry, takže je známý teprve teď.
+                if (decoded != null) {
+                    WireCompat.notePeerMinor(context, contact.id, decoded.senderMinor)
+                }
+                when (val opened = decoded?.content) {
                     is ChatEnvelope.Opened.Text -> arrived(
                         ChatMessage(
                             id = UUID.randomUUID().toString(),

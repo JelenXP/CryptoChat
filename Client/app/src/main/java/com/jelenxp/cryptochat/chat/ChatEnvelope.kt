@@ -32,7 +32,10 @@ object ChatEnvelope {
 
     private const val IV_SIZE_BYTES = 12
     private const val GCM_TAG_BITS = 128
-    private const val HEADER = 13 // 1B kind + 8B timestamp + 4B délka
+    // 1B kind + 1B minor verze + 8B timestamp + 4B délka.
+    // Minor je tady (uvnitř šifry) schválně: číst ho jde jen když sedí major,
+    // a tehdy dešifrování funguje. Relayi tak nepřibude žádná metadata.
+    private const val HEADER = 14
 
     private const val KIND_TEXT: Byte = 0
     private const val KIND_IMAGE: Byte = 1
@@ -142,37 +145,45 @@ object ChatEnvelope {
      * Dešifruje a rozbalí blob. Vrátí null, když blob nesedí (cizí klíč,
      * poškození, jiný formát) - volající ho pak jen zahodí.
      */
-    fun open(blob: ByteArray, keyBase64: String, dir: Int): Opened? {
+    fun open(blob: ByteArray, keyBase64: String, dir: Int): Decoded? {
         return try {
-            // [1B verze formátu][12B IV][ciphertext+tag]
+            // [1B major verze][12B IV][ciphertext+tag]
             if (blob.size <= 1 + IV_SIZE_BYTES) return null
-            val wire = blob[0].toInt() and 0xFF
-            if (wire != WireCompat.WIRE_VERSION) return null
+            val major = blob[0].toInt() and 0xFF
+            if (major != WireCompat.WIRE_MAJOR) return null
             val iv = blob.copyOfRange(1, 1 + IV_SIZE_BYTES)
             val cipherBytes = blob.copyOfRange(1 + IV_SIZE_BYTES, blob.size)
             val key = CryptoManager.keyFromBase64(keyBase64)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.updateAAD(aad(dir, wire))
+            cipher.updateAAD(aad(dir, major))
             val payload = cipher.doFinal(cipherBytes)
             if (payload.size < HEADER) return null
             val kind = payload[0]
-            val buf = ByteBuffer.wrap(payload, 1, HEADER - 1)
+            val senderMinor = payload[1].toInt() and 0xFF
+            val buf = ByteBuffer.wrap(payload, 2, HEADER - 2)
             val timestamp = buf.long
             val len = buf.int
             if (len < 0 || HEADER + len > payload.size) return null
             val data = payload.copyOfRange(HEADER, HEADER + len)
-            when (kind) {
+            val content = when (kind) {
                 KIND_IMAGE -> Opened.Image(timestamp, data)
                 KIND_FILE_MANIFEST -> parseManifest(timestamp, data)
                 KIND_FILE_CHUNK -> parseChunk(timestamp, data)
                 KIND_TEXT -> Opened.Text(timestamp, String(data, Charsets.UTF_8))
                 else -> null
-            }
+            } ?: return null
+            Decoded(senderMinor, content)
         } catch (e: Exception) {
             null
         }
     }
+
+    /**
+     * Rozšifrovaná zpráva i s minor verzí odesílatele. Minor je uvnitř šifry,
+     * takže je autentizovaný - po cestě ho nejde podvrhnout.
+     */
+    data class Decoded(val senderMinor: Int, val content: Opened)
 
     private fun parseManifest(timestamp: Long, data: ByteArray): Opened.FileManifest? {
         return try {
@@ -208,7 +219,8 @@ object ChatEnvelope {
 
     private fun writeHeader(target: ByteArray, kind: Byte, timestamp: Long, dataLen: Int) {
         target[0] = kind
-        ByteBuffer.wrap(target, 1, HEADER - 1).putLong(timestamp).putInt(dataLen)
+        target[1] = WireCompat.WIRE_MINOR.toByte()
+        ByteBuffer.wrap(target, 2, HEADER - 2).putLong(timestamp).putInt(dataLen)
     }
 
     private fun encrypt(payload: ByteArray, keyBase64: String, dir: Int): ByteArray {

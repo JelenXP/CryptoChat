@@ -348,8 +348,10 @@
     <string name="chat_retry_hint">Nedoručeno — klepni pro nový pokus</string>
     <string name="chat_last_you">Ty: %1$s</string>
     <string name="chat_preview_none">Zatím žádné zprávy</string>
-    <string name="chat_peer_outdated">Protějšek má starší verzi aplikace. Jeho zprávy nejde přečíst a vaše k němu nedorazí, dokud si ji neaktualizuje.</string>
-    <string name="chat_peer_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChatServer, aby si šlo zase psát.</string>
+    <string name="chat_peer_major_outdated">Protějšek má starší verzi aplikace. Zprávy si navzájem nepřečtete, dokud si ji neaktualizuje.</string>
+    <string name="chat_peer_major_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChatServer, aby si šlo zase psát.</string>
+    <string name="chat_peer_minor_outdated">Protějšek má o něco starší verzi. Zprávy chodí, ale některé novější funkce nemusí fungovat.</string>
+    <string name="chat_peer_minor_newer">Protějšek má novější verzi. Zprávy chodí, ale může používat funkce, které vaše aplikace zatím nezná.</string>
     <string name="chat_preview_photo">📷 Fotka</string>
     <string name="content_desc_attach">Přidat fotku</string>
     <string name="content_desc_image">Fotka</string>

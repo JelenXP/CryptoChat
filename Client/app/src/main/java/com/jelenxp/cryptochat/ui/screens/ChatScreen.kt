@@ -292,10 +292,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 ChatNotice(stringResource(R.string.chat_notice_no_server))
             } else when (peerCompat) {
                 // Rozdílný formát obálky: bez tohohle by zprávy jen tiše mizely.
-                WireCompat.Peer.OUTDATED ->
-                    ChatNotice(stringResource(R.string.chat_peer_outdated))
-                WireCompat.Peer.NEWER ->
-                    ChatNotice(stringResource(R.string.chat_peer_newer))
+                // MAJOR = chat nefunguje, MINOR = funguje, jen chybí novinka.
+                WireCompat.Peer.MAJOR_OUTDATED ->
+                    ChatNotice(stringResource(R.string.chat_peer_major_outdated))
+                WireCompat.Peer.MAJOR_NEWER ->
+                    ChatNotice(stringResource(R.string.chat_peer_major_newer))
+                WireCompat.Peer.MINOR_OUTDATED ->
+                    ChatNotice(stringResource(R.string.chat_peer_minor_outdated))
+                WireCompat.Peer.MINOR_NEWER ->
+                    ChatNotice(stringResource(R.string.chat_peer_minor_newer))
                 WireCompat.Peer.OK -> {}
             }
 
