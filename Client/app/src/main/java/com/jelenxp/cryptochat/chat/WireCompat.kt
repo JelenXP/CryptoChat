@@ -27,6 +27,36 @@ import androidx.compose.runtime.mutableStateMapOf
  *
  * Co relay uvidí: jedno číslo (major), stejné pro všechny uživatele dané verze.
  * Nerozlišuje lidi ani konverzace.
+ *
+ * ## Pravidla pro přidávání novinek (PLATÍ NAVŽDY)
+ *
+ * Tahle pravidla existují proto, aby starší verze appky novinku **přehlédla**
+ * místo aby o zprávu přišla. Dřív to takhle nešlo: cokoli nového znamenalo nový
+ * `kind`, který starší appka neuměla zařadit, a blob skončil na 30 dní
+ * v [BlobQuarantine].
+ *
+ *  1. **`kind` je zmrazený.** Hodnoty 0-3 jsou trvalá nosná sada. Nikdy
+ *     nepřidávej další - je to jediná změna, kterou starší verze nepřežije.
+ *  2. **Všechno nové jede v traileru** ([WireExt]), za datovou oblastí, kam
+ *     starší parser nekouká.
+ *  3. **Každá novinka si zvolí strategii degradace:**
+ *     - *ENRICH* - ozdoba normální zprávy (odpověď, formátování). Starší verze
+ *       ukáže obyčejnou zprávu. Nic dalšího není potřeba.
+ *     - *CONTROL* - řídicí zpráva bez obsahu pro uživatele (reakce, potvrzení
+ *       o přečtení). **Musí mít prázdnou datovou oblast** (viz [WireExt.Control]);
+ *       verze, která tu funkci nezná, ji pak tiše zahodí.
+ *     - *FALLBACK* - `CONTROL` a v těle čitelná náhradní věta. Tělo s obsahem
+ *       se zobrazí vždy, takže starší verze ukáže aspoň ji.
+ *     - *SUPPRESS* - protějšku, který to neumí, se to neposílá vůbec
+ *       (viz [peerSupports]).
+ *  4. **Neznámé TLV se přeskakuje**, poškozený trailer se ignoruje a zpráva
+ *     s obsahem se nikdy nezahazuje - kvůli ozdobě se zpráva nesmí ztratit.
+ *     Neznámý `kind` jde do karantény (novější verze ho možná přečte), NE
+ *     k zahození.
+ *  5. **Čísla typů a `feature id` se nerecyklují** (registr ve [WireExt]).
+ *  6. **Zvyš [WIRE_MINOR]** a dopiš řádek do jeho historie.
+ *  7. **Přidej zamražený vzorek do testů** (`ChatEnvelopeGoldenTest`). Roundtrip
+ *     test rozbití formátu NECHYTÍ - zapečetí i otevře stejným kódem.
  */
 object WireCompat {
 
@@ -62,8 +92,11 @@ object WireCompat {
      *
      * Historie:
      *  - 1: text, fotka jedním blobem, soubory po kouscích (manifest + chunky).
+     *  - 2: rozšiřující trailer ([WireExt]) - obecný mechanismus pro novinky,
+     *       stabilní ID zprávy (MSG_ID) u textu a fotek, řídicí zprávy
+     *       (CONTROL) a odlišení „neumím to" od „nejde dešifrovat".
      */
-    const val WIRE_MINOR: Int = 1
+    const val WIRE_MINOR: Int = 2
 
     /** Jak si stojí protějšek oproti nám. */
     enum class Peer {

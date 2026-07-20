@@ -105,7 +105,11 @@ object RelaySync {
             outgoing = true,
             text = text,
             timestamp = System.currentTimeMillis(),
-            status = ChatMessage.Status.SENDING
+            status = ChatMessage.Status.SENDING,
+            // Stabilní ID se vyrábí TEĎ, ne až při odeslání - opakovaný pokus
+            // (`retry`) tak pošle tutéž zprávu se stejným ID a protějšku
+            // nevznikne duplicita.
+            wireId = WireExt.toHex(WireExt.randomMsgId())
         )
         ChatRepository(context).append(contact.id, message)
         return message
@@ -125,7 +129,8 @@ object RelaySync {
             timestamp = System.currentTimeMillis(),
             status = ChatMessage.Status.SENDING,
             kind = ChatMessage.Kind.IMAGE,
-            mediaPath = path
+            mediaPath = path,
+            wireId = WireExt.toHex(WireExt.randomMsgId())
         )
         ChatRepository(context).append(contact.id, message)
         return message
@@ -169,12 +174,17 @@ object RelaySync {
                 false
             } else {
                 val dir = sendDir(contact)
+                // Stabilní ID se veze v traileru obálky. Starší appka (minor 1)
+                // trailer nečte, takže jí zpráva dorazí jako obyčejná - přesně
+                // proto je to tam, kde to je.
+                val msgId = message.wireId?.let { WireExt.fromHex(it) }
                 val blob = if (message.kind == ChatMessage.Kind.IMAGE && message.mediaPath != null) {
                     ChatEnvelope.sealImage(
-                        java.io.File(message.mediaPath).readBytes(), message.timestamp, key, dir
+                        java.io.File(message.mediaPath).readBytes(), message.timestamp, key, dir,
+                        msgId
                     )
                 } else {
-                    ChatEnvelope.seal(message.text, message.timestamp, key, dir)
+                    ChatEnvelope.seal(message.text, message.timestamp, key, dir, msgId)
                 }
                 val mailbox = RelayCrypto.mailboxId(key, dir, currentEpoch())
                 RelayClient.put(baseUrl, mailbox, blob)
@@ -298,16 +308,38 @@ object RelaySync {
             // Nepřečteno počítáme jen když konverzace není zrovna otevřená
             // (otevřený chat si zprávu rovnou přečte).
             fun arrived(message: ChatMessage) {
-                // Když se zápis nepovede, NEhlas příjem - jinak by přišla
-                // notifikace o zprávě, která v historii není.
-                if (!repo.append(contact.id, message)) {
-                    android.util.Log.e("RelaySync", "Zprávu se nepodařilo uložit do historie")
-                    DiagnosticsLog.error(TAG, "zápis zprávy do historie selhal")
-                    allSafe = false
-                    return
+                // Se stabilním ID se dá poznat, že tatáž zpráva dorazila znovu
+                // (ReplayGuard chytí jen shodný blob, ale opakované odeslání má
+                // jiné IV). Duplicitu zahoď, ale považuj ji za úspěch - jinak by
+                // se dávka nikdy nepotvrdila a schránka by se ucpala.
+                val result = if (message.wireId != null) {
+                    repo.appendIfAbsentByWireId(contact.id, message)
+                } else if (repo.append(contact.id, message)) {
+                    ChatRepository.AppendResult.ADDED
+                } else {
+                    ChatRepository.AppendResult.FAILED
                 }
-                if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
-                n++
+                when (result) {
+                    // Když se zápis nepovede, NEhlas příjem - jinak by přišla
+                    // notifikace o zprávě, která v historii není.
+                    ChatRepository.AppendResult.FAILED -> {
+                        android.util.Log.e("RelaySync", "Zprávu se nepodařilo uložit do historie")
+                        DiagnosticsLog.error(TAG, "zápis zprávy do historie selhal")
+                        allSafe = false
+                    }
+                    ChatRepository.AppendResult.DUPLICATE -> {
+                        DiagnosticsLog.log(TAG, "zpráva už v historii je, zahazuji duplicitu")
+                        // Fotka se ukládá na disk ještě před dedupem, takže by po
+                        // duplicitě zůstal soubor, na který nic neodkazuje.
+                        if (message.kind == ChatMessage.Kind.IMAGE) {
+                            message.mediaPath?.let { runCatching { File(it).delete() } }
+                        }
+                    }
+                    ChatRepository.AppendResult.ADDED -> {
+                        if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
+                        n++
+                    }
+                }
             }
 
             // K čerstvým blobům přimíchej ty odložené v karanténě (typicky zprávy
@@ -348,25 +380,44 @@ object RelaySync {
                 }
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
-                val decoded = ChatEnvelope.open(blob, key, dir)
+                val result = ChatEnvelope.open(blob, key, dir)
                 // Minor odesílatele je až uvnitř šifry, takže je známý teprve teď.
-                // Zároveň je to jediný okamžik, kdy je jisté, že blob je pravý -
-                // proto se až tady zapíše i otisk proti replay.
-                if (decoded != null) {
-                    WireCompat.notePeerMinor(context, contact.id, decoded.senderMinor)
+                // Zároveň je to jediný okamžik, kdy je jisté, že blob je pravý.
+                val senderMinor = when (result) {
+                    is ChatEnvelope.Result.Ok -> result.senderMinor
+                    is ChatEnvelope.Result.Unsupported -> result.senderMinor
+                    ChatEnvelope.Result.Unreadable -> null
                 }
+                if (senderMinor != null) {
+                    WireCompat.notePeerMinor(context, contact.id, senderMinor)
+                }
+                // Rozumíme šifře, ale ne obsahu (novější funkce). Karanténa by
+                // nepomohla - opakování to nikdy nerozluští, jen by se 30 dní
+                // zkoušelo dokola. Zahoď, zapamatuj otisk a nech dávku potvrdit.
+                if (result is ChatEnvelope.Result.Unsupported) {
+                    DiagnosticsLog.warn(
+                        TAG,
+                        "zpráva používá funkci, kterou tahle verze neumí " +
+                            "(minor protějšku $senderMinor), zahazuji"
+                    )
+                    ReplayGuard.remember(context, contact.id, blob)
+                    continue
+                }
+                val ok = result as? ChatEnvelope.Result.Ok
                 // Otisk proti replay se zapíše AŽ po úspěšném zpracování (viz níž).
                 // Kdyby se zapsal teď a uložení selhalo, další pokus by blob
                 // zahodil jako duplicitu - a potvrzení by ho smazalo ze serveru.
                 val safeBefore = allSafe
-                when (val opened = decoded?.content) {
+                when (val opened = ok?.content) {
                     is ChatEnvelope.Opened.Text -> arrived(
                         ChatMessage(
                             id = UUID.randomUUID().toString(),
                             outgoing = false,
                             text = opened.text,
                             timestamp = opened.timestamp,
-                            status = ChatMessage.Status.RECEIVED
+                            status = ChatMessage.Status.RECEIVED,
+                            // Volí ho protějšek, proto zvlášť od našeho `id`.
+                            wireId = ok.msgIdHex
                         )
                     )
 
@@ -388,7 +439,8 @@ object RelaySync {
                                 timestamp = opened.timestamp,
                                 status = ChatMessage.Status.RECEIVED,
                                 kind = ChatMessage.Kind.IMAGE,
-                                mediaPath = path
+                                mediaPath = path,
+                                wireId = ok.msgIdHex
                             )
                         )
                     }
@@ -495,7 +547,7 @@ object RelaySync {
                 }
                 // Zpracováno bez zádrhelu - teprve teď si blob zapamatuj,
                 // ať ho příště nezpracujeme podruhé.
-                if (decoded != null && allSafe == safeBefore) {
+                if (ok != null && allSafe == safeBefore) {
                     ReplayGuard.remember(context, contact.id, blob)
                 }
             } catch (ex: Throwable) {

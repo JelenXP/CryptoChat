@@ -18,7 +18,11 @@ import javax.crypto.spec.GCMParameterSpec
  *     odesílatel ho komprimuje pod limit relaye).
  *
  * Formát otevřeného obsahu (uvnitř šifry, chráněný GCM tagem):
- *   [1B kind][8B timestamp BE][4B délka dat BE][data][(u textu) výplň nulami]
+ *   [1B kind][1B minor][8B timestamp BE][4B délka dat BE][data][trailer?][(u textu) výplň nulami]
+ *
+ * Za datovou oblastí smí ležet **trailer** ([WireExt]) - rozšiřující data, která
+ * starší verze appky nevidí, protože čte přesně `len` bajtů. Právě tudy se do
+ * formátu přidávají novinky bez zvýšení [WireCompat.WIRE_MAJOR].
  *
  * Výstupní blob: `IV[12] || ciphertext || GCM tag[16]`.
  *
@@ -73,23 +77,50 @@ object ChatEnvelope {
         ) : Opened
     }
 
-    /** Zabalí a zašifruje textovou zprávu (s paddingem přes koše). */
-    fun seal(text: String, timestamp: Long, keyBase64: String, dir: Int): ByteArray {
+    /**
+     * Zabalí a zašifruje textovou zprávu (s paddingem přes koše).
+     *
+     * [msgId] je stabilní ID zprávy napříč zařízeními - veze se v traileru,
+     * takže starší appka ho přehlédne a zprávu zobrazí jako obyčejný text.
+     */
+    fun seal(
+        text: String,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int,
+        msgId: ByteArray? = null
+    ): ByteArray {
         val data = text.toByteArray(Charsets.UTF_8)
-        val payloadLen = HEADER + data.size
-        val padded = ByteArray(bucketFor(payloadLen))
+        val trailer = trailerFor(msgId)
+        // Do koše se počítá i trailer - jinak by výplň skončila dřív, než trailer
+        // začíná, a zpráva by se usekla.
+        val padded = ByteArray(bucketFor(HEADER + data.size + trailer.size))
         writeHeader(padded, KIND_TEXT, timestamp, data.size)
         System.arraycopy(data, 0, padded, HEADER, data.size)
+        System.arraycopy(trailer, 0, padded, HEADER + data.size, trailer.size)
         return encrypt(padded, keyBase64, dir)
     }
 
     /** Zabalí a zašifruje fotku (JPEG bajty, bez paddingu). */
-    fun sealImage(jpeg: ByteArray, timestamp: Long, keyBase64: String, dir: Int): ByteArray {
-        val payload = ByteArray(HEADER + jpeg.size)
+    fun sealImage(
+        jpeg: ByteArray,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int,
+        msgId: ByteArray? = null
+    ): ByteArray {
+        val trailer = trailerFor(msgId)
+        val payload = ByteArray(HEADER + jpeg.size + trailer.size)
         writeHeader(payload, KIND_IMAGE, timestamp, jpeg.size)
         System.arraycopy(jpeg, 0, payload, HEADER, jpeg.size)
+        System.arraycopy(trailer, 0, payload, HEADER + jpeg.size, trailer.size)
         return encrypt(payload, keyBase64, dir)
     }
+
+    /** Trailer s ID zprávy, nebo prázdné pole když se ID neposílá. */
+    private fun trailerFor(msgId: ByteArray?): ByteArray =
+        if (msgId == null) ByteArray(0)
+        else WireExt.Builder().putMsgId(msgId).build()
 
     /**
      * Ohlášení souboru před posláním kousků.
@@ -142,15 +173,52 @@ object ChatEnvelope {
     }
 
     /**
-     * Dešifruje a rozbalí blob. Vrátí null, když blob nesedí (cizí klíč,
-     * poškození, jiný formát) - volající ho pak jen zahodí.
+     * Výsledek otevření blobu. **Rozlišit tyhle tři stavy je zásadní** - dřív
+     * se všechny slévaly do `null` a volající je nemohl odlišit, takže i zpráva,
+     * které nikdy nebudeme rozumět, se 30 dní opakovaně zkoušela z karantény.
      */
-    fun open(blob: ByteArray, keyBase64: String, dir: Int): Decoded? {
-        return try {
+    sealed interface Result {
+
+        /** Rozbaleno. [msgIdHex] je stabilní ID zprávy, když ho odesílatel poslal. */
+        data class Ok(
+            val senderMinor: Int,
+            val content: Opened,
+            val msgIdHex: String? = null
+        ) : Result
+
+        /**
+         * **Řídicí zpráva bez obsahu** pro funkci, kterou tahle verze neumí
+         * (reakce, potvrzení o přečtení z novější appky).
+         *
+         * Volající ji má **zahodit a potvrdit**. Nic se tím neztratí: řídicí
+         * zpráva má z definice prázdnou datovou oblast (viz [WireExt.Control]),
+         * takže tu není žádný obsah pro uživatele. Odkládat ji do karantény by
+         * znamenalo 30 dní zbytečných pokusů o něco, co je stejně jen ozdoba.
+         */
+        data class Unsupported(val senderMinor: Int) : Result
+
+        /**
+         * **Nejde přečíst TEĎ.** Cizí klíč, poškození, jiné rozložení hlavičky,
+         * nebo `kind`, kterému tahle verze nerozumí.
+         *
+         * Volající ji má **odložit do karantény** a zkusit znovu. Klíčové je,
+         * že sem patří i neznámý `kind`: může to být plnohodnotná zpráva, kterou
+         * by novější verze appky přečíst uměla. Zahodit ji natrvalo by znamenalo
+         * nevratnou ztrátu - relay ji po potvrzení maže.
+         */
+        data object Unreadable : Result
+    }
+
+    /**
+     * Dešifruje a rozbalí blob. Viz [Result] - vrací tři různé stavy, ne jen
+     * „povedlo/nepovedlo".
+     */
+    fun open(blob: ByteArray, keyBase64: String, dir: Int): Result {
+        val payload = try {
             // [1B major verze][12B IV][ciphertext+tag]
-            if (blob.size <= 1 + IV_SIZE_BYTES) return null
+            if (blob.size <= 1 + IV_SIZE_BYTES) return Result.Unreadable
             val major = blob[0].toInt() and 0xFF
-            if (major != WireCompat.WIRE_MAJOR) return null
+            if (major != WireCompat.WIRE_MAJOR) return Result.Unreadable
             val iv = blob.copyOfRange(1, 1 + IV_SIZE_BYTES)
             val cipherBytes = blob.copyOfRange(1 + IV_SIZE_BYTES, blob.size)
             val key = CryptoManager.keyFromBase64(keyBase64)
@@ -160,34 +228,69 @@ object ChatEnvelope {
             // aby ho nikdy nemohl řídit útočník (výše sice musí sedět, ale
             // spoléhat se na to je zbytečně křehké).
             cipher.updateAAD(aad(dir, WireCompat.WIRE_MAJOR))
-            val payload = cipher.doFinal(cipherBytes)
-            if (payload.size < HEADER) return null
-            val kind = payload[0]
-            val senderMinor = payload[1].toInt() and 0xFF
-            val buf = ByteBuffer.wrap(payload, 2, HEADER - 2)
-            val timestamp = buf.long
-            val len = buf.int
-            // Odečítáme, ne přičítáme - HEADER + len by u obřího len přeteklo.
-            if (len < 0 || len > payload.size - HEADER) return null
-            val data = payload.copyOfRange(HEADER, HEADER + len)
-            val content = when (kind) {
-                KIND_IMAGE -> Opened.Image(timestamp, data)
-                KIND_FILE_MANIFEST -> parseManifest(timestamp, data)
-                KIND_FILE_CHUNK -> parseChunk(timestamp, data)
-                KIND_TEXT -> Opened.Text(timestamp, String(data, Charsets.UTF_8))
-                else -> null
-            } ?: return null
-            Decoded(senderMinor, content)
+            cipher.doFinal(cipherBytes)
         } catch (e: Exception) {
-            null
+            return Result.Unreadable
+        }
+        return try {
+            parsePayload(payload)
+        } catch (e: Exception) {
+            // Rozbalení po úspěšném dešifrování by padat nemělo. Když přesto
+            // spadne, ber to jako neshodu formátu (karanténa), ne jako něco,
+            // čemu nikdy neporozumíme - zpráva tak dostane další šanci.
+            Result.Unreadable
         }
     }
 
     /**
-     * Rozšifrovaná zpráva i s minor verzí odesílatele. Minor je uvnitř šifry,
-     * takže je autentizovaný - po cestě ho nejde podvrhnout.
+     * Rozbalí už dešifrovaný payload. Oddělené od dešifrování schválně: díky
+     * tomu jde odlišit „špatný klíč" od „rozumím šifře, ale ne obsahu".
      */
-    data class Decoded(val senderMinor: Int, val content: Opened)
+    private fun parsePayload(payload: ByteArray): Result {
+        if (payload.size < HEADER) return Result.Unreadable
+        val kind = payload[0]
+        val senderMinor = payload[1].toInt() and 0xFF
+        val buf = ByteBuffer.wrap(payload, 2, HEADER - 2)
+        val timestamp = buf.long
+        val len = buf.int
+        // Odečítáme, ne přičítáme - HEADER + len by u obřího len přeteklo.
+        if (len < 0 || len > payload.size - HEADER) return Result.Unreadable
+        val data = payload.copyOfRange(HEADER, HEADER + len)
+
+        // Trailer leží ZA daty. Když tam není nebo je poškozený, chováme se
+        // jako by nebyl - zprávu kvůli vadné ozdobě nikdy nezahazujeme.
+        val trailer = WireExt.parse(payload, HEADER + len)
+
+        // Řídicí zpráva pro funkci, kterou neumíme -> tiše zahodit.
+        //
+        // POZOR na podmínku `len == 0`: zahazuje se JEN zpráva s prázdným tělem.
+        // Řídicí zpráva ho podle kontraktu (viz WireExt.Control) prázdné mít
+        // musí, takže se tím nic neztratí. Kdyby stačila jen přítomnost
+        // příznaku, novější verze by mohla řídicí TLV pověsit na zprávu
+        // s obsahem a starší appka by zahodila i ten obsah - nenávratně, protože
+        // relay zprávu po potvrzení maže. U kousku souboru by navíc jeden
+        // zahozený díl zasekl celý přenos napořád. Bezpečnost tady nesmí stát
+        // na dohodě s budoucí verzí, ale na struktuře zprávy.
+        val control = trailer?.control
+        if (control != null && !WireExt.isKnownFeature(control.featureId) && len == 0) {
+            return Result.Unsupported(senderMinor)
+        }
+
+        val content: Opened? = when (kind) {
+            KIND_IMAGE -> Opened.Image(timestamp, data)
+            KIND_FILE_MANIFEST -> parseManifest(timestamp, data)
+            KIND_FILE_CHUNK -> parseChunk(timestamp, data)
+            KIND_TEXT -> Opened.Text(timestamp, String(data, Charsets.UTF_8))
+            // Neznámý kind: TAHLE verze ho neumí, ale novější by mohla. Patří do
+            // karantény, ne k zahození - jinak by aktualizace přišla pozdě a
+            // zpráva už by nebyla odkud vzít.
+            else -> return Result.Unreadable
+        }
+        // Vnitřek manifestu/kousku se rozparsovat nepovedl - poškozený obsah,
+        // ať dostane šanci v karanténě.
+        if (content == null) return Result.Unreadable
+        return Result.Ok(senderMinor, content, trailer?.msgIdHex)
+    }
 
     private fun parseManifest(timestamp: Long, data: ByteArray): Opened.FileManifest? {
         return try {
@@ -249,6 +352,10 @@ object ChatEnvelope {
     private fun bucketFor(size: Int): Int {
         BUCKETS.firstOrNull { it >= size }?.let { return it }
         val top = BUCKETS.last()
+        // Zaokrouhlení nahoru by u velikosti blízko Int.MAX_VALUE přeteklo do
+        // záporného čísla a ByteArray() by spadlo. Nedosažitelné (limit relaye),
+        // ale zbytek formátu je proti přetečení bráněný, ať to nevyčnívá.
+        if (size > Int.MAX_VALUE - top) return Int.MAX_VALUE
         return ((size + top - 1) / top) * top
     }
 }

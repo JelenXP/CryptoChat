@@ -216,7 +216,7 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">• A completely redesigned look and animations — a clearer contact screen (encrypt and decrypt text and files in one place) and smooth transitions throughout.\n• File encryption — photos, documents and even large files, with a preview, saving and sharing.\n• Sharing — send an encrypted message or file to another app, or \"Share to CryptoChat\" to decrypt.\n• Better contacts — profile photos, search, key renewal and quick actions.\n• More settings — an \"About\" section, update-reminder controls and a file-size limit.\n• Small improvements — paste from clipboard, haptics and smarter keyboard behavior.</string>
+    <string name="changelog_body">This update prepares the app for new chat features and is worth installing on both phones.\n\n• Messages now carry a hidden identifier, so upcoming versions can add replies and reactions.\n• Better handling of version differences — if the other phone runs a newer version, messages it sends that this version cannot show are now skipped quietly instead of piling up.\n• Repeated messages are no longer shown twice.\n\nEverything keeps working with the previous version: messages sent from here still arrive there as normal messages.</string>
     <string name="btn_changelog_ok">Got it</string>
 
     <!-- About the app (Settings) -->

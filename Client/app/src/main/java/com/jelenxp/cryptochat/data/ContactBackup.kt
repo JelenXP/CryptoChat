@@ -58,6 +58,9 @@ object ContactBackup {
                         .put("st", m.status.name)
                         .put("kind", m.kind.name)
                     m.mimeType?.let { mo.put("mime", it) }
+                    // Stabilní ID zprávy - bez něj by po obnově zálohy přestaly
+                    // fungovat odkazy na zprávu (odpovědi, reakce).
+                    m.wireId?.let { mo.put("wid", it) }
                     // U fotky přibalíme i bajty obrázku, ať je po importu vidět.
                     // Velké soubory (video, dokumenty) se do zálohy nebalí - nafoukly
                     // by ji o desítky MB; zůstane po nich jen název a typ.
@@ -164,7 +167,8 @@ object ContactBackup {
                             status = status,
                             kind = kind,
                             mediaPath = mediaPath,
-                            mimeType = if (mo.has("mime")) mo.optString("mime") else null
+                            mimeType = if (mo.has("mime")) mo.optString("mime") else null,
+                            wireId = if (mo.has("wid")) mo.optString("wid") else null
                         )
                     )
                 }

@@ -216,7 +216,7 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">• Kompletně předesignovaný vzhled a animace — přehlednější obrazovka kontaktu (šifrování i dešifrování textu a souborů na jednom místě) a plynulé přechody.\n• Šifrování souborů — fotky, dokumenty i velké soubory, s náhledem, uložením a sdílením.\n• Sdílení — pošli zašifrovanou zprávu nebo soubor do jiné aplikace, nebo je „Sdílej do CryptoChat" k dešifrování.\n• Vylepšené kontakty — profilové fotky, vyhledávání, obnova klíče a rychlé akce.\n• Rozšířené nastavení — sekce „O aplikaci", správa upozornění na aktualizace a limit velikosti souborů.\n• Drobná vylepšení — vkládání ze schránky, haptika a chytřejší chování klávesnice.</string>
+    <string name="changelog_body">Tahle aktualizace připravuje appku na nové funkce chatu a vyplatí se nainstalovat na oba telefony.\n\n• Zprávy si nově nesou skrytý identifikátor, díky kterému půjde v dalších verzích přidat odpovědi a reakce.\n• Lepší zvládání rozdílných verzí — když má protějšek novější appku, zprávy, které tahle verze neumí zobrazit, se teď tiše přeskočí místo aby se hromadily.\n• Opakovaně doručená zpráva se už nezobrazí dvakrát.\n\nS předchozí verzí všechno funguje dál: zprávy odsud tam pořád dorazí jako běžné zprávy.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->

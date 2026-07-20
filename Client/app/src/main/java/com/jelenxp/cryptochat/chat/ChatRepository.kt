@@ -70,7 +70,8 @@ class ChatRepository(context: Context) {
                         status = status,
                         kind = kind,
                         mediaPath = if (o.has("media")) o.optString("media") else null,
-                        mimeType = if (o.has("mime")) o.optString("mime") else null
+                        mimeType = if (o.has("mime")) o.optString("mime") else null,
+                        wireId = if (o.has("wid")) o.optString("wid") else null
                     )
                 )
             }
@@ -99,6 +100,49 @@ class ChatRepository(context: Context) {
         if (current.any { it.id == message.id }) return false
         saveLocked(contactId, current + message)
     }
+
+    /** Jak dopadlo přidání zprávy, u které hlídáme duplicitu. */
+    enum class AppendResult {
+        /** Uložena. */
+        ADDED,
+
+        /** Už ji máme (stejné `wireId`) - není to chyba, jen se nic nepřidalo. */
+        DUPLICATE,
+
+        /** Zápis selhal. */
+        FAILED
+    }
+
+    /**
+     * Přidá příchozí zprávu, pokud v konverzaci ještě není zpráva se stejným
+     * [ChatMessage.wireId].
+     *
+     * `wireId` volí odesílatel, takže tohle je druhá vrstva ochrany proti
+     * duplicitám: [ReplayGuard] pozná jen shodný blob, ale tatáž zpráva poslaná
+     * znovu má jiné IV, a tedy i jiný otisk. Bez téhle kontroly by se v historii
+     * objevila dvakrát.
+     *
+     * Rozlišuje „už tam byla" od „nepovedlo se" schválně - volající podle toho
+     * pozná, jestli smí zvýšit počítadlo nepřečtených.
+     */
+    fun appendIfAbsentByWireId(contactId: String, message: ChatMessage): AppendResult =
+        synchronized(lock) {
+            val wireId = message.wireId ?: return AppendResult.FAILED
+            // Když se historii NEPODAŘILO přečíst, nesmí se zapisovat: prázdný
+            // seznam by se uložil přes tu skutečnou a smazal by ji. Raději hlas
+            // chybu - dávka se nepotvrdí a zpráva dorazí znovu.
+            val current = cache[contactId] ?: readFromDisk(contactId)
+                ?: return AppendResult.FAILED
+            cache[contactId] = current
+            // Porovnává se JEN proti příchozím zprávám. Naše odchozí ID protějšek
+            // zná (posíláme mu je v traileru), takže by stačilo, aby jedno z nich
+            // poslal zpátky, a jeho zpráva by se tiše zahodila jako duplicita.
+            if (current.any { it.wireId == wireId && !it.outgoing }) {
+                return AppendResult.DUPLICATE
+            }
+            if (saveLocked(contactId, current + message)) AppendResult.ADDED
+            else AppendResult.FAILED
+        }
 
     /** Nastaví stav existující zprávy (např. SENDING -> SENT/FAILED). */
     fun updateStatus(contactId: String, messageId: String, status: ChatMessage.Status): Boolean =
@@ -176,6 +220,7 @@ class ChatRepository(context: Context) {
                         .apply {
                             m.mediaPath?.let { put("media", it) }
                             m.mimeType?.let { put("mime", it) }
+                            m.wireId?.let { put("wid", it) }
                         }
                 )
             }
