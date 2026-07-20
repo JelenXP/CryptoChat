@@ -1,6 +1,7 @@
 package com.jelenxp.cryptochat.chat
 
 import android.content.Context
+import android.util.Log
 import io.matthewnelson.kmp.file.toFile
 import io.matthewnelson.kmp.tor.resource.exec.tor.ResourceLoaderTorExec
 import io.matthewnelson.kmp.tor.runtime.Action
@@ -16,15 +17,19 @@ import io.matthewnelson.kmp.tor.runtime.core.config.TorOption
  * Spouští zabudovaný Tor (kmp-tor), aby appka došla na `.onion` relay bez toho,
  * aby si uživatel musel instalovat Orbot. Po nabootování Toru zjistí jeho SOCKS
  * port a předá ho [TorManager] - přes něj pak [RelayClient] posílá `.onion`
- * požadavky.
+ * požadavky (a čeká přes `awaitReady`, dokud Tor listener neotevře).
  *
  * Tor běží jako proces vázaný na proces appky (bez foreground služby s notifikací).
  * Pro chat, který dotazuje server jen když je appka aktivní, to stačí; keep-alive
  * na pozadí by teprve vyžadoval `runtime-service-ui`.
  *
  * Spouští se jednou (idempotentně) - typicky když je nastavený `.onion` relay.
+ * Průběh (start démona, SOCKS port, chyby Toru) se loguje pod tagem [TAG], ať
+ * jde bootstrap diagnostikovat i v release buildu (`adb logcat -s TorController`).
  */
 object TorController {
+
+    private const val TAG = "TorController"
 
     @Volatile
     private var runtime: TorRuntime? = null
@@ -54,21 +59,35 @@ object TorController {
             observerStatic(RuntimeEvent.LISTENERS, OnEvent.Executor.Immediate) { listeners ->
                 val socks = listeners.socks.firstOrNull()
                 if (socks != null) {
+                    Log.i(TAG, "SOCKS listener otevřen: ${socks.address.value}:${socks.port.value}")
                     TorManager.configure(socks.address.value, socks.port.value, ready = true)
                 } else {
-                    TorManager.ready = false
+                    Log.w(TAG, "SOCKS listener zavřen / žádný")
+                    TorManager.markStopped()
                 }
             }
+            // Logy Toru (NOTICE ukazuje bootstrap %, WARN/ERR případné problémy).
+            observerStatic(TorEvent.NOTICE, OnEvent.Executor.Immediate) { line ->
+                Log.i(TAG, "tor NOTICE: $line")
+            }
+            observerStatic(TorEvent.WARN, OnEvent.Executor.Immediate) { line ->
+                Log.w(TAG, "tor WARN: $line")
+            }
+            observerStatic(TorEvent.ERR, OnEvent.Executor.Immediate) { line ->
+                Log.e(TAG, "tor ERR: $line")
+            }
+            required(TorEvent.NOTICE)
             required(TorEvent.ERR)
             required(TorEvent.WARN)
         }
         runtime = rt
 
+        Log.i(TAG, "Startuji zabudovaný Tor (StartDaemon)…")
         // Nastartuj démona. enqueue je neblokující - bootstrap Toru (desítky
         // sekund) běží na pozadí, výsledek se projeví přes LISTENERS observer výše.
         rt.enqueue(
             action = Action.StartDaemon,
-            onFailure = OnFailure {},
+            onFailure = OnFailure { t -> Log.e(TAG, "Tor StartDaemon selhal", t) },
             onSuccess = OnSuccess.noOp(),
         )
     }

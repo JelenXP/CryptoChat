@@ -1,6 +1,5 @@
 package com.jelenxp.cryptochat.ui.screens
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -11,33 +10,41 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.jelenxp.cryptochat.chat.RelayClient
+import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.chat.TorController
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.jelenxp.cryptochat.ui.components.SegmentedControl
 
 /**
- * Nastavení adresy relaye (serveru „slepé schránky"). Prázdná adresa = chat přes
- * server je vypnutý, appka funguje dál jako offline. Vzhled drží styl appky
- * (CryptoScaffold + InfoCard).
+ * Nastavení serveru chatu. Záměrně minimalistické - jen dvě volby (výchozí /
+ * vlastní) přes [SegmentedControl], stejně jako ostatní volby v appce. Spojení
+ * se netestuje ručně: appka ho testuje sama po startu a stav ukazuje ikona
+ * cloudu na hlavní obrazovce. Nastavení se ukládá průběžně (bez tlačítka Uložit
+ * a bez toastů), jako ostatní přepínače v Nastavení.
  */
 @Composable
 fun RelaySettingsScreen(navController: NavController) {
     val context = LocalContext.current
     val settings = remember { SettingsRepository(context) }
-    val scope = rememberCoroutineScope()
 
-    var url by remember { mutableStateOf(settings.getRelayUrl()) }
-    var testing by remember { mutableStateOf(false) }
+    var useCustom by remember { mutableStateOf(settings.isUsingCustomRelay()) }
+    var customUrl by remember { mutableStateOf(settings.getRelayCustomUrl()) }
+
+    // Po přepnutí na .onion (výchozí i vlastní) nastartuj Tor, ať se stihne
+    // nabootovat, než se otestuje spojení.
+    fun ensureTorIfOnion() {
+        val effective = if (useCustom) customUrl.trim() else SettingsRepository.DEFAULT_RELAY_URL
+        if (effective.contains(".onion")) TorController.ensureStarted(context)
+    }
 
     CryptoScaffold(
-        title = "Server chatu",
+        title = stringResource(R.string.relay_title),
         onBack = { navController.popBackStack() }
     ) { padding ->
         Column(
@@ -51,56 +58,46 @@ fun RelaySettingsScreen(navController: NavController) {
             Spacer(Modifier.height(4.dp))
             InfoCard(
                 icon = Icons.Default.CloudQueue,
-                text = "Adresa zero-knowledge relaye pro chat přes internet. Server přeposílá jen " +
-                    "zašifrované zprávy — nezná jejich obsah ani to, kdo komu píše. Necháš-li " +
-                    "pole prázdné, chat přes server je vypnutý a appka funguje jako offline.\n\n" +
-                    "Příklad: http://192.168.1.10:8787 (v místní síti) nebo .onion adresa přes Tor."
+                text = stringResource(R.string.relay_info)
             )
 
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("Adresa serveru") },
-                placeholder = { Text("http://…") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Button(
-                onClick = {
-                    settings.setRelayUrl(url)
-                    Toast.makeText(context, "Uloženo", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Uložit") }
-
-            OutlinedButton(
-                onClick = {
-                    val target = url.trim()
-                    if (target.isEmpty()) {
-                        Toast.makeText(context, "Zadej nejdřív adresu", Toast.LENGTH_SHORT).show()
-                        return@OutlinedButton
-                    }
-                    testing = true
-                    scope.launch {
-                        val ok = withContext(Dispatchers.IO) { RelayClient.health(target) }
-                        testing = false
-                        Toast.makeText(
-                            context,
-                            if (ok) "Server odpovídá ✓" else "Server neodpovídá",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                },
-                enabled = !testing,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (testing) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.relay_mode_default),
+                    stringResource(R.string.relay_mode_custom)
+                ),
+                selectedIndex = if (useCustom) 1 else 0,
+                onSelect = { index ->
+                    useCustom = index == 1
+                    settings.setUsingCustomRelay(useCustom)
+                    ensureTorIfOnion()
                 }
-                Text("Otestovat spojení")
+            )
+
+            if (useCustom) {
+                OutlinedTextField(
+                    value = customUrl,
+                    onValueChange = {
+                        customUrl = it
+                        settings.setRelayCustomUrl(it)
+                    },
+                    label = { Text(stringResource(R.string.relay_custom_label)) },
+                    placeholder = { Text("http://…") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = stringResource(R.string.relay_custom_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.relay_default_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

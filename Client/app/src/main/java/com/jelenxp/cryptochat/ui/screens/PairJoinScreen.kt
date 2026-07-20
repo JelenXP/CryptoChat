@@ -6,13 +6,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.Pairing
 import com.jelenxp.cryptochat.chat.RelayClient
 import com.jelenxp.cryptochat.chat.RelayCrypto
@@ -55,7 +56,7 @@ fun PairJoinScreen(
     fun startJoin() {
         val canonical = Pairing.normalize(code)
         if (!Pairing.looksValid(canonical)) {
-            error = "Kód nemá správný tvar."
+            error = context.getString(R.string.pair_error_bad_code)
             return
         }
         error = ""
@@ -80,7 +81,7 @@ fun PairJoinScreen(
                     if (peerPublicKey == null) { attempts++; delay(2500) }
                 }
                 if (peerPublicKey == null) {
-                    error = "Pozvánka nenalezena nebo vypršela. Zkontroluj kód a zkus to znovu."
+                    error = context.getString(R.string.pair_error_not_found)
                     phase = JoinPhase.ERROR
                     return@launch
                 }
@@ -89,20 +90,24 @@ fun PairJoinScreen(
                 val sent = withContext(Dispatchers.IO) {
                     RelayClient.put(baseUrl, respBox, Pairing.wrap(result.encapsulationBase64, inviteKey))
                 }
-                if (!sent) { error = "Nepodařilo se odeslat odpověď serveru."; phase = JoinPhase.ERROR; return@launch }
+                if (!sent) {
+                    error = context.getString(R.string.pair_error_send)
+                    phase = JoinPhase.ERROR
+                    return@launch
+                }
 
                 aesKey = result.sharedKeys.aesKeyBase64
                 sas = result.sharedKeys.verificationCode
                 phase = JoinPhase.VERIFY
             } catch (e: Exception) {
-                error = e.message ?: "Chyba při párování."
+                error = context.getString(R.string.pair_error_generic)
                 phase = JoinPhase.ERROR
             }
         }
     }
 
     CryptoScaffold(
-        title = "Pozvánka od $name",
+        title = stringResource(R.string.pair_join_title, name),
         onBack = { navController.popBackStack() }
     ) { padding ->
         Column(
@@ -116,19 +121,19 @@ fun PairJoinScreen(
             Spacer(Modifier.height(4.dp))
             when (phase) {
                 JoinPhase.NO_RELAY -> {
-                    InfoCard(text = "Nejdřív je potřeba nastavit adresu serveru chatu.")
+                    InfoCard(text = stringResource(R.string.pair_need_server))
                     Button(
                         onClick = { navController.navigate("relay_settings") },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Nastavit server") }
+                    ) { Text(stringResource(R.string.btn_set_server)) }
                 }
 
                 JoinPhase.INPUT -> {
-                    InfoCard(text = "Zadej kód, který ti řekl druhý člověk. Spojení se pak naváže automaticky.")
+                    InfoCard(text = stringResource(R.string.pair_join_instructions))
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it },
-                        label = { Text("Pozvánkový kód") },
+                        label = { Text(stringResource(R.string.pair_code_label)) },
                         placeholder = { Text("ABCD-EFGH-JKMN-PQRS") },
                         singleLine = true,
                         isError = error.isNotBlank(),
@@ -140,57 +145,38 @@ fun PairJoinScreen(
                         onClick = { startJoin() },
                         enabled = code.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Připojit se") }
+                    ) { Text(stringResource(R.string.btn_join)) }
                 }
 
                 JoinPhase.WORKING -> {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text("Navazuji spojení…", style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.pair_working), style = MaterialTheme.typography.bodyLarge)
                     }
                 }
 
                 JoinPhase.VERIFY -> {
-                    Text("Ověřovací kód", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        "Porovnejte tento kód s druhou stranou. Pokud se u obou shoduje, spojení je " +
-                            "bezpečné a nikdo se mezi vás nevloudil.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = sas,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontFamily = FontFamily.Monospace,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(20.dp)
-                        )
-                    }
-                    Button(
-                        onClick = {
+                    VerificationCodeContent(
+                        verificationCode = sas,
+                        contactName = name,
+                        onConfirmed = {
                             val id = contactId ?: UUID.randomUUID().toString()
                             viewModel.saveChatContact(id, name, aesKey, initiator = false)
                             navController.navigate("chat/$id") {
                                 popUpTo("main") { inclusive = false }
                             }
                         },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Kódy se shodují — uložit") }
-                    OutlinedButton(
-                        onClick = { navController.popBackStack() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Neshodují se (zrušit)") }
+                        onCancel = { navController.popBackStack() }
+                    )
                 }
 
                 JoinPhase.ERROR -> {
-                    InfoCard(text = error.ifBlank { "Došlo k chybě." })
+                    InfoCard(text = error.ifBlank { stringResource(R.string.pair_error_generic) })
                     Button(onClick = { phase = JoinPhase.INPUT }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Zkusit znovu")
+                        Text(stringResource(R.string.btn_retry))
                     }
                 }
             }

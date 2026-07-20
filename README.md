@@ -4,10 +4,11 @@ Zero-knowledge relay pro CryptoChat, který běží na **serveru dle tvého výb
 (stačí cokoli s Pythonem 3 — jednodeskový počítač, starší PC, VPS…). Je to
 záměrně **hloupá schránka** (dead-drop): jen ukládá a vydává zašifrované blobky.
 
-> ⚠️ **Testovací / volitelná část.** Hlavní režim CryptoChatu zůstává offline
-> (výměna zpráv přes copy/paste/QR/share, bez serveru). Tento relay je přídavek,
-> který umožní doručování na dálku — a to tak, aby server **nevěděl obsah zpráv
-> ani kdo komu píše**.
+> **Dvě samostatné appky.** Původní **CryptoChat** (kořen repozitáře) zůstává čistě
+> offline — zprávy se přenášejí ručně přes copy/paste/QR, bez jakéhokoli serveru.
+> Tenhle relay obsluhuje druhou appku, **CryptoChatServer** (ve složce `Client/`),
+> což je plnohodnotný messenger běžící na pozadí — a to tak, aby server **nevěděl
+> obsah zpráv ani kdo komu píše**.
 
 ## Co server ví a neví
 
@@ -37,10 +38,11 @@ Server naslouchá na `127.0.0.1:8787`. Konfigurace přes proměnné prostředí:
 |---|---|---|
 | `CC_HOST` | `127.0.0.1` | Naslouchací adresa (nech na localhost, ven přes Tor) |
 | `CC_PORT` | `8787` | Port |
-| `CC_MAX_BLOB_SIZE` | `524288` (512 KB) | Max velikost jednoho blobu |
+| `CC_MAX_BLOB_SIZE` | `2097152` (2 MB) | Max velikost jednoho blobu (fotka / kousek souboru) |
 | `CC_MAX_MAILBOX_BLOBS` | `200` | Max blobků čekajících v jedné schránce |
 | `CC_TTL_SECONDS` | `86400` (24 h) | Za jak dlouho nevyzvednutá schránka expiruje |
-| `CC_MAX_TOTAL_BYTES` | `134217728` (128 MB) | Globální strop paměti |
+| `CC_MAX_TOTAL_BYTES` | `536870912` (512 MB) | Globální strop paměti |
+| `CC_LONGPOLL_MAX` | `25` | Strop long-pollu (kolik sekund smí GET čekat na zprávu) |
 
 Trvalý běh na serveru (Linux): použij přiloženou službu **`cryptochat-relay.service`** (systemd).
 
@@ -66,6 +68,9 @@ Dvě cesty, `<id>` je 16–128 znaků z `A–Z a–z 0–9 _ -`:
     zřetězeně. Klient čte 4 bajty délky, pak tolik bajtů, dokud stream neskončí
     (stejný styl rámování, jaký appka používá u šifrování souborů).
   - `204` když je schránka prázdná.
+  - **Long-polling:** s `?wait=<sekundy>` (strop `CC_LONGPOLL_MAX`) server drží
+    spojení otevřené, dokud nedorazí zpráva — pak odpoví hned. Díky tomu chodí
+    zprávy skoro okamžitě a přes Tor jde výrazně míň spojení než při pollování.
 - **`GET /health`** — `200 ok` (kontrola dostupnosti).
 
 > **Delivery je best-effort:** vyzvednutím se blob smaže. Když se odpověď ztratí,
@@ -84,8 +89,9 @@ mailbox_A→B = base64url( HKDF(sharedKey, info = "mailbox" | směr | epocha) )
 - **směr** odlišuje A→B a B→A (dvě schránky na jeden kontakt).
 - **epocha** (číslo dne nebo krokový čítač) → ID se **rotuje**, takže server
   nespojí, že dnešní a zítřejší schránka patří téže dvojici.
-- K blobu klient přidá **MAC odvozený ze sdíleného klíče** → příjemce pozná a
-  zahodí podvrhy (server MAC ověřit nemůže — klíč nemá, a to je správně).
+- Blob je zašifrovaný **AES-256-GCM**, jehož autentizační tag zároveň slouží jako
+  MAC → příjemce pozná a zahodí podvrhy (server je ověřit nemůže — klíč nemá, a to
+  je správně).
 
 **Online párování** (aby se dva našli bez prozrazení identity) používá stejný
 trik s jednorázovou **pozvánkou**: `rendezvous = HKDF(pozvánka, "rendezvous")`.
@@ -113,9 +119,20 @@ sudo systemctl restart tor
 sudo cat /var/lib/tor/cryptochat/hostname   # tvoje .onion adresa
 ```
 
-Tu `.onion` adresu pak zadáš v appce (klient se připojí přes Tor, např. Orbot).
-Výhody: skryje IP obou stran, funguje **bez port forwardingu**, server je
-dostupný jen přes onion.
+Tu `.onion` adresu pak zadáš v appce (**Server chatu → Vlastní**). Klient má **Tor
+zabudovaný přímo v sobě** (kmp-tor), takže koncový uživatel nemusí instalovat Orbot
+ani nic dalšího. Výhody: skryje IP obou stran, funguje **bez port forwardingu**,
+server je dostupný jen přes onion.
+
+> ⚠️ **Běží-li server na notebooku:** zavření víka ho uspí, Tor přestane publikovat
+> deskriptor skryté služby a onion se stane nedosažitelným (klient hlásí SOCKS kód 4).
+> Zakaž proto uspávání:
+> ```bash
+> sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+> ```
+> a v `/etc/systemd/logind.conf` nastav `HandleLidSwitch=ignore` (+ `…ExternalPower`,
+> `…Docked`) a restartuj `systemd-logind`. Po nechtěném uspání pomůže
+> `sudo systemctl restart tor`.
 
 ## Threat model — čeho to NEochrání (na rovinu)
 

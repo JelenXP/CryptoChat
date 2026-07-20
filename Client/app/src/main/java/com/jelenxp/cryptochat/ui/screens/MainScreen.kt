@@ -11,6 +11,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
@@ -21,33 +23,63 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.chat.ChatMessage
+import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.RelayConn
+import com.jelenxp.cryptochat.chat.RelayStatus
 import com.jelenxp.cryptochat.data.Contact
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.theme.LocalUiSpacing
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+
+/**
+ * Poslední spočítané náhledy konverzací (poslední zpráva + počet nepřečtených),
+ * klíčované id kontaktu. Drží se mimo kompozici, aby byl návrat na seznam
+ * okamžitý a nic neproblikávalo - spočítat je znovu totiž znamená dešifrovat
+ * historii, což na hlavní vlákno nepatří.
+ */
+private var previewCache: Map<String, Pair<ChatMessage?, Int>> = emptyMap()
 
 @Composable
 fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
@@ -59,6 +91,57 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
     var quickActions by remember { mutableStateOf<Contact?>(null) }
     var deleteTarget by remember { mutableStateOf<Contact?>(null) }
     LaunchedEffect(Unit) { viewModel.refresh() }
+
+    // Spojení se serverem chatu se testuje samo - po startu appky i po návratu
+    // do popředí (např. ze změny serveru). Výsledek ukazuje indikátor u ikony
+    // cloudu (kolečko → fajfka); žádné toasty.
+    val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                scope.launch { RelayStatus.refresh(context) }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Náhledy konverzací (poslední zpráva + počet nepřečtených). Čtou se lokálně
+    // z historie a obnovují se, dokud je seznam v popředí, aby se aktualizoval
+    // živě i když zprávy dorazí na pozadí.
+    val chatRepo = remember { ChatRepository(context) }
+    // Náhledy se drží mezi vstupy na obrazovku, takže při návratu jsou hned k
+    // dispozici a nic neprobliká. Číst je v kompozici NELZE - `getLastMessage`
+    // dešifruje historii Keystorem a při víc kontaktech by to na hlavním vlákně
+    // znamenalo zamrznutí až ANR.
+    var previews by remember { mutableStateOf(previewCache) }
+    LaunchedEffect(contacts) {
+        // První načtení hned (ne až po prodlevě), ale na IO vlákně.
+        previews = withContext(Dispatchers.IO) {
+            contacts.associate { c ->
+                c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
+            }
+        }.also { previewCache = it }
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                // Každý průchod dešifruje historii všech konverzací přes Keystore,
+                // takže krátký interval by při rozsvícené obrazovce zbytečně žral
+                // CPU. 5 s je na živý náhled pořád dost svižné.
+                delay(5000)
+                val fresh = withContext(Dispatchers.IO) {
+                    contacts.associate { c ->
+                        c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
+                    }
+                }
+                // Přiřaď jen při změně, ať se seznam zbytečně nerekomponuje.
+                if (fresh != previews) {
+                    previews = fresh
+                    previewCache = fresh
+                }
+            }
+        }
+    }
 
     // Live filtrování podle jména (bez ohledu na velikost písmen).
     val filtered = remember(contacts, query) {
@@ -72,8 +155,31 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
     CryptoScaffold(
         title = stringResource(R.string.app_name),
         actions = {
+            // Stav serveru chatu je vidět přímo na ikoně (žádný překryv, žádné
+            // toasty): testuje se → kolečko, připojeno → cloud s fajfkou,
+            // nedostupné → přeškrtnutý cloud, nenastaveno → obyčejný cloud.
             IconButton(onClick = { navController.navigate("relay_settings") }) {
-                Icon(Icons.Default.CloudQueue, contentDescription = "Server chatu")
+                val relayDesc = stringResource(R.string.content_desc_relay)
+                when (RelayStatus.state) {
+                    RelayConn.CONNECTING -> CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp
+                    )
+                    RelayConn.CONNECTED -> Icon(
+                        Icons.Default.CloudDone,
+                        contentDescription = relayDesc,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    RelayConn.FAILED -> Icon(
+                        Icons.Default.CloudOff,
+                        contentDescription = relayDesc,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    RelayConn.UNKNOWN -> Icon(
+                        Icons.Default.CloudQueue,
+                        contentDescription = relayDesc
+                    )
+                }
             }
             IconButton(onClick = { navController.navigate("settings") }) {
                 Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.content_desc_settings))
@@ -129,8 +235,11 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                         verticalArrangement = Arrangement.spacedBy(spacing.itemGap)
                     ) {
                         items(filtered, key = { it.id }) { contact ->
+                            val preview = previews[contact.id]
                             ContactCard(
                                 contact = contact,
+                                lastMessage = preview?.first,
+                                unread = preview?.second ?: 0,
                                 innerPadding = spacing.cardInner,
                                 // Plynulé přeskupení při hledání / přidání / smazání.
                                 modifier = Modifier.animateItemPlacement(),
@@ -195,12 +304,15 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
 @Composable
 private fun ContactCard(
     contact: Contact,
+    lastMessage: ChatMessage?,
+    unread: Int,
     innerPadding: androidx.compose.ui.unit.Dp,
     modifier: Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
     val hasKey = contact.keyBase64 != null
+    val isUnread = unread > 0
     AppCard(
         modifier = modifier
             .fillMaxWidth()
@@ -217,23 +329,94 @@ private fun ContactCard(
                 Text(
                     text = contact.name,
                     style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (isUnread) FontWeight.Bold else null,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // Podtitulek = poslední zpráva. Odchozí má prefix „Ty:"; když ještě
+                // žádná není, ukáže se stav (bez klíče / zatím žádné zprávy).
+                val subtitle = when {
+                    !hasKey -> stringResource(R.string.key_not_set)
+                    lastMessage != null -> {
+                        val body = when (lastMessage.kind) {
+                            ChatMessage.Kind.IMAGE -> stringResource(R.string.chat_preview_photo)
+                            ChatMessage.Kind.FILE -> stringResource(R.string.chat_preview_file)
+                            else -> lastMessage.text
+                        }
+                        if (lastMessage.outgoing) stringResource(R.string.chat_last_you, body) else body
+                    }
+                    else -> stringResource(R.string.chat_preview_none)
+                }
                 Text(
-                    text = stringResource(if (hasKey) R.string.key_set else R.string.key_not_set),
+                    text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (hasKey) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (isUnread) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (isUnread) FontWeight.SemiBold else null
                 )
             }
-            Icon(
-                imageVector = if (hasKey) Icons.Default.Lock else Icons.Default.LockOpen,
-                contentDescription = null,
-                tint = if (hasKey) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // Vpravo: čas poslední zprávy a pod ním počet nepřečtených (jako
+            // u běžných messengerů). Když ještě žádná zpráva není, zůstane zámek.
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (lastMessage != null) {
+                    Text(
+                        text = formatPreviewTime(lastMessage.timestamp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isUnread) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                when {
+                    isUnread -> UnreadBadge(unread)
+                    lastMessage == null -> Icon(
+                        imageVector = if (hasKey) Icons.Default.Lock else Icons.Default.LockOpen,
+                        contentDescription = null,
+                        tint = if (hasKey) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
+    }
+}
+
+/**
+ * Čas poslední zprávy pro seznam: dnešní zprávy jako „HH:mm", starší jako
+ * krátké datum podle jazyka telefonu.
+ */
+private fun formatPreviewTime(timestamp: Long): String {
+    val now = Calendar.getInstance()
+    val then = Calendar.getInstance().apply { timeInMillis = timestamp }
+    val sameDay = now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
+        now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
+    return if (sameDay) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
+    } else {
+        DateFormat.getDateInstance(DateFormat.SHORT, Locale.getDefault()).format(Date(timestamp))
+    }
+}
+
+/** Kolečko s počtem nepřečtených zpráv (značkový akcent). */
+@Composable
+private fun UnreadBadge(count: Int) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 22.dp, minHeight = 22.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = 6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (count > 99) "99+" else count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimary
+        )
     }
 }
 

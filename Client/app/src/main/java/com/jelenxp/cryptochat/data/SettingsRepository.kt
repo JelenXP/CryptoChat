@@ -119,12 +119,37 @@ class SettingsRepository(context: Context) {
     }
 
     // --- Relay (chat přes server) ---
-    // Adresa zero-knowledge relaye („slepé schránky"), např. http://192.168.1.10:8787
-    // nebo .onion přes Tor. Prázdné = chat přes server je vypnutý (appka funguje
-    // dál jako offline). Necitlivá hodnota, plaintext.
-    fun getRelayUrl(): String = prefs.getString(KEY_RELAY_URL, "")?.trim().orEmpty()
-    fun setRelayUrl(url: String) {
+    // Dva režimy: VÝCHOZÍ (zabudovaná .onion adresa oficiálního serveru) nebo
+    // VLASTNÍ (uživatel si zadá svou adresu, např. http://192.168.1.10:8787 nebo
+    // jinou .onion). Čerstvá instalace startuje na VÝCHOZÍM serveru, takže chat
+    // funguje hned. Necitlivé hodnoty, plaintext.
+
+    /** Je zapnutý režim VLASTNÍ adresy? Výchozí `false` = použít výchozí server. */
+    fun isUsingCustomRelay(): Boolean = prefs.getBoolean(KEY_RELAY_CUSTOM, false)
+    fun setUsingCustomRelay(custom: Boolean) {
+        prefs.edit().putBoolean(KEY_RELAY_CUSTOM, custom).apply()
+    }
+
+    /** Uživatelská adresa serveru (uplatní se jen v režimu VLASTNÍ). */
+    fun getRelayCustomUrl(): String = prefs.getString(KEY_RELAY_URL, "")?.trim().orEmpty()
+    fun setRelayCustomUrl(url: String) {
         prefs.edit().putString(KEY_RELAY_URL, url.trim()).apply()
+    }
+
+    /**
+     * Efektivní adresa serveru, kterou používá zbytek appky (RelayClient,
+     * RelaySync, Tor…). V režimu VÝCHOZÍ vrací zabudovanou [DEFAULT_RELAY_URL],
+     * jinak uživatelskou adresu. Prázdná (VLASTNÍ + nevyplněno) = chat přes
+     * server je vypnutý a appka jede jako offline.
+     */
+    fun getRelayUrl(): String =
+        if (isUsingCustomRelay()) getRelayCustomUrl() else DEFAULT_RELAY_URL
+
+    // --- Onboarding (první spuštění) ---
+    // Průvodce povoleními pro běh na pozadí (notifikace, baterie, autostart).
+    fun isOnboardingDone(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
+    fun setOnboardingDone(done: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_DONE, done).apply()
     }
 
     private inline fun <reified T : Enum<T>> readEnum(key: String, default: T): T {
@@ -154,5 +179,14 @@ class SettingsRepository(context: Context) {
         private const val KEY_LAST_SEEN_VC = "last_seen_version_code"
         private const val KEY_FILE_LIMIT = "file_size_limit_enabled"
         private const val KEY_RELAY_URL = "relay_url"
+        private const val KEY_RELAY_CUSTOM = "relay_use_custom"
+        private const val KEY_ONBOARDING_DONE = "onboarding_done"
+
+        /**
+         * Výchozí (zabudovaná) adresa oficiálního zero-knowledge relaye přes Tor.
+         * Na tuhle appka míří, dokud si uživatel nepřepne na vlastní server.
+         */
+        const val DEFAULT_RELAY_URL =
+            "http://m7rwivoh3yzvzbvi2m5ob3qau5wtik5f46qsphjycoyof7gcwfbjnaad.onion"
     }
 }

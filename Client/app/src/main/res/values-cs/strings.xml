@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CryptoChat Chat</string>
+    <string name="app_name">CryptoChatServer</string>
 
     <!-- Common -->
     <string name="content_desc_copy">Zkopírovat</string>
@@ -84,7 +84,7 @@
     <string name="lock_screen_title">Aplikace je uzamčena</string>
     <string name="lock_screen_subtitle">Pro pokračování se ověřte.</string>
     <string name="btn_unlock">Odemknout</string>
-    <string name="biometric_prompt_title">Odemknout CryptoChat</string>
+    <string name="biometric_prompt_title">Odemknout CryptoChatServer</string>
     <string name="error_cannot_show_auth">Nelze zobrazit ověření.</string>
     <string name="error_auth_failed_generic">Ověření se nezdařilo.</string>
 
@@ -177,7 +177,7 @@
     <string name="settings_section_data">Data</string>
     <string name="settings_backup_label">Záloha</string>
     <string name="settings_backup_desc">Export/import kontaktů, chráněný heslem</string>
-    <string name="backup_intro">Vyexportuj kontakty i jejich klíče do souboru chráněného heslem a naimportuj je zpátky — na tomto nebo jiném telefonu. Soubor je zašifrovaný; bez hesla ho nikdo nepřečte.</string>
+    <string name="backup_intro">Vyexportuj kontakty, klíče, profilové fotky i historii chatů do souboru chráněného heslem a naimportuj je zpátky — na tomto nebo jiném telefonu. Soubor je zašifrovaný; bez hesla ho nikdo nepřečte.</string>
     <string name="backup_export_title">Export</string>
     <string name="backup_export_desc">Uloží všechny kontakty do zašifrovaného souboru zálohy.</string>
     <string name="btn_export">Exportovat zálohu</string>
@@ -197,7 +197,7 @@
     <string name="toast_import_done">Naimportováno %1$d kontaktů.</string>
     <!-- Dostupná aktualizace -->
     <string name="update_title">Dostupná nová verze</string>
-    <string name="update_intro">Je k dispozici novější verze CryptoChatu. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
+    <string name="update_intro">Je k dispozici novější verze CryptoChatServeru. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
     <string name="update_versions">Nainstalováno: %1$s  ·  Nejnovější: %2$s</string>
     <string name="update_important_warning">Tohle je důležitá aktualizace. Dokud ji nenainstaluješ, některé funkce nemusí fungovat správně.</string>
     <string name="btn_update_get">Získat nejnovější verzi</string>
@@ -226,8 +226,8 @@
     <string name="about_changelog_desc">Co se změnilo v této verzi</string>
     <string name="about_check_updates_label">Zkontrolovat aktualizace</string>
     <string name="about_check_updates_desc">Podívat se hned na GitHub po novější verzi</string>
-    <string name="about_github_label">Projekt na GitHubu</string>
-    <string name="about_github_desc">Otevřít zdrojový kód v prohlížeči</string>
+    <string name="about_github_label">Vydané verze na GitHubu</string>
+    <string name="about_github_desc">Otevřít stránku s vydáními v prohlížeči</string>
     <string name="update_check_dialog_title">Aktualizace</string>
     <string name="update_checking">Kontroluji aktualizace…</string>
     <string name="update_up_to_date">Máte nejnovější verzi (%1$s).</string>
@@ -321,4 +321,87 @@
 
     <!-- Náhled animace (Nastavení vzhledu) -->
     <string name="design_preview_hint">Změna stylu nebo rychlosti přehraje přechod na celé této obrazovce.</string>
+
+    <!-- Server chatu (relay) -->
+    <string name="relay_title">Server chatu</string>
+    <string name="relay_info">Zero-knowledge relay pro chat přes internet. Server přeposílá jen zašifrované zprávy — nezná jejich obsah ani to, kdo komu píše.</string>
+    <string name="relay_mode_default">Výchozí</string>
+    <string name="relay_mode_custom">Vlastní</string>
+    <string name="relay_default_desc">Používá oficiální relay přes Tor — nic se neinstaluje.</string>
+    <string name="relay_custom_desc">Zadej si vlastní adresu serveru.</string>
+    <string name="relay_custom_label">Adresa serveru</string>
+    <string name="relay_custom_help">Například http://192.168.1.10:8787 v místní síti nebo .onion adresa přes Tor. Necháš-li prázdné, chat přes server je vypnutý.</string>
+    <string name="content_desc_relay">Server chatu</string>
+
+    <!-- Konverzace -->
+    <string name="chat_title_fallback">Konverzace</string>
+    <string name="chat_menu_detail">Detail a klíč</string>
+    <string name="chat_menu_server">Server chatu</string>
+    <string name="chat_notice_no_key">Tento kontakt zatím nemá klíč. Nejdřív ho spáruj (Detail a klíč).</string>
+    <string name="chat_notice_no_server">Není nastavený server chatu. Nastav ho v menu (⋮ → Server chatu).</string>
+    <string name="chat_empty">Zatím žádné zprávy.\nNapiš první.</string>
+    <string name="chat_input_hint">Zpráva…</string>
+    <string name="content_desc_send">Odeslat</string>
+    <string name="content_desc_sending">Odesílám</string>
+    <string name="content_desc_delivered">Doručeno</string>
+    <string name="content_desc_not_delivered">Nedoručeno</string>
+    <string name="chat_retry_hint">Nedoručeno — klepni pro nový pokus</string>
+    <string name="chat_last_you">Ty: %1$s</string>
+    <string name="chat_preview_none">Zatím žádné zprávy</string>
+    <string name="chat_preview_photo">📷 Fotka</string>
+    <string name="content_desc_attach">Přidat fotku</string>
+    <string name="content_desc_image">Fotka</string>
+    <string name="attach_camera">Foťák</string>
+    <string name="attach_gallery">Galerie</string>
+    <string name="chat_image_failed">Fotku se nepodařilo odeslat. Možná je moc velká.</string>
+    <string name="attach_file">Soubor</string>
+    <string name="chat_file_failed">Soubor se nepodařilo odeslat. Maximum je 25 MB.</string>
+    <string name="chat_file_receiving">Přijímám…</string>
+    <string name="chat_preview_file">📎 Soubor</string>
+
+    <!-- Párování přes pozvánku -->
+    <string name="pair_need_server">Nejdřív je potřeba nastavit adresu serveru chatu.</string>
+    <string name="btn_set_server">Nastavit server</string>
+    <string name="pair_invite_title">Pozvánka pro %1$s</string>
+    <string name="pair_join_title">Pozvánka od %1$s</string>
+    <string name="pair_invite_instructions">Řekni tento kód druhému člověku. Jakmile ho zadá u sebe, spojení se naváže automaticky. Kód je jednorázový a brzy vyprší.</string>
+    <string name="pair_invite_code_caption">Jednorázový pozvánkový kód</string>
+    <string name="pair_invite_waiting">Čekám, až se druhý připojí…</string>
+    <string name="pair_join_instructions">Zadej kód, který ti řekl druhý člověk. Spojení se pak naváže automaticky.</string>
+    <string name="pair_code_label">Pozvánkový kód</string>
+    <string name="btn_join">Připojit se</string>
+    <string name="pair_working">Navazuji spojení…</string>
+    <string name="pair_error_bad_code">Kód nemá správný tvar.</string>
+    <string name="pair_error_not_found">Pozvánka nenalezena nebo vypršela. Zkontroluj kód a zkus to znovu.</string>
+    <string name="pair_error_connect">Nepodařilo se spojit se serverem.</string>
+    <string name="pair_error_send">Nepodařilo se odeslat odpověď serveru.</string>
+    <string name="pair_error_generic">Při párování došlo k chybě.</string>
+    <string name="btn_retry">Zkusit znovu</string>
+    <string name="btn_back">Zpět</string>
+
+    <!-- Služba na pozadí / notifikace -->
+    <string name="notif_channel_service">Spojení se serverem chatu</string>
+    <string name="notif_channel_service_desc">Drží spojení k serveru chatu přes Tor, aby chodily zprávy.</string>
+    <string name="notif_channel_messages">Zprávy</string>
+    <string name="notif_channel_messages_desc">Upozornění na nové zprávy.</string>
+    <string name="notif_connecting">Připojuji k serveru chatu…</string>
+    <string name="notif_connected">Připojeno k serveru chatu</string>
+    <string name="notif_new_message">Nová zpráva</string>
+
+    <!-- Průvodce povoleními pro pozadí -->
+    <string name="onb_step_counter">Krok %1$d z %2$d</string>
+    <string name="onb_notif_title">Povol oznámení</string>
+    <string name="onb_notif_why">CryptoChatServer doručuje zprávy jako oznámení — i když je appka zavřená. Bez toho se o nových zprávách nedozvíš.</string>
+    <string name="onb_battery_title">Neomezuj baterií</string>
+    <string name="onb_battery_why">Aby zprávy chodily i na pozadí, systém nesmí appku uspávat. Povol jí běh bez omezení baterie.</string>
+    <string name="onb_autostart_title">Běh na pozadí</string>
+    <string name="onb_autostart_why">Některé telefony brání appkám ve spuštění na pozadí, což by přerušilo doručování zpráv. Povol CryptoChatServeru automatické spuštění a běh na pozadí. Pokud volbu nevidíš, zapni v detailu aplikace „Povolit aktivitu na pozadí".</string>
+    <string name="onb_allow">Povolit</string>
+    <string name="onb_open_settings">Otevřít nastavení</string>
+    <string name="onb_next">Další</string>
+    <string name="onb_finish">Hotovo</string>
+    <string name="onb_skip">Přeskočit</string>
+    <string name="onb_skip_finish">Přeskočit a dokončit</string>
+    <string name="onb_done_next">Hotovo, pokračovat</string>
+    <string name="onb_status_enabled">Povoleno</string>
 </resources>

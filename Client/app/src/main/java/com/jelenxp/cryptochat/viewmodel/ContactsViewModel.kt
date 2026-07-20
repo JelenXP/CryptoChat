@@ -69,18 +69,17 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     /** Počet kontaktů (pro UI zálohy - kolik se jich vyexportuje). */
     fun contactCount(): Int = _contacts.value.size
 
-    /** Zašifrovaná záloha všech kontaktů, chráněná heslem. */
+    /** Zašifrovaná kompletní záloha (kontakty, klíče, fotky, chaty), chráněná heslem. */
     fun exportBackup(password: CharArray): ByteArray =
-        ContactBackup.export(repository.getContacts(), password)
+        ContactBackup.export(getApplication(), repository.getContacts(), password)
 
     /**
-     * Naimportuje kontakty ze zálohy a vrátí počet přidaných/aktualizovaných.
-     * Kontakty se ukládají pod původním id (stejný kontakt se aktualizuje,
+     * Naimportuje kompletní zálohu (kontakty, klíče, fotky, chaty) a vrátí počet
+     * obnovených kontaktů. Kontakty se ukládají pod původním id (aktualizují se,
      * nezaloží duplikát). Vyhodí výjimku při špatném hesle / poškozeném souboru.
      */
     fun importBackup(blob: ByteArray, password: CharArray): Int {
-        val imported = ContactBackup.import(blob, password)
-        val count = repository.addOrUpdateAll(imported)
+        val count = ContactBackup.import(getApplication(), blob, password)
         refresh()
         return count
     }

@@ -55,6 +55,23 @@ object AvatarStore {
     }
 
     /**
+     * Uloží fotku kontaktu ze syrových bajtů JPEG (obnova ze zálohy) a vrátí
+     * cestu k souboru, nebo null při chybě. Předchozí fotky téhož kontaktu smaže.
+     */
+    fun saveAvatarBytes(context: Context, contactId: String, bytes: ByteArray): String? {
+        return try {
+            val dir = File(context.filesDir, DIR).apply { mkdirs() }
+            deleteAvatars(context, contactId)
+            val file = File(dir, "${safeId(contactId)}_${System.currentTimeMillis()}.jpg")
+            file.writeBytes(bytes)
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Uložení fotky ze zálohy se nepovedlo", e)
+            null
+        }
+    }
+
+    /**
      * Vytvoří dočasný soubor v cache a vrátí jeho `content://` Uri přes
      * FileProvider - sem fotoaparát zapíše vyfocenou fotku. Vrátí null při chybě.
      */

@@ -1,10 +1,16 @@
 package com.jelenxp.cryptochat
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -45,10 +51,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.data.AnimStyle
+import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.lock.LockScreen
+import com.jelenxp.cryptochat.ui.onboarding.BackgroundOnboardingScreen
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
@@ -86,6 +95,9 @@ class MainActivity : AppCompatActivity() {
     // z intentu při startu i za běhu (onNewIntent); composable ho sleduje.
     private val sharedTextState = mutableStateOf<String?>(null)
 
+    // Kontakt, jehož konverzaci má appka otevřít (klepnutí na notifikaci zprávy).
+    private val openChatIdState = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Blokování screenshotů/náhledu v přepínači aplikací - drží klíče a
@@ -95,6 +107,7 @@ class MainActivity : AppCompatActivity() {
             WindowManager.LayoutParams.FLAG_SECURE
         )
         sharedTextState.value = extractSharedText(intent)
+        openChatIdState.value = intent?.getStringExtra(EXTRA_OPEN_CHAT)
         setContent {
             val context = LocalContext.current
             val settingsRepository = remember { SettingsRepository(context) }
@@ -109,13 +122,24 @@ class MainActivity : AppCompatActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        AppLockGate {
-                            StartupGate {
-                                CryptoChatApp(
-                                    design = design,
-                                    sharedText = sharedTextState.value,
-                                    onSharedTextConsumed = { sharedTextState.value = null }
-                                )
+                        // Při prvním spuštění průvodce povoleními pro běh na pozadí.
+                        var onboarded by remember { mutableStateOf(settingsRepository.isOnboardingDone()) }
+                        if (!onboarded) {
+                            BackgroundOnboardingScreen(onFinished = {
+                                settingsRepository.setOnboardingDone(true)
+                                onboarded = true
+                            })
+                        } else {
+                            AppLockGate {
+                                StartupGate {
+                                    CryptoChatApp(
+                                        design = design,
+                                        sharedText = sharedTextState.value,
+                                        onSharedTextConsumed = { sharedTextState.value = null },
+                                        openChatId = openChatIdState.value,
+                                        onOpenChatConsumed = { openChatIdState.value = null }
+                                    )
+                                }
                             }
                         }
                     }
@@ -128,6 +152,41 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         extractSharedText(intent)?.let { sharedTextState.value = it }
+        intent.getStringExtra(EXTRA_OPEN_CHAT)?.let { openChatIdState.value = it }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Spusť/obnov foreground service (drží Tor teplý + zprávy na pozadí).
+        // Z popředí (viditelná aktivita) to Android 12+ povolí; START_STICKY ho
+        // pak drží i po odchodu appky na pozadí.
+        try {
+            if (SettingsRepository(this).getRelayUrl().isNotBlank()) {
+                ContextCompat.startForegroundService(
+                    this, Intent(this, TorForegroundService::class.java)
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Nepodařilo se spustit chat service", e)
+        }
+    }
+
+    /** Na Androidu 13+ si vyžádá povolení notifikací (jinak by je systém skryl). */
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            ActivityCompat.requestPermissions(
+                this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS
+            )
+        }
+    }
+
+    companion object {
+        const val EXTRA_OPEN_CHAT = "open_chat_id"
+        private const val REQ_NOTIFICATIONS = 101
     }
 }
 
@@ -231,6 +290,9 @@ private fun StartupGate(content: @Composable () -> Unit) {
     var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
     var updateEligible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
+        // Feature prozatím vypnutá jedním vypínačem (kód zůstává; míří na repo
+        // původní offline appky). Až budou vlastní veřejné releases, zapni ji.
+        if (!FeatureFlags.UPDATE_CHECK_ENABLED) return@LaunchedEffect
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
             ?: return@LaunchedEffect
@@ -364,7 +426,9 @@ private fun popExitFor(style: AnimStyle, d: Int): ExitTransition = when (style) 
 fun CryptoChatApp(
     design: DesignController,
     sharedText: String? = null,
-    onSharedTextConsumed: () -> Unit = {}
+    onSharedTextConsumed: () -> Unit = {},
+    openChatId: String? = null,
+    onOpenChatConsumed: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val viewModel: ContactsViewModel = viewModel()
@@ -378,6 +442,13 @@ fun CryptoChatApp(
         pendingSharedText = text
         onSharedTextConsumed()
         navController.navigate("receive_shared")
+    }
+
+    // Klepnutí na notifikaci nové zprávy → otevři přímo tu konverzaci.
+    LaunchedEffect(openChatId) {
+        val id = openChatId ?: return@LaunchedEffect
+        onOpenChatConsumed()
+        navController.navigate("chat/$id")
     }
 
     NavHost(

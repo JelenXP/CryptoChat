@@ -1,5 +1,6 @@
 package com.jelenxp.cryptochat.chat
 
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -25,33 +26,72 @@ import java.net.URL
  */
 object RelayClient {
 
+    private const val TAG = "RelayClient"
+
     private const val TIMEOUT_MS = 30_000
+
+    // Navázání onion okruhu (SOCKS connect + čekání na rendezvous) je zvlášť od
+    // čtení odpovědi. První připojení na službu bývá pomalé - proto radši KRATŠÍ
+    // connect timeout a VÍC pokusů: jakmile Tor stáhne deskriptor služby, další
+    // pokus se „chytne" hned, místo aby první visel na plném timeoutu.
+    /** Timeout na navázání onion okruhu (jeden pokus). */
+    private const val ONION_CONNECT_TIMEOUT_MS = 18_000
+
+    /**
+     * Výchozí timeout na čtení odpovědi (u long-pollu se prodlouží). Delší kvůli
+     * fotkám a kouskům souborů - blob může mít až ~2 MB a přes Tor to chvíli trvá.
+     */
+    private const val ONION_READ_TIMEOUT_MS = 60_000
+
+    /** Kolikrát zkusit navázat onion okruh, než to vzdáme. */
+    private const val ONION_ATTEMPTS = 5
+
+    /**
+     * Pokusy u long-pollu. Míň než [ONION_ATTEMPTS]: příjem se stejně hned opakuje
+     * v další smyčce, takže vytrvalost je tu zbytečná - a při nedostupném serveru
+     * by 5 × 18 s znamenalo minuty a půl marného stavění okruhů (a vybité baterie).
+     */
+    private const val ONION_POLL_ATTEMPTS = 2
+
+    /** Pauza mezi pokusy onion požadavku. */
+    private const val ONION_RETRY_DELAY_MS = 700L
+
+    /** Jak dlouho čekat, než zabudovaný Tor otevře SOCKS listener (bootstrap). */
+    private const val TOR_READY_TIMEOUT_MS = 60_000L
 
     /** Uloží blob do schránky. Vrací true při úspěchu (2xx). */
     fun put(baseUrl: String, mailboxId: String, blob: ByteArray): Boolean {
         val target = Target.parse(baseUrl, "/m/$mailboxId")
-        val proxy = TorManager.socksFor(target.host)
-        return if (proxy != null) {
-            val (code, _) = socksRequest(proxy, target, "PUT", blob)
+        return if (TorManager.isOnion(target.host)) {
+            val (code, _) = onionRequest(target, "PUT", blob, ONION_READ_TIMEOUT_MS)
             code in 200..204
         } else {
             directPut(baseUrl, mailboxId, blob)
         }
     }
 
-    /** Vyzvedne (a na serveru smaže) všechny čekající bloby. Prázdná schránka = prázdný seznam. */
-    fun get(baseUrl: String, mailboxId: String): List<ByteArray> {
-        val target = Target.parse(baseUrl, "/m/$mailboxId")
-        val proxy = TorManager.socksFor(target.host)
-        return if (proxy != null) {
-            val (code, body) = socksRequest(proxy, target, "GET", null)
+    /**
+     * Vyzvedne (a na serveru smaže) všechny čekající bloby. Prázdná schránka =
+     * prázdný seznam. Když [waitSeconds] > 0, použije se long-polling: server drží
+     * spojení otevřené, dokud nedorazí zpráva (nebo tolik sekund) - zprávy tak
+     * chodí skoro okamžitě a přes Tor jde míň spojení.
+     */
+    fun get(baseUrl: String, mailboxId: String, waitSeconds: Int = 0): List<ByteArray> {
+        val query = if (waitSeconds > 0) "?wait=$waitSeconds" else ""
+        val target = Target.parse(baseUrl, "/m/$mailboxId$query")
+        return if (TorManager.isOnion(target.host)) {
+            // U long-pollu server drží spojení až waitSeconds - čtecí timeout
+            // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
+            val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
+            val attempts = if (waitSeconds > 0) ONION_POLL_ATTEMPTS else ONION_ATTEMPTS
+            val (code, body) = onionRequest(target, "GET", null, readTimeout, attempts)
             when (code) {
                 204 -> emptyList()
                 200 -> unframe(body)
                 else -> throw IOException("Relay GET vrátil HTTP $code")
             }
         } else {
-            directGet(baseUrl, mailboxId)
+            directGet(baseUrl, mailboxId, query)
         }
     }
 
@@ -59,9 +99,8 @@ object RelayClient {
     fun health(baseUrl: String): Boolean {
         return try {
             val target = Target.parse(baseUrl, "/health")
-            val proxy = TorManager.socksFor(target.host)
-            if (proxy != null) {
-                socksRequest(proxy, target, "GET", null).first == 200
+            if (TorManager.isOnion(target.host)) {
+                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS).first == 200
             } else {
                 val conn = (URL(baseUrl.trimEnd('/') + "/health").openConnection() as HttpURLConnection)
                 try {
@@ -74,8 +113,55 @@ object RelayClient {
                 }
             }
         } catch (e: Exception) {
+            // Adresu relaye nelogujeme - v release buildu (bez R8) by zůstala
+            // v logcatu a prozradila, na jaký server se uživatel připojuje.
+            Log.w(TAG, "health selhal: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
+    }
+
+    /**
+     * Pošle `.onion` požadavek přes zabudovaný Tor. Nejdřív počká, až Tor otevře
+     * SOCKS listener (bootstrap může chvíli trvat) - teprve pak jde přes SOCKS5
+     * tunel na skutečný port zabudovaného Toru. Když Tor včas nenaběhne, vyhodí
+     * srozumitelnou chybu (místo matoucího „connection refused" na starý port).
+     */
+    private fun onionRequest(
+        target: Target,
+        method: String,
+        body: ByteArray?,
+        readTimeoutMs: Int,
+        attempts: Int = ONION_ATTEMPTS
+    ): Pair<Int, ByteArray> {
+        if (!TorManager.awaitReady(TOR_READY_TIMEOUT_MS)) {
+            Log.w(TAG, "onion $method: Tor není včas připravený")
+            throw IOException("Tor se nespustil nebo nenabootoval včas - zkus to za chvíli znovu")
+        }
+        val proxy = TorManager.socksHost to TorManager.socksPort
+        // Onion okruh (zvlášť první connect na službu) může být zpočátku pomalý
+        // nebo selhat, než Tor stáhne deskriptor služby - víc kratších pokusů se
+        // „chytne" hned, jakmile je okruh hotový (líp než jeden dlouhý timeout).
+        var last: Exception? = null
+        repeat(attempts) { attempt ->
+            try {
+                val t0 = System.currentTimeMillis()
+                val r = socksRequest(proxy, target, method, body, ONION_CONNECT_TIMEOUT_MS, readTimeoutMs)
+                Log.i(TAG, "onion $method -> HTTP ${r.first} " +
+                    "(${System.currentTimeMillis() - t0} ms, pokus ${attempt + 1})")
+                return r
+            } catch (e: Exception) {
+                last = e
+                Log.w(TAG, "onion $method selhal (pokus ${attempt + 1}/$attempts): " +
+                    "${e.javaClass.simpleName}: ${e.message}")
+                if (attempt < attempts - 1) {
+                    try { Thread.sleep(ONION_RETRY_DELAY_MS) } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw ie
+                    }
+                }
+            }
+        }
+        throw last ?: IOException("onion request failed")
     }
 
     // --- Přímé spojení (http/https) ---
@@ -93,8 +179,8 @@ object RelayClient {
         }
     }
 
-    private fun directGet(baseUrl: String, mailboxId: String): List<ByteArray> {
-        val conn = openDirect(baseUrl, mailboxId, "GET")
+    private fun directGet(baseUrl: String, mailboxId: String, query: String = ""): List<ByteArray> {
+        val conn = openDirect(baseUrl, mailboxId, "GET", query)
         return try {
             when (val code = conn.responseCode) {
                 204 -> emptyList()
@@ -106,8 +192,8 @@ object RelayClient {
         }
     }
 
-    private fun openDirect(baseUrl: String, mailboxId: String, method: String): HttpURLConnection {
-        val url = URL(baseUrl.trimEnd('/') + "/m/" + mailboxId)
+    private fun openDirect(baseUrl: String, mailboxId: String, method: String, query: String = ""): HttpURLConnection {
+        val url = URL(baseUrl.trimEnd('/') + "/m/" + mailboxId + query)
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = TIMEOUT_MS
@@ -140,11 +226,15 @@ object RelayClient {
         proxy: Pair<String, Int>,
         target: Target,
         method: String,
-        body: ByteArray?
+        body: ByteArray?,
+        connectTimeoutMs: Int = TIMEOUT_MS,
+        readTimeoutMs: Int = TIMEOUT_MS
     ): Pair<Int, ByteArray> {
         Socket().use { socket ->
-            socket.connect(InetSocketAddress(proxy.first, proxy.second), TIMEOUT_MS)
-            socket.soTimeout = TIMEOUT_MS
+            socket.connect(InetSocketAddress(proxy.first, proxy.second), connectTimeoutMs)
+            // Do navázání okruhu (SOCKS handshake vč. čekání na rendezvous) platí
+            // connect timeout; po něm se přepne na (delší) čtecí timeout kvůli long-pollu.
+            socket.soTimeout = connectTimeoutMs
             val out = socket.getOutputStream()
             val input = socket.getInputStream()
 
@@ -179,6 +269,9 @@ object RelayClient {
                 else -> throw IOException("SOCKS5 neznámý ATYP")
             }
             readExactly(input, addrLen + 2) // přeskoč navázanou adresu a port
+
+            // Okruh na službu je navázaný - teď platí čtecí timeout (u long-pollu delší).
+            socket.soTimeout = readTimeoutMs
 
             // HTTP/1.1 přes tunel. Connection: close -> tělo čteme až do konce.
             val head = StringBuilder()

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CryptoChat Chat</string>
+    <string name="app_name">CryptoChatServer</string>
 
     <!-- Common -->
     <string name="content_desc_copy">Copy</string>
@@ -84,7 +84,7 @@
     <string name="lock_screen_title">App is locked</string>
     <string name="lock_screen_subtitle">Authenticate to continue.</string>
     <string name="btn_unlock">Unlock</string>
-    <string name="biometric_prompt_title">Unlock CryptoChat</string>
+    <string name="biometric_prompt_title">Unlock CryptoChatServer</string>
     <string name="error_cannot_show_auth">Could not show authentication.</string>
     <string name="error_auth_failed_generic">Authentication failed.</string>
 
@@ -177,7 +177,7 @@
     <string name="settings_section_data">Data</string>
     <string name="settings_backup_label">Backup</string>
     <string name="settings_backup_desc">Export/import contacts, protected by a password</string>
-    <string name="backup_intro">Export your contacts and their keys into a password-protected file, and import them back — on this or another phone. The file is encrypted; without the password it can\'t be read.</string>
+    <string name="backup_intro">Export your contacts, keys, profile photos and chat history into a password-protected file, and import them back — on this or another phone. The file is encrypted; without the password it can\'t be read.</string>
     <string name="backup_export_title">Export</string>
     <string name="backup_export_desc">Save all contacts into an encrypted backup file.</string>
     <string name="btn_export">Export backup</string>
@@ -197,7 +197,7 @@
     <string name="toast_import_done">Imported %1$d contacts.</string>
     <!-- Update available -->
     <string name="update_title">New version available</string>
-    <string name="update_intro">A newer version of CryptoChat is available. Updating gets you the latest fixes and keeps you compatible with the people you message.</string>
+    <string name="update_intro">A newer version of CryptoChatServer is available. Updating gets you the latest fixes and keeps you compatible with the people you message.</string>
     <string name="update_versions">Installed: %1$s  ·  Latest: %2$s</string>
     <string name="update_important_warning">This is an important update. Until you install it, some features may not work correctly.</string>
     <string name="btn_update_get">Get the latest version</string>
@@ -226,8 +226,8 @@
     <string name="about_changelog_desc">See what changed in this version</string>
     <string name="about_check_updates_label">Check for updates</string>
     <string name="about_check_updates_desc">Look on GitHub for a newer version now</string>
-    <string name="about_github_label">Project on GitHub</string>
-    <string name="about_github_desc">Open the source code in your browser</string>
+    <string name="about_github_label">Releases on GitHub</string>
+    <string name="about_github_desc">Open the releases page in your browser</string>
     <string name="update_check_dialog_title">Updates</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_up_to_date">You\'re on the latest version (%1$s).</string>
@@ -321,4 +321,87 @@
 
     <!-- Animation preview (Design settings) -->
     <string name="design_preview_hint">Changing the style or speed replays the transition on this whole screen.</string>
+
+    <!-- Chat server (relay) -->
+    <string name="relay_title">Chat server</string>
+    <string name="relay_info">A zero-knowledge relay for chatting over the internet. The server only forwards encrypted messages — it never learns their content or who is talking to whom.</string>
+    <string name="relay_mode_default">Default</string>
+    <string name="relay_mode_custom">Custom</string>
+    <string name="relay_default_desc">Uses the official relay over Tor — nothing to install.</string>
+    <string name="relay_custom_desc">Use your own server address.</string>
+    <string name="relay_custom_label">Server address</string>
+    <string name="relay_custom_help">For example http://192.168.1.10:8787 on a local network, or a .onion address over Tor. Leave empty to turn the chat server off.</string>
+    <string name="content_desc_relay">Chat server</string>
+
+    <!-- Chat conversation -->
+    <string name="chat_title_fallback">Conversation</string>
+    <string name="chat_menu_detail">Details and key</string>
+    <string name="chat_menu_server">Chat server</string>
+    <string name="chat_notice_no_key">This contact has no key yet. Pair first (Details and key).</string>
+    <string name="chat_notice_no_server">No chat server is set. Set it from the menu (⋮ → Chat server).</string>
+    <string name="chat_empty">No messages yet.\nWrite the first one.</string>
+    <string name="chat_input_hint">Message…</string>
+    <string name="content_desc_send">Send</string>
+    <string name="content_desc_sending">Sending</string>
+    <string name="content_desc_delivered">Delivered</string>
+    <string name="content_desc_not_delivered">Not delivered</string>
+    <string name="chat_retry_hint">Not delivered — tap to retry</string>
+    <string name="chat_last_you">You: %1$s</string>
+    <string name="chat_preview_none">No messages yet</string>
+    <string name="chat_preview_photo">📷 Photo</string>
+    <string name="content_desc_attach">Attach photo</string>
+    <string name="content_desc_image">Photo</string>
+    <string name="attach_camera">Camera</string>
+    <string name="attach_gallery">Gallery</string>
+    <string name="chat_image_failed">Couldn\'t send the photo. It may be too large.</string>
+    <string name="attach_file">File</string>
+    <string name="chat_file_failed">Couldn\'t send the file. The maximum size is 25 MB.</string>
+    <string name="chat_file_receiving">Receiving…</string>
+    <string name="chat_preview_file">📎 File</string>
+
+    <!-- Pairing over an invite -->
+    <string name="pair_need_server">You need to set the chat server address first.</string>
+    <string name="btn_set_server">Set up server</string>
+    <string name="pair_invite_title">Invite for %1$s</string>
+    <string name="pair_join_title">Invite from %1$s</string>
+    <string name="pair_invite_instructions">Tell this code to the other person. Once they enter it, the connection sets up automatically. The code is one-time and expires soon.</string>
+    <string name="pair_invite_code_caption">One-time invite code</string>
+    <string name="pair_invite_waiting">Waiting for the other person to join…</string>
+    <string name="pair_join_instructions">Enter the code the other person told you. The connection then sets up automatically.</string>
+    <string name="pair_code_label">Invite code</string>
+    <string name="btn_join">Join</string>
+    <string name="pair_working">Connecting…</string>
+    <string name="pair_error_bad_code">The code isn\'t in the right format.</string>
+    <string name="pair_error_not_found">Invite not found or expired. Check the code and try again.</string>
+    <string name="pair_error_connect">Couldn\'t reach the server.</string>
+    <string name="pair_error_send">Couldn\'t send the reply to the server.</string>
+    <string name="pair_error_generic">Something went wrong while pairing.</string>
+    <string name="btn_retry">Try again</string>
+    <string name="btn_back">Back</string>
+
+    <!-- Background service / notifications -->
+    <string name="notif_channel_service">Chat server connection</string>
+    <string name="notif_channel_service_desc">Keeps the Tor connection to the chat server active so messages arrive.</string>
+    <string name="notif_channel_messages">Messages</string>
+    <string name="notif_channel_messages_desc">Notifications for new messages.</string>
+    <string name="notif_connecting">Connecting to the chat server…</string>
+    <string name="notif_connected">Connected to the chat server</string>
+    <string name="notif_new_message">New message</string>
+
+    <!-- Background permissions onboarding -->
+    <string name="onb_step_counter">Step %1$d of %2$d</string>
+    <string name="onb_notif_title">Allow notifications</string>
+    <string name="onb_notif_why">CryptoChatServer delivers messages as notifications — even when the app is closed. Without this you won\'t know about new messages.</string>
+    <string name="onb_battery_title">Don\'t restrict the battery</string>
+    <string name="onb_battery_why">To receive messages in the background, the system must not put the app to sleep. Allow it to run without battery restrictions.</string>
+    <string name="onb_autostart_title">Run in the background</string>
+    <string name="onb_autostart_why">Some phones stop apps from starting on their own, which would cut off your messages. Allow CryptoChatServer to auto-start and run in the background. If you don\'t see the option, turn on \"Allow background activity\" in the app info.</string>
+    <string name="onb_allow">Allow</string>
+    <string name="onb_open_settings">Open settings</string>
+    <string name="onb_next">Next</string>
+    <string name="onb_finish">Done</string>
+    <string name="onb_skip">Skip</string>
+    <string name="onb_skip_finish">Skip and finish</string>
+    <string name="onb_done_next">I did it, continue</string>
+    <string name="onb_status_enabled">Enabled</string>
 </resources>

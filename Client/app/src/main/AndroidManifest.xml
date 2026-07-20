@@ -3,8 +3,15 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-    <!-- Jen pro kontrolu nové verze na GitHub Releases (žádná uživatelská data). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Foreground service drží Tor teplý a přijímá zprávy na pozadí (bez pushe). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Aby systém nezabíjel spojení na pozadí - onboarding uživatele provede zapnutím. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Spuštění chatu na pozadí po restartu telefonu. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
@@ -50,6 +57,32 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Foreground service: drží Tor spojení teplé a přijímá zprávy na pozadí.
+             Typ „specialUse" - držíme trvalé Tor spojení místo pushe (soukromí). -->
+        <service
+            android:name=".chat.TorForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the Tor connection to the private chat relay warm so messages are delivered without a metadata-leaking push service." />
+        </service>
+
+        <!-- Po restartu telefonu (a po aktualizaci appky) nastartuje chat službu,
+             aby chodily zprávy a notifikace i bez otevření appky. -->
+        <receiver
+            android:name=".chat.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- Sken QR kódu zamčený na výšku (portrait) - viz ui/qr/QrScan.kt. -->
         <activity

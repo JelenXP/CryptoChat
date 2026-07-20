@@ -27,6 +27,7 @@ import re
 import struct
 import threading
 import time
+import urllib.parse
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -39,8 +40,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOST = os.environ.get("CC_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CC_PORT", "8787"))
 
-# Maximalni velikost jednoho blobu (bajty). Zpravy jsou male; strop je pojistka.
-MAX_BLOB_SIZE = int(os.environ.get("CC_MAX_BLOB_SIZE", str(512 * 1024)))       # 512 KB
+# Maximalni velikost jednoho blobu (bajty). Textove zpravy jsou male, ale fotky a
+# kousky (chunky) vetsich souboru potrebuji vic - proto 2 MB.
+MAX_BLOB_SIZE = int(os.environ.get("CC_MAX_BLOB_SIZE", str(2 * 1024 * 1024)))  # 2 MB
 
 # Kdyz prijde prilis velke telo, chceme klientovi poslat cistou odpoved 413.
 # Aby ji stihl precist (a nedostal reset spojeni), musime zbytek tela "vypit".
@@ -56,12 +58,30 @@ TTL_SECONDS = int(os.environ.get("CC_TTL_SECONDS", str(24 * 3600)))            #
 
 # Globalni strop pameti (bajty) - pojistka proti zaplneni RAM serveru. Pri prekroceni
 # server odmita nove PUT, dokud se neco nevyzvedne / neexpiruje.
-MAX_TOTAL_BYTES = int(os.environ.get("CC_MAX_TOTAL_BYTES", str(128 * 1024 * 1024)))  # 128 MB
+MAX_TOTAL_BYTES = int(os.environ.get("CC_MAX_TOTAL_BYTES", str(512 * 1024 * 1024)))  # 512 MB
+
+# Strop soubeznych spojeni. Kazde spojeni = jedno vlakno; pri dlouhem long-pollu
+# jich zije hodne najednou, ale musi to mit konec. Pocitej ~2 spojeni na aktivni
+# kontakt a rezervu: 512 vlaken notebook v pohode unese.
+MAX_CONNECTIONS = int(os.environ.get("CC_MAX_CONNECTIONS", "512"))
 
 # Jednoduchy rate limit na klienta (pocet pozadavku za okno). Za Torem prichazi
-# vsichni z 127.0.0.1, takze tohle chrani hlavne pri primem vystaveni do site.
-RATE_LIMIT_REQUESTS = int(os.environ.get("CC_RATE_LIMIT_REQUESTS", "240"))
+# vsichni z 127.0.0.1, takze je to ve skutecnosti JEDEN SPOLECNY kbelik pro
+# vsechny uzivatele - proti utocnikovi nechrani (ten ho jen vycerpa) a pri nizke
+# hodnote by naopak odstrihl legitimni provoz. Skutecnou obranou je proto
+# MAX_CONNECTIONS vyse; tenhle limit je uz jen pojistka pri primem vystaveni do
+# site, a proto je nastaveny volne.
+RATE_LIMIT_REQUESTS = int(os.environ.get("CC_RATE_LIMIT_REQUESTS", "3000"))
 RATE_LIMIT_WINDOW = int(os.environ.get("CC_RATE_LIMIT_WINDOW", "60"))          # sekundy
+
+# Long-polling: kdyz klient posle GET s ?wait=<s>, drzime spojeni otevrene az
+# tolik sekund a odpovime hned, jak dorazi zprava (min round-tripu pres Tor,
+# skoro okamzite doruceni). Strop drzime pod ctecim timeoutem klienta.
+#
+# Cim delsi cekani, tim min probuzeni klienta = min vybite baterie: 90 s misto
+# 25 s snizi pocet round-tripu na ctvrtinu, aniz by se zdrzelo doruceni (PUT
+# cekajici GET probudi okamzite). Vlakno navic nic nestoji - jen ceka na Condition.
+LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "90"))                     # sekundy
 
 # Povoleny tvar mailbox ID: URL-safe base64 / hex, rozumna delka. Server ho bere
 # jako neprusvitny retezec - nezajima ho, co znamena.
@@ -78,7 +98,9 @@ class MailboxStore:
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
+        # Condition (misto prosteho Locku) umoznuje long-polling: GET, ktery najde
+        # prazdnou schranku, muze pockat, nez ho PUT probudi (notify_all).
+        self._cond = threading.Condition()
         # mailbox_id -> {"blobs": deque[bytes], "expires": float(monotonic)}
         self._boxes = {}
         self._total_bytes = 0
@@ -86,7 +108,13 @@ class MailboxStore:
     def put(self, mailbox_id: str, blob: bytes) -> str:
         """Prida blob do schranky. Vraci 'ok' | 'full' | 'box_full'."""
         now = time.monotonic()
-        with self._lock:
+        with self._cond:
+            if self._total_bytes + len(blob) > MAX_TOTAL_BYTES:
+                # Drive se tady jen vratilo 507 a nic se nemazalo - utocnik tak
+                # par sty bloby zablokoval zapis VSEM na celou dobu TTL (24 h).
+                # Ted radeji obetujeme nejstarsi schranky (ty stejne expiruji
+                # nejdriv) a provoz jede dal.
+                self._evict_locked(len(blob))
             if self._total_bytes + len(blob) > MAX_TOTAL_BYTES:
                 return "full"
             box = self._boxes.get(mailbox_id)
@@ -98,22 +126,59 @@ class MailboxStore:
             box["blobs"].append(blob)
             box["expires"] = now + TTL_SECONDS  # kazdy zapis prodlouzi zivotnost
             self._total_bytes += len(blob)
+            # Probud pripadne long-poll cekatele (vsichni si znovu overi svou schranku).
+            self._cond.notify_all()
             return "ok"
 
     def drain(self, mailbox_id: str):
         """Vrati a SMAZE vsechny cekajici bloby ze schranky (list[bytes])."""
-        with self._lock:
-            box = self._boxes.pop(mailbox_id, None)
-            if box is None:
-                return []
-            blobs = list(box["blobs"])
-            self._total_bytes -= sum(len(b) for b in blobs)
-            return blobs
+        with self._cond:
+            return self._drain_locked(mailbox_id)
+
+    def drain_blocking(self, mailbox_id: str, timeout: float):
+        """Jako [drain], ale kdyz je schranka prazdna, pocka az [timeout] sekund,
+        nez ji nejaky PUT naplni. Vraci list[bytes] (prazdny = timeout bez zpravy).
+        Drzi jedno serverove vlakno po dobu cekani - klient posila jen kdyz otevre
+        chat, takze cekatelu je malo."""
+        deadline = time.monotonic() + timeout
+        with self._cond:
+            while True:
+                blobs = self._drain_locked(mailbox_id)
+                if blobs:
+                    return blobs
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return []
+                self._cond.wait(remaining)
+
+    def _evict_locked(self, needed: int):
+        """Uvolni misto zahozenim nejstarsich schranek. Vola se uz drzici self._cond.
+
+        Maze se v poradi podle expirace (nejdriv ty, ktere by stejne brzy zmizely),
+        dokud neni misto pro [needed] bajtu a jeste rezerva, aby se neuklizelo
+        pri kazdem dalsim zapisu.
+        """
+        target = MAX_TOTAL_BYTES - needed - (MAX_TOTAL_BYTES // 10)
+        if self._total_bytes <= target:
+            return
+        for mid, _box in sorted(self._boxes.items(), key=lambda kv: kv[1]["expires"]):
+            if self._total_bytes <= target:
+                break
+            self._drain_locked(mid)
+
+    def _drain_locked(self, mailbox_id: str):
+        """Vyzvedne a smaze schranku. Vola se uz drzici self._cond."""
+        box = self._boxes.pop(mailbox_id, None)
+        if box is None:
+            return []
+        blobs = list(box["blobs"])
+        self._total_bytes -= sum(len(b) for b in blobs)
+        return blobs
 
     def purge_expired(self):
         """Odstrani expirovane schranky. Vola se periodicky z uklidoveho vlakna."""
         now = time.monotonic()
-        with self._lock:
+        with self._cond:
             dead = [mid for mid, box in self._boxes.items() if box["expires"] <= now]
             for mid in dead:
                 box = self._boxes.pop(mid)
@@ -157,6 +222,12 @@ LIMITER = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
 class RelayHandler(BaseHTTPRequestHandler):
     # Protokol nechame HTTP/1.1 (keep-alive), rychlejsi pri pollingu.
     protocol_version = "HTTP/1.1"
+
+    # Timeout na necinne spojeni. BEZ NEJ je socket bez timeoutu a vlakno visi
+    # navzdy v readline() - utocnik otevre par tisic spojeni, nic neposle a
+    # server dojdou vlakna (slowloris). Musi byt delsi nez nejdelsi long-poll,
+    # jinak by se rusila legitimni cekani.
+    timeout = LONGPOLL_MAX + 60
 
     # Zadne logy pristupu - soukromi. Prepisujeme na no-op.
     def log_message(self, *args, **kwargs):  # noqa: D401
@@ -219,6 +290,17 @@ class RelayHandler(BaseHTTPRequestHandler):
         except ValueError:
             return None
 
+    def _longpoll_seconds(self) -> int:
+        """Precte ?wait=<s> z URL a orizne na [0, LONGPOLL_MAX]. 0 = bez cekani."""
+        split = self.path.split("?", 1)
+        if len(split) < 2:
+            return 0
+        raw = urllib.parse.parse_qs(split[1]).get("wait", ["0"])[0]
+        try:
+            return max(0, min(int(raw), LONGPOLL_MAX))
+        except ValueError:
+            return 0
+
     # --- routy ---
 
     def do_GET(self):
@@ -236,7 +318,9 @@ class RelayHandler(BaseHTTPRequestHandler):
             self._send(404)
             return
 
-        blobs = STORE.drain(mid)
+        # Long-poll: s ?wait=<s> pockame, nez dorazi zprava (jinak hned vyzvedneme).
+        wait_s = self._longpoll_seconds()
+        blobs = STORE.drain_blocking(mid, wait_s) if wait_s > 0 else STORE.drain(mid)
         if not blobs:
             # Prazdna schranka - 204 No Content (kratke, bez tela).
             self.send_response(204)
@@ -291,14 +375,53 @@ class RelayHandler(BaseHTTPRequestHandler):
 # --- Uklidove vlakno + spusteni ----------------------------------------------
 
 def _purge_loop(stop_event: threading.Event):
-    """Kazdych ~30 s smaze expirovane schranky."""
+    """Kazdych ~30 s smaze expirovane schranky.
+
+    Vyjimku uvnitr NESMIME nechat probublat: vlakno by tise umrelo (logy jsou
+    kvuli soukromi vypnute), schranky by prestaly expirovat a pamet by rostla
+    az na strop - tedy trvaly vypadek, ktery by nikdo nezaznamenal.
+    """
     while not stop_event.wait(30):
-        STORE.purge_expired()
+        try:
+            STORE.purge_expired()
+        except Exception:
+            # Zamlcet a zkusit za 30 s znovu - dulezite je, ze vlakno zije dal.
+            pass
+
+
+class RelayServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer se STROPEM soubeznych spojeni.
+
+    Vychozi ThreadingHTTPServer vytvori vlakno na kazde spojeni bez omezeni. Za
+    Torem nejde omezovat podle IP (vsichni prichazi z 127.0.0.1), takze jedina
+    obrana proti vycerpani vlaken je tvrdy strop: nad nej se spojeni rovnou
+    zavira, misto aby server upadl do swapu / spadl na 'can't start new thread'.
+    """
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.close()
+            except OSError:
+                pass
+            return
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request):
+        try:
+            super().shutdown_request(request)
+        finally:
+            self._slots.release()
 
 
 def main():
-    server = ThreadingHTTPServer((HOST, PORT), RelayHandler)
-    server.daemon_threads = True
+    server = RelayServer((HOST, PORT), RelayHandler)
 
     stop_event = threading.Event()
     purger = threading.Thread(target=_purge_loop, args=(stop_event,), daemon=True)

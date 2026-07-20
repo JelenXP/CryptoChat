@@ -18,7 +18,11 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0-chat"
+        // POZOR: versionName musí být čistě číselný ("1.0", "1.1", "2.0"). Porovnává
+        // ho UpdateChecker.compareVersions po složkách oddělených tečkou a nečíselnou
+        // složku bere jako 0 - jakýkoli suffix ("1.0-chat") by se tiše zahodil.
+        // Tag vydání na GitHubu musí sedět: "v1.1" nebo "1.1".
+        versionName = "1.0"
 
         // Runner pro instrumentované UI testy (androidTest) - spouští se na emulátoru v CI.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -30,6 +34,18 @@ android {
     // soubor neexistuje, release spadne zpátky na debug podpis (viz buildTypes).
     signingConfigs {
         val keystorePropsFile = rootProject.file("keystore.properties")
+        // Release BEZ keystoru se dřív tiše podepsal debug klíčem. To je u appky,
+        // která drží klíče a historii na zařízení, nebezpečné: takové APK se nedá
+        // aktualizovat přes to podepsané ostrým klíčem (jiný podpis = nutná
+        // odinstalace = ztráta všech dat). Radši build rovnou zastav.
+        val wantsRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
+        if (!keystorePropsFile.exists() && wantsRelease) {
+            throw GradleException(
+                "Chybí keystore.properties - release APK by se podepsalo DEBUG klíčem " +
+                    "a nešlo by aktualizovat. Doplň keystore.properties + release.keystore, " +
+                    "nebo sestav debug variantu (assembleDebug)."
+            )
+        }
         if (keystorePropsFile.exists()) {
             val keystoreProps = Properties().apply {
                 keystorePropsFile.inputStream().use { load(it) }
@@ -53,15 +69,10 @@ android {
             // lze zvážit návrat na true.
             isMinifyEnabled = false
             isShrinkResources = false
-            // Když existuje keystore.properties, podepíše se vlastním release
-            // klíčem; jinak fallback na debug klíč (aby build fungoval i bez
-            // keystoru, např. v CI). Debug podpis stačí na osobní instalaci,
-            // ne na Google Play.
-            signingConfig = if (rootProject.file("keystore.properties").exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            // Podepisuje se vždy ostrým klíčem. Když keystore.properties chybí,
+            // build spadl už výš (viz signingConfigs) - žádný tichý fallback na
+            // debug podpis tady schválně není.
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

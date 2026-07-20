@@ -4,4 +4,6 @@
 <paths>
     <cache-path name="camera" path="camera/" />
     <cache-path name="share" path="share/" />
+    <!-- Přijaté soubory v chatu (video, dokumenty) - otevírají se systémovou appkou. -->
+    <files-path name="chat_media" path="chat_media/" />
 </paths>

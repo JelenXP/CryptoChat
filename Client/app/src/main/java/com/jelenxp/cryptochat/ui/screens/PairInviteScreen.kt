@@ -11,12 +11,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.Pairing
 import com.jelenxp.cryptochat.chat.RelayClient
 import com.jelenxp.cryptochat.chat.RelayCrypto
@@ -70,7 +72,11 @@ fun PairInviteScreen(
             val uploaded = withContext(Dispatchers.IO) {
                 RelayClient.put(baseUrl, initBox, Pairing.wrap(keyPair.publicKeyBase64, inviteKey))
             }
-            if (!uploaded) { error = "Nepodařilo se spojit se serverem."; phase = InvitePhase.ERROR; return@LaunchedEffect }
+            if (!uploaded) {
+                error = context.getString(R.string.pair_error_connect)
+                phase = InvitePhase.ERROR
+                return@LaunchedEffect
+            }
 
             // Poll odpovědi (zapouzdření od protistrany).
             while (isActive) {
@@ -93,13 +99,13 @@ fun PairInviteScreen(
                 delay(2500)
             }
         } catch (e: Exception) {
-            error = e.message ?: "Chyba při párování."
+            error = context.getString(R.string.pair_error_generic)
             phase = InvitePhase.ERROR
         }
     }
 
     CryptoScaffold(
-        title = "Pozvánka pro $name",
+        title = stringResource(R.string.pair_invite_title, name),
         onBack = { navController.popBackStack() }
     ) { padding ->
         Column(
@@ -113,43 +119,43 @@ fun PairInviteScreen(
             Spacer(Modifier.height(4.dp))
             when (phase) {
                 InvitePhase.NO_RELAY -> {
-                    InfoCard(text = "Nejdřív je potřeba nastavit adresu serveru chatu.")
+                    InfoCard(text = stringResource(R.string.pair_need_server))
                     Button(
                         onClick = { navController.navigate("relay_settings") },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Nastavit server") }
+                    ) { Text(stringResource(R.string.btn_set_server)) }
                 }
 
                 InvitePhase.WAITING -> {
-                    InfoCard(text = "Řekni tento kód druhému člověku. Jakmile ho zadá u sebe, spojení se " +
-                        "naváže automaticky. Kód je jednorázový a brzy vyprší.")
-                    CodeBox(display = Pairing.formatForDisplay(invite)) {
+                    InfoCard(text = stringResource(R.string.pair_invite_instructions))
+                    InviteCodeCard(display = Pairing.formatForDisplay(invite)) {
                         clipboard.setText(AnnotatedString(Pairing.formatForDisplay(invite)))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text("Čekám, až se druhý připojí…", style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.pair_invite_waiting), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
                 InvitePhase.VERIFY -> {
-                    VerifySas(
-                        sas = sas,
-                        onMatch = {
+                    VerificationCodeContent(
+                        verificationCode = sas,
+                        contactName = name,
+                        onConfirmed = {
                             val id = contactId ?: UUID.randomUUID().toString()
                             viewModel.saveChatContact(id, name, aesKey, initiator = true)
                             navController.navigate("chat/$id") {
                                 popUpTo("main") { inclusive = false }
                             }
                         },
-                        onMismatch = { navController.popBackStack() }
+                        onCancel = { navController.popBackStack() }
                     )
                 }
 
                 InvitePhase.ERROR -> {
-                    InfoCard(text = error.ifBlank { "Došlo k chybě." })
+                    InfoCard(text = error.ifBlank { stringResource(R.string.pair_error_generic) })
                     Button(onClick = { navController.popBackStack() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Zpět")
+                        Text(stringResource(R.string.btn_back))
                     }
                 }
             }
@@ -157,58 +163,41 @@ fun PairInviteScreen(
     }
 }
 
-/** Velké čitelné zobrazení kódu s tlačítkem kopírovat. */
+/** Karta s jednorázovým pozvánkovým kódem: popisek, velký čitelný kód, kopírování. */
 @Composable
-private fun CodeBox(display: String, onCopy: () -> Unit) {
+private fun InviteCodeCard(display: String, onCopy: () -> Unit) {
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
             Text(
-                text = display,
-                style = MaterialTheme.typography.headlineSmall,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 2.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.weight(1f)
+                text = stringResource(R.string.pair_invite_code_caption).uppercase(),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
             )
-            IconButton(onClick = onCopy) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "Kopírovat")
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = display,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 2.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onCopy) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = stringResource(R.string.content_desc_copy)
+                    )
+                }
             }
         }
     }
-}
-
-/** Potvrzení SAS kódu jako obrana proti MITM (server podstrčil svůj klíč). */
-@Composable
-private fun VerifySas(sas: String, onMatch: () -> Unit, onMismatch: () -> Unit) {
-    Text("Ověřovací kód", style = MaterialTheme.typography.titleLarge)
-    Text(
-        "Porovnejte tento kód s druhou stranou (nahlas / jiným kanálem). Pokud se u obou " +
-            "shoduje, spojení je bezpečné a nikdo se mezi vás nevloudil.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    Surface(
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(
-            text = sas,
-            style = MaterialTheme.typography.headlineMedium,
-            fontFamily = FontFamily.Monospace,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(20.dp)
-        )
-    }
-    Button(onClick = onMatch, modifier = Modifier.fillMaxWidth()) { Text("Kódy se shodují — uložit") }
-    OutlinedButton(onClick = onMismatch, modifier = Modifier.fillMaxWidth()) { Text("Neshodují se (zrušit)") }
 }

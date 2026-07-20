@@ -27,6 +27,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.components.AppCard
@@ -41,8 +42,8 @@ private const val LANG_SYSTEM = "system"
 private const val LANG_CZECH = "cs"
 private const val LANG_ENGLISH = "en"
 
-/** Odkaz na veřejný repozitář projektu (otevře se v prohlížeči). */
-private const val GITHUB_URL = "https://github.com/JelenXP/CryptoChat"
+/** Veřejná stránka s vydanými verzemi (otevře se v prohlížeči). */
+private const val GITHUB_URL = "https://github.com/JelenXP/CryptoChatServer-releases"
 
 /** Jak dlouho drží „pozastavit připomínání aktualizací" (30 dní). */
 private const val UPDATE_SNOOZE_DURATION_MS = 30L * 24 * 60 * 60 * 1000
@@ -244,31 +245,35 @@ fun SettingsScreen(navController: NavController) {
                 description = stringResource(R.string.settings_backup_desc),
                 onClick = { navController.navigate("backup") }
             )
-            ToggleSettingCard(
-                title = stringResource(R.string.settings_update_check_label),
-                description = stringResource(R.string.settings_update_check_desc),
-                checked = updateCheckEnabled,
-                onCheckedChange = {
-                    updateCheckEnabled = it
-                    settingsRepository.setUpdateCheckEnabled(it)
-                }
-            )
-            ToggleSettingCard(
-                title = stringResource(R.string.settings_update_snooze_label),
-                description = stringResource(R.string.settings_update_snooze_desc),
-                checked = updateSnoozeActive,
-                enabled = updateCheckEnabled,
-                onCheckedChange = { on ->
-                    updateSnoozeActive = on
-                    if (on) {
-                        settingsRepository.setUpdateSnooze(
-                            System.currentTimeMillis() + UPDATE_SNOOZE_DURATION_MS
-                        )
-                    } else {
-                        settingsRepository.clearUpdateSnooze()
+            // Kontrola aktualizací je zatím vypnutá jedním vypínačem (FeatureFlags).
+            // Až budou vlastní veřejné releases, přepnutím se UI zase objeví.
+            if (FeatureFlags.UPDATE_CHECK_ENABLED) {
+                ToggleSettingCard(
+                    title = stringResource(R.string.settings_update_check_label),
+                    description = stringResource(R.string.settings_update_check_desc),
+                    checked = updateCheckEnabled,
+                    onCheckedChange = {
+                        updateCheckEnabled = it
+                        settingsRepository.setUpdateCheckEnabled(it)
                     }
-                }
-            )
+                )
+                ToggleSettingCard(
+                    title = stringResource(R.string.settings_update_snooze_label),
+                    description = stringResource(R.string.settings_update_snooze_desc),
+                    checked = updateSnoozeActive,
+                    enabled = updateCheckEnabled,
+                    onCheckedChange = { on ->
+                        updateSnoozeActive = on
+                        if (on) {
+                            settingsRepository.setUpdateSnooze(
+                                System.currentTimeMillis() + UPDATE_SNOOZE_DURATION_MS
+                            )
+                        } else {
+                            settingsRepository.clearUpdateSnooze()
+                        }
+                    }
+                )
+            }
 
             ToggleSettingCard(
                 title = stringResource(R.string.settings_file_limit_label),
@@ -314,13 +319,15 @@ fun SettingsScreen(navController: NavController) {
                 description = stringResource(R.string.about_changelog_desc),
                 onClick = { navController.navigate("changelog") }
             )
-            NavCard(
-                icon = Icons.Default.Refresh,
-                title = stringResource(R.string.about_check_updates_label),
-                description = stringResource(R.string.about_check_updates_desc),
-                trailingIcon = null,
-                onClick = { runUpdateCheck() }
-            )
+            if (FeatureFlags.UPDATE_CHECK_ENABLED) {
+                NavCard(
+                    icon = Icons.Default.Refresh,
+                    title = stringResource(R.string.about_check_updates_label),
+                    description = stringResource(R.string.about_check_updates_desc),
+                    trailingIcon = null,
+                    onClick = { runUpdateCheck() }
+                )
+            }
             NavCard(
                 icon = Icons.AutoMirrored.Filled.OpenInNew,
                 title = stringResource(R.string.about_github_label),

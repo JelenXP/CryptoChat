@@ -1,7 +1,10 @@
 package com.jelenxp.cryptochat.data
 
+import com.jelenxp.cryptochat.chat.TorManager
 import org.json.JSONArray
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URL
 
 /**
@@ -10,15 +13,29 @@ import java.net.URL
  * vydání. Nikdy nevyhodí výjimku (offline, chyba sítě → vrátí `null`), aby
  * kontrola nikdy nezablokovala ani neshodila appku.
  *
+ * **Dotaz jde vždy přes zabudovaný Tor.** Napřímo by to byl jediný požadavek
+ * celé appky, který by z reálné IP prozradil, že tenhle (privacy) messenger
+ * na daném zařízení běží a jak často se spouští - přesně ta metadata, kvůli
+ * kterým appka jinak jede přes onion. Když Tor neběží, kontrola se prostě
+ * přeskočí ([Result.Failed]) a zkusí se příště; nikdy se nepošle napřímo.
+ *
  * Verze je „důležitá" (`important`), pokud její poznámky (release body)
  * obsahují značku [IMPORTANT_MARKER] - tu do vydání přidává release workflow
  * podle zprávy gitového tagu.
  */
 object UpdateChecker {
 
-    private const val RELEASES_URL = "https://api.github.com/repos/JelenXP/CryptoChat/releases"
+    // Veřejný repozitář, kam se nahrávají jen vydaná APK chat appky (kód zůstává
+    // privátní v JelenXP/CryptoChatOnline).
+    private const val RELEASES_URL =
+        "https://api.github.com/repos/JelenXP/CryptoChatServer-releases/releases"
     private const val IMPORTANT_MARKER = "[important]"
-    private const val TIMEOUT_MS = 6000
+
+    // Přes Tor je latence vyšší než napřímo, takže velkorysejší timeouty.
+    private const val TIMEOUT_MS = 20_000
+
+    /** Jak dlouho čekat, než zabudovaný Tor otevře SOCKS listener. */
+    private const val TOR_WAIT_MS = 30_000L
 
     /**
      * @param latestVersion nejnovější dostupná verze (bez „v", např. „2.2").
@@ -88,14 +105,23 @@ object UpdateChecker {
     private data class Release(val version: String, val url: String, val body: String)
 
     private fun fetch(urlString: String): String? {
+        // Bez běžícího Toru se nekontroluje vůbec - radši žádná kontrola než
+        // dotaz z reálné IP (viz poznámka u třídy).
+        if (!TorManager.awaitReady(TOR_WAIT_MS)) return null
+        val proxy = Proxy(
+            Proxy.Type.SOCKS,
+            InetSocketAddress(TorManager.socksHost, TorManager.socksPort)
+        )
         var connection: HttpURLConnection? = null
         return try {
-            connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+            connection = (URL(urlString).openConnection(proxy) as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "CryptoChat-UpdateCheck")
+                // Neutrální User-Agent: konkrétní název appky by i přes Tor
+                // prozradil, o jaký software jde (GitHub API UA vyžaduje).
+                setRequestProperty("User-Agent", "Mozilla/5.0")
             }
             if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
             connection.inputStream.bufferedReader().use { it.readText() }
