@@ -197,7 +197,7 @@ fun RemoteInitScreen(
                         verificationCode = verificationCode,
                         contactName = name,
                         onConfirmed = {
-                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64)
+                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64, initiator = true)
                             if (success) {
                                 navController.popBackStack("main", inclusive = false)
                             } else {

@@ -84,7 +84,7 @@ fun CreateKeyScreen(
 
             Button(
                 onClick = {
-                    val success = viewModel.saveExchangedKey(contactId, name, keyBase64)
+                    val success = viewModel.saveExchangedKey(contactId, name, keyBase64, initiator = true)
                     if (success) {
                         navController.popBackStack("main", inclusive = false)
                     } else {

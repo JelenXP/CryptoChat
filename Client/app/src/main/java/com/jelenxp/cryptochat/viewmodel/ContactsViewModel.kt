@@ -54,10 +54,30 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
      * jen mu vymění klíč (zachová jméno i fotku - re-key / obnova klíče). Jinak
      * založí nový kontakt s novým id. Vrátí true při úspěchu.
      */
-    fun saveExchangedKey(contactId: String?, name: String, keyBase64: String): Boolean {
+    /**
+     * Uloží kontakt po výměně klíče.
+     *
+     * [initiator] MUSÍ být na obou zařízeních OPAČNÝ - určuje, do které z dvojice
+     * schránek se posílá a ze které se čte ([com.jelenxp.cryptochat.chat.RelaySync]).
+     * Když zůstane `null` u obou (jak tomu dřív bylo u osobního i ML-KEM párování),
+     * obě strany zapisují do téže schránky a čtou z téže druhé - odeslání se tváří
+     * úspěšně, ale zpráva nikdy nedorazí. Kdo klíč vytvořil / zahájil = `true`,
+     * kdo ho přijal / dokončil = `false`.
+     */
+    fun saveExchangedKey(
+        contactId: String?,
+        name: String,
+        keyBase64: String,
+        initiator: Boolean
+    ): Boolean {
         val existing = contactId?.let { getContact(it) }
-        val contact = existing?.copy(keyBase64 = keyBase64)
-            ?: Contact(id = contactId ?: UUID.randomUUID().toString(), name = name, keyBase64 = keyBase64)
+        val contact = existing?.copy(keyBase64 = keyBase64, initiator = initiator)
+            ?: Contact(
+                id = contactId ?: UUID.randomUUID().toString(),
+                name = name,
+                keyBase64 = keyBase64,
+                initiator = initiator
+            )
         return addOrUpdateContact(contact)
     }
 

@@ -168,7 +168,7 @@ fun RemoteCompleteScreen(
                         verificationCode = verificationCode,
                         contactName = name,
                         onConfirmed = {
-                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64)
+                            val success = viewModel.saveExchangedKey(contactId, name, aesKeyBase64, initiator = false)
                             if (success) {
                                 navController.popBackStack("main", inclusive = false)
                             } else {

@@ -239,6 +239,8 @@ object RelaySync {
         val dir = recvDir(contact)
         val epoch = currentEpoch()
         var failed = false
+        // Karanténu procházej jen jednou za poll (ne v každém fetchi zvlášť).
+        var retryQuarantine = true
 
         // Vyzvedne jednu schránku (dané epochy), otevře bloby a uloží je. Vrací
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
@@ -255,21 +257,41 @@ object RelaySync {
             // Nepřečteno počítáme jen když konverzace není zrovna otevřená
             // (otevřený chat si zprávu rovnou přečte).
             fun arrived(message: ChatMessage) {
-                repo.append(contact.id, message)
+                // Když se zápis nepovede, NEhlas příjem - jinak by přišla
+                // notifikace o zprávě, která v historii není (a na serveru už taky).
+                if (!repo.append(contact.id, message)) {
+                    android.util.Log.e("RelaySync", "Zprávu se nepodařilo uložit do historie")
+                    return
+                }
                 if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
                 n++
+            }
+
+            // K čerstvým blobům přimíchej ty odložené v karanténě (typicky zprávy
+            // z jiné verze formátu). Když zase selžou, uloží se zpátky - jakmile
+            // si obě strany sednou, samy se doberou.
+            val pending = if (retryQuarantine) {
+                retryQuarantine = false
+                BlobQuarantine.takeAll(context, contact.id)
+            } else {
+                emptyList()
             }
 
             // Každý blob zvlášť: výjimka u jednoho (poškozená data, chyba zápisu)
             // nesmí shodit zpracování zbytku dávky - ty zprávy už relay smazal,
             // takže by byly nenávratně pryč.
-            for (blob in blobs) try {
+            for (blob in pending + blobs) try {
                 // Relay může tentýž blob nabídnout znovu - duplicitu zahoď.
                 if (!ReplayGuard.isNew(context, contact.id, blob)) continue
                 // Zprávu s jiným MAJOR nemá smysl zkoušet otevřít - jen si
                 // poznamenej, kdo je pozadu, ať to appka umí uživateli říct
                 // (dřív se takový blob tiše zahodil a "zprávy prostě nechodily").
-                if (!WireCompat.acceptMajor(context, contact.id, blob)) continue
+                if (!WireCompat.acceptMajor(context, contact.id, blob)) {
+                    // NEZAHAZOVAT: server blob při GETu smazal, takže by byl pryč
+                    // navždy. Odlož ho a zkus znovu, až si obě strany sednou.
+                    BlobQuarantine.save(context, contact.id, blob)
+                    continue
+                }
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
                 val decoded = ChatEnvelope.open(blob, key, dir)
@@ -370,7 +392,17 @@ object RelaySync {
                         }
                     }
 
-                    null -> {}
+                    // Dešifrování neprošlo (jiná verze formátu, poškození, cizí
+                    // klíč). Odlož a hlas - tichý `continue` tady kdysi stál
+                    // uživatele zprávy, které už nešlo nijak získat zpátky.
+                    null -> {
+                        android.util.Log.w(
+                            "RelaySync",
+                            "Blob se nepodařilo otevřít (${blob.size} B, major=" +
+                                "${WireCompat.readMajor(blob)}), odkládám do karantény"
+                        )
+                        BlobQuarantine.save(context, contact.id, blob)
+                    }
                 }
             } catch (ex: Exception) {
                 // Jeden vadný blob nesmí shodit zbytek dávky.

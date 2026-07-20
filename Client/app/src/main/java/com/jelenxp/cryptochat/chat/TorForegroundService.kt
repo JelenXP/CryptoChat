@@ -86,7 +86,11 @@ class TorForegroundService : Service() {
             // Nedokončené přenosy z dřívějška (přerušené, se ztraceným manifestem…)
             // jinak leží na disku navždy. Den je bezpečně za TTL relaye.
             runCatching { MediaTransfers.purgeStale(this@TorForegroundService, 24L * 60 * 60 * 1000) }
-            runCatching { warmUp() }
+            // Zahřívání běží VEDLE, ne před hlídačem. Když se Tor teprve
+            // rozjíždí, jedna iterace warmUp trvá i přes minutu - a dokud
+            // blokovala, nevznikla ANI JEDNA poll smyčka, takže appka po startu
+            // několik minut vůbec nepřijímala zprávy.
+            launch { runCatching { warmUp() } }
             while (isActive) {
                 // Celý tik hlídače je pod try/catch: jediná nechycená výjimka by
                 // zabila tuhle korutinu a appka by až do restartu procesu přestala

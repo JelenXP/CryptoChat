@@ -44,10 +44,16 @@ object WireCompat {
      * Historie:
      *  - 1: původní formát (`IV || ciphertext`), bez AAD i bez bajtu verze.
      *       Nikdy nebyl veřejně vydaný.
-     *  - 2: bajt majoru v hlavičce, minor uvnitř šifry, AAD se směrem schránky
-     *       (`ccdir:<dir>|w:<major>`).
+     *  - 2: bajt verze v hlavičce, AAD se směrem schránky (`ccdir:<dir>|w:<major>`),
+     *       vnitřní hlavička 13 B (`[1B kind][8B ts][4B délka]`).
+     *  - 3: vnitřní hlavička 14 B - přibyl bajt minor na pozici 1.
+     *
+     * POZOR na past, která už jednou nastala: verze 2 a 3 se liší JEN vnitřním
+     * rozložením. Když se major nezvýší, blob se úspěšně dešifruje (AAD sedí),
+     * ale rozparsuje se posunutě, `open()` vrátí null a zpráva se tiše zahodí -
+     * a relay ji mezitím smazal. Rozložení hlavičky JE součástí kontraktu.
      */
-    const val WIRE_MAJOR: Int = 2
+    const val WIRE_MAJOR: Int = 3
 
     /**
      * **Zvyš, když přibude schopnost, ale zprávy chodí dál.** Starší strana

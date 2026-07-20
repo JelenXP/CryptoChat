@@ -123,7 +123,7 @@ fun AcceptKeyScreen(
                             error = errorInvalidLength
                             return@Button
                         }
-                        val success = viewModel.saveExchangedKey(contactId, name, keyText.trim())
+                        val success = viewModel.saveExchangedKey(contactId, name, keyText.trim(), initiator = false)
                         if (success) {
                             navController.popBackStack("main", inclusive = false)
                         } else {
