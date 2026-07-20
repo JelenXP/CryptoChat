@@ -1,7 +1,5 @@
 package com.jelenxp.cryptochat.ui.components
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -20,6 +18,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
+import com.jelenxp.cryptochat.ui.util.decodeSampledFile
 import java.io.File
 
 /**
@@ -36,13 +35,12 @@ fun ContactAvatar(
     modifier: Modifier = Modifier,
     textStyle: TextStyle = MaterialTheme.typography.titleMedium
 ) {
+    // Podvzorkovaně a s ochranou proti OutOfMemoryError (viz decodeSampledFile).
+    // 512 px bohatě stačí i pro největší zobrazení avataru, ale zabrání načtení
+    // několikamegapixelové fotky v plné velikosti do paměti.
     val bitmap = remember(avatarPath) {
         avatarPath?.let { path ->
-            try {
-                if (File(path).exists()) BitmapFactory.decodeFile(path) else null
-            } catch (e: Exception) {
-                null
-            }
+            if (File(path).exists()) decodeSampledFile(path, reqPx = 512) else null
         }
     }
 

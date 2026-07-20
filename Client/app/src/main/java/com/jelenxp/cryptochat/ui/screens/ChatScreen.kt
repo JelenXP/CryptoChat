@@ -128,7 +128,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             withContext(Dispatchers.IO) { repo.markRead(id) }  // otevřená konverzace = přečteno
             // Pro .onion relay nastartuj zabudovaný Tor (idempotentní) a popožeň
             // službu, ať pro čerstvě spárovaný kontakt nečekáme na hlídač.
-            if (relayUrl.contains(".onion")) TorController.ensureStarted(context)
+            // ensureStarted dělá diskovou IO (getDir + stavba runtime) - mimo main.
+            if (relayUrl.contains(".onion")) withContext(Dispatchers.IO) { TorController.ensureStarted(context) }
             TorForegroundService.ensureRunning(context)
             try {
                 // Přenačti historii při KAŽDÉM návratu do popředí. `changes` je
@@ -466,32 +467,58 @@ private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
 /** Fotka v bublině - načte se ze souboru mimo hlavní vlákno a zobrazí dekódovaná. */
 @Composable
 private fun ChatImage(path: String?) {
-    if (path == null) return
     var bmp by remember(path) { mutableStateOf<ImageBitmap?>(null) }
+    // `failed` začíná true, když médium vůbec není (neuložilo se / import zálohy
+    // bez fotky) - jinak by přijatá fotka visela jako prázdná bublina.
+    var failed by remember(path) { mutableStateOf(path == null) }
     LaunchedEffect(path) {
-        bmp = withContext(Dispatchers.IO) { ChatMediaStore.decodeForDisplay(path)?.asImageBitmap() }
+        if (path == null) return@LaunchedEffect
+        val decoded = withContext(Dispatchers.IO) { ChatMediaStore.decodeForDisplay(path)?.asImageBitmap() }
+        bmp = decoded
+        failed = decoded == null   // dekódování selhalo -> ukaž chybu, ne věčný spinner
     }
     val b = bmp
-    if (b != null) {
-        val ratio = if (b.height > 0) b.width.toFloat() / b.height else 1f
-        Image(
-            bitmap = b,
-            contentDescription = stringResource(R.string.content_desc_image),
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .widthIn(max = 240.dp)
-                .aspectRatio(ratio.coerceIn(0.5f, 2.2f))
-                .clip(RoundedCornerShape(10.dp))
-        )
-    } else {
-        Box(
-            modifier = Modifier
-                .size(180.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color.Black.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center
-        ) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+    when {
+        b != null -> {
+            val ratio = if (b.height > 0) b.width.toFloat() / b.height else 1f
+            Image(
+                bitmap = b,
+                contentDescription = stringResource(R.string.content_desc_image),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .widthIn(max = 240.dp)
+                    .aspectRatio(ratio.coerceIn(0.5f, 2.2f))
+                    .clip(RoundedCornerShape(10.dp))
+            )
+        }
+        failed -> {
+            Box(
+                modifier = Modifier
+                    .size(180.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.ErrorOutline, contentDescription = null)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.chat_image_unavailable),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+        else -> {
+            Box(
+                modifier = Modifier
+                    .size(180.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
         }
     }
 }

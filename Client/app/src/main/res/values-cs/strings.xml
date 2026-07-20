@@ -347,6 +347,7 @@
     <string name="content_desc_not_delivered">Nedoručeno</string>
     <string name="chat_retry_hint">Nedoručeno — klepni pro nový pokus</string>
     <string name="chat_receive_failed">Nepodařilo se přijmout</string>
+    <string name="chat_image_unavailable">Obrázek není dostupný</string>
     <string name="chat_last_you">Ty: %1$s</string>
     <string name="chat_preview_none">Zatím žádné zprávy</string>
     <string name="chat_peer_major_outdated">Protějšek má starší verzi aplikace. Zprávy si navzájem nepřečtete, dokud si ji neaktualizuje.</string>

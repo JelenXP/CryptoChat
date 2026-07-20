@@ -527,24 +527,31 @@ class RelayHandler(BaseHTTPRequestHandler):
             self._send(200, bytes(out), extra_headers={"X-CC-Seq": str(items[-1][0])})
             return
 
-        blobs = STORE.drain_blocking(mid, wait_s) if wait_s > 0 else STORE.drain(mid)
-        # Strop i tady: schranka smi mit stovky MB a slozit je do jedne odpovedi
-        # by znamenalo nekolikanasobnou spicku v pameti serveru.
-        if blobs:
+        # Bez ?ack=1: zachovame puvodni "vyzvedni a smaz" chovani, ale mazeme JEN
+        # to, co opravdu vratime. Puvodne se volal drain (smaze VSE) a az pak se
+        # odpoved orizla na MAX_PEEK_BYTES - bloby nad stropem se tim nenavratne
+        # ztratily. Ted peekneme, orizneme a smazeme (ack) jen vraceny prefix;
+        # zbytek zustava ve schrance na priste.
+        items = (STORE.peek_blocking(mid, wait_s) if wait_s > 0
+                 else STORE.peek_blocking(mid, 0))
+        if items:
             capped = []
             total = 0
-            for b in blobs:
+            for seq, b in items:
                 if capped and total + len(b) > MAX_PEEK_BYTES:
                     break
-                capped.append(b)
+                capped.append((seq, b))
                 total += len(b)
-            blobs = capped
-        if not blobs:
+            items = capped
+        if not items:
             # Prazdna schranka - 204 No Content (kratke, bez tela).
             self.send_response(204)
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             return
+        # Smaz jen vracene bloby (do posledniho vraceneho seq).
+        STORE.ack(mid, items[-1][0])
+        blobs = [b for _seq, b in items]
 
         # Vice blobku posleme delkove ramovane: pro kazdy [4B BE delka][data].
         # Klient cte 4 bajty delky, pak tolik bajtu, dokud stream neskonci -

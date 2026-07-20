@@ -61,7 +61,8 @@ object RelayStatus {
         // Nepřepínej zpět na „připojuji", když už jednou připojeno - ať indikátor
         // zbytečně nebliká při každém návratu do appky.
         if (state != RelayConn.CONNECTED) state = RelayConn.CONNECTING
-        if (url.contains(".onion")) TorController.ensureStarted(context)
+        // ensureStarted dělá diskovou IO - mimo hlavní vlákno (doRefresh se volá z UI).
+        if (url.contains(".onion")) withContext(Dispatchers.IO) { TorController.ensureStarted(context) }
         val ok = withContext(Dispatchers.IO) { RelayClient.health(url) }
         state = if (ok) RelayConn.CONNECTED else RelayConn.FAILED
     }

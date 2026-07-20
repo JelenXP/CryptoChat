@@ -108,8 +108,13 @@ object ContactBackup {
             // jméno beze změny, ale klíč vyměnil za útočníkův - uživatel by pak
             // pod známým jménem psal někomu jinému. Při kolizi id s JINÝM klíčem
             // proto importujeme jako samostatný nový kontakt.
+            // Kolize s JINÝM ČITELNÝM klíčem = ochrana: importuj jako samostatný
+            // kontakt (viz importKeepsBackupId). Když ale stávající klíč nejde
+            // přečíst (null - typicky po obnově zařízení, kdy selže dešifrování
+            // z Keystore), je kontakt stejně nefunkční a záloha ho má OBNOVIT pod
+            // původním id, ne založit duplikát.
             val collision = existing[backupId]
-            val id = if (collision != null && collision.keyBase64 != importedKey) {
+            val id = if (collision != null && !importKeepsBackupId(collision.keyBase64, importedKey)) {
                 java.util.UUID.randomUUID().toString()
             } else {
                 backupId
@@ -170,3 +175,15 @@ object ContactBackup {
         return count
     }
 }
+
+/**
+ * Má import zachovat původní id kontaktu (obnova/aktualizace), nebo jde o kolizi
+ * s jiným kontaktem? Volá se jen když kontakt s daným id v appce už je.
+ *
+ *  - stejný klíč      -> aktualizace téhož kontaktu (zachovej id),
+ *  - stávající null    -> nefunkční kontakt (nejde přečíst z Keystore, např. po
+ *                         obnově zařízení); záloha ho obnoví (zachovej id),
+ *  - jiný ČITELNÝ klíč -> ochrana proti podvržené záloze (import jako nový kontakt).
+ */
+internal fun importKeepsBackupId(existingKey: String?, importedKey: String?): Boolean =
+    existingKey == null || existingKey == importedKey

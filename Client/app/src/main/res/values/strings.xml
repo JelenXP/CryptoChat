@@ -347,6 +347,7 @@
     <string name="content_desc_not_delivered">Not delivered</string>
     <string name="chat_retry_hint">Not delivered — tap to retry</string>
     <string name="chat_receive_failed">Couldn\'t receive this</string>
+    <string name="chat_image_unavailable">Image unavailable</string>
     <string name="chat_last_you">You: %1$s</string>
     <string name="chat_preview_none">No messages yet</string>
     <string name="chat_peer_major_outdated">This contact is using an older version of the app. Your messages can\'t reach each other until they update.</string>

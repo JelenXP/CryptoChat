@@ -63,14 +63,19 @@ class TorForegroundService : Service() {
             ChatNotifications.SERVICE_NOTIFICATION_ID,
             ChatNotifications.buildServiceNotification(this, getString(R.string.notif_connecting))
         )
-        // Drž Tor naživu.
-        try {
-            if (SettingsRepository(this).getRelayUrl().contains(".onion")) {
-                TorController.ensureStarted(this)
+        // Drž Tor naživu. ensureStarted dělá diskovou IO (getDir + stavba runtime),
+        // a onStartCommand běží na HLAVNÍM vlákně - pustíme to proto mimo něj, ať
+        // se služba nezdrží (riziko ANR). startSync() si na Tor stejně počká přes
+        // awaitReady, takže na pořadí nezáleží.
+        scope.launch(Dispatchers.IO) {
+            try {
+                if (SettingsRepository(this@TorForegroundService).getRelayUrl().contains(".onion")) {
+                    TorController.ensureStarted(this@TorForegroundService)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Tor se nepodařilo nastartovat ze service", e)
+                DiagnosticsLog.error(TAG, "Tor se nepodařilo nastartovat ze služby (${e.javaClass.simpleName})")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Tor se nepodařilo nastartovat ze service", e)
-            DiagnosticsLog.error(TAG, "Tor se nepodařilo nastartovat ze služby (${e.javaClass.simpleName})")
         }
         startSync()
         return START_STICKY
@@ -226,6 +231,7 @@ class TorForegroundService : Service() {
             }
             try {
                 // long-poll: drží se, dokud nedorazí zpráva (nebo ~60 s)
+                val pollStart = System.currentTimeMillis()
                 val result = RelaySync.poll(ctx, contact)
                 // Notifikaci NE pro konverzaci, kterou má uživatel otevřenou -
                 // tu si zprávu zobrazí sama. Kontroluje se AŽ TEĎ, protože poll
@@ -245,6 +251,11 @@ class TorForegroundService : Service() {
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS
+                    // Pojistka proti serveru, který nectí long-poll (vrátí se hned):
+                    // bez podlahy by se smyčka roztočila na 100 % CPU a stavěla okruh
+                    // za okruhem. Výchozí relay drží ~60 s, takže se sem nedostane.
+                    val elapsed = System.currentTimeMillis() - pollStart
+                    if (elapsed < MIN_POLL_INTERVAL_MS) delay(MIN_POLL_INTERVAL_MS - elapsed)
                 }
             } catch (e: CancellationException) {
                 throw e                   // zrušení smyčky se musí šířit, ne spolknout
@@ -359,6 +370,14 @@ class TorForegroundService : Service() {
 
         /** První pauza po neúspěšném pollu; dál se zdvojnásobuje. */
         private const val BACKOFF_START_MS = 3_000L
+
+        /**
+         * Minimální rozestup mezi úspěšnými polly, když se poll vrátí podezřele
+         * rychle. Výchozí relay drží long-poll ~60 s, takže se tahle podlaha
+         * neuplatní; chrání jen před vlastním serverem, který `?wait=` ignoruje a
+         * odpovídá hned - bez ní by se smyčka roztočila na 100 % CPU.
+         */
+        private const val MIN_POLL_INTERVAL_MS = 3_000L
 
         /** Strop backoffu při rozsvícené obrazovce (uživatel čeká na zprávu). */
         private const val BACKOFF_MAX_SCREEN_ON_MS = 60_000L
