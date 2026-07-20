@@ -176,7 +176,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
 
     fun retry(message: ChatMessage) {
-        if (contact == null) return
+        // Opakovat lze jen ODESLÁNÍ. Příchozí zpráva se přes `deliver` posílat
+        // nemá - jen by se nesmyslně přepnula na SENDING a zpátky na FAILED.
+        if (contact == null || !message.outgoing) return
         scope.launch {
             withContext(Dispatchers.IO) { repo.updateStatus(id, message.id, ChatMessage.Status.SENDING) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
@@ -421,7 +423,12 @@ private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
                 .widthIn(max = 300.dp)
                 .clip(shape)
                 .background(bubbleColor)
-                .then(if (message.status == ChatMessage.Status.FAILED) Modifier.clickable { onRetry() } else Modifier)
+                // Klikací (opakovat) jen u ODCHOZÍ neúspěšné zprávy - příchozí
+                // se opakovat nedá (viz ChatScreen.retry).
+                .then(
+                    if (message.status == ChatMessage.Status.FAILED && outgoing)
+                        Modifier.clickable { onRetry() } else Modifier
+                )
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             when (message.kind) {
@@ -443,7 +450,11 @@ private fun MessageBubble(message: ChatMessage, onRetry: () -> Unit) {
             }
             if (message.status == ChatMessage.Status.FAILED) {
                 Text(
-                    stringResource(R.string.chat_retry_hint),
+                    // Odchozí = „klepni pro opakování"; příchozí soubor se
+                    // opakovat nedá, tak jen „přijetí selhalo".
+                    stringResource(
+                        if (outgoing) R.string.chat_retry_hint else R.string.chat_receive_failed
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error
                 )

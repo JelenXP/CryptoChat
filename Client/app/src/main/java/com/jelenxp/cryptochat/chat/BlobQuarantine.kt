@@ -43,6 +43,14 @@ object BlobQuarantine {
      * Uloží blob, který se nepodařilo otevřít. [firstSeenAt] je čas prvního
      * odložení - při opakovaném ukládání téhož blobu se MUSÍ zachovat původní,
      * jinak by se stáří pořád resetovalo a blob by nevypršel nikdy.
+     *
+     * Jméno souboru má tři pole: `sortKey_firstSeenAt_otisk.bin`.
+     *  - `sortKey` = čas TOHOTO uložení. [takeAll] podle něj řadí, takže znovu
+     *    odložený blob jde na KONEC fronty - i bloby za prvními pěti se tak
+     *    dostanou na řadu (jinak by pětice trvale nezpracovatelných blobů
+     *    zablokovala opakování všech ostatních až do jejich vypršení).
+     *  - `firstSeenAt` = pro expiraci a ořezávání.
+     *  - `otisk` = aby se dva různé bloby nepřepsaly a tentýž se neuložil dvakrát.
      */
     fun save(
         context: Context,
@@ -52,12 +60,14 @@ object BlobQuarantine {
     ): Boolean {
         return try {
             val d = dir(context, contactId).apply { mkdirs() }
-            // Jméno nese čas prvního odložení a otisk obsahu. Otisk zabrání tomu,
-            // aby se dva různé bloby přijaté ve stejné milisekundě přepsaly, a
-            // zároveň zajistí, že se tentýž blob neuloží dvakrát.
-            val file = File(d, "${firstSeenAt}_${fingerprint(blob)}.bin")
-            if (file.exists()) return true
-            file.writeBytes(blob)
+            val fp = fingerprint(blob)
+            // Duplicitu poznáme podle OTISKU OBSAHU (poslední pole názvu), ne podle
+            // celého jména - `sortKey` se totiž při každém uložení mění, takže by
+            // se tentýž blob jinak hromadil v kopiích.
+            val already = d.listFiles()?.any { it.name.endsWith("_$fp.bin") } == true
+            if (already) return true
+            val sortKey = System.currentTimeMillis()
+            File(d, "${sortKey}_${firstSeenAt}_$fp.bin").writeBytes(blob)
             trim(d)
             true
         } catch (e: Throwable) {
@@ -83,6 +93,8 @@ object BlobQuarantine {
         val out = ArrayList<Pending>()
         try {
             val files = dir(context, contactId).listFiles() ?: return out
+            // Řazení podle jména = podle `sortKey` (prvního pole): nejdřív ty, co
+            // od posledního pokusu čekají nejdéle. Round-robin, žádné hladovění.
             for (f in files.sortedBy { it.name }) {
                 try {
                     val firstSeen = firstSeenOf(f)
@@ -109,9 +121,16 @@ object BlobQuarantine {
     /** Odložený blob i s časem, kdy byl odložen poprvé. */
     data class Pending(val blob: ByteArray, val firstSeenAt: Long)
 
-    /** Čas prvního odložení z názvu souboru (fallback na čas úpravy). */
-    private fun firstSeenOf(f: File): Long =
-        f.name.substringBefore('_').toLongOrNull() ?: f.lastModified()
+    /**
+     * Čas prvního odložení z názvu souboru (fallback na čas úpravy). Nový formát
+     * má tři pole (`sortKey_firstSeenAt_otisk`), starší dvě (`firstSeenAt_otisk`)
+     * - podle počtu polí vezmeme to správné.
+     */
+    private fun firstSeenOf(f: File): Long {
+        val parts = f.name.split('_')
+        val field = if (parts.size >= 3) parts[1] else parts.getOrNull(0)
+        return field?.toLongOrNull() ?: f.lastModified()
+    }
 
     /** Zahodí karanténu kontaktu (při jeho smazání). */
     fun clear(context: Context, contactId: String) {
@@ -122,9 +141,13 @@ object BlobQuarantine {
         }
     }
 
-    /** Ořízne karanténu na počet i na celkovou velikost (nejstarší jde první). */
+    /**
+     * Ořízne karanténu na počet i na celkovou velikost. Zahazuje podle času
+     * PRVNÍHO odložení (ne podle `sortKey`) - tedy nejdřív ty, co tu vězí nejdéle
+     * a jsou nejspíš navždy nezpracovatelné; čerstvě přijaté zprávy zůstanou.
+     */
     private fun trim(d: File) {
-        val files = (d.listFiles() ?: return).sortedBy { it.name }
+        val files = (d.listFiles() ?: return).sortedBy { firstSeenOf(it) }
         var count = files.size
         var bytes = files.sumOf { it.length() }
         for (f in files) {
