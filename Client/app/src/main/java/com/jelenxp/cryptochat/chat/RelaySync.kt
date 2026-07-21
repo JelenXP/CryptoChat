@@ -2,11 +2,14 @@ package com.jelenxp.cryptochat.chat
 
 import android.content.Context
 import android.net.Uri
+import com.jelenxp.cryptochat.crypto.Base64Util
+import com.jelenxp.cryptochat.crypto.PostQuantumKem
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import java.io.File
 import java.io.InputStream
+import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.util.UUID
 
@@ -410,6 +413,150 @@ object RelaySync {
         return true
     }
 
+    // --- KEM re-key handshake (Fáze 4b, PCS) ---
+
+    /**
+     * Zahájí KEM re-key. Volá auto-politika (4c) i testy; jen `initiator==true`
+     * strana, když je ratchet aktivní a protějšek umí [WireExt.CAP_REKEY].
+     * Vygeneruje ML-KEM pár, uloží handshake stav a pošle OFFER. Případný zaseknutý
+     * re-key přepíše (nový rekeyId) - tím se sám zotaví. Vrací true při odeslání OFFER.
+     */
+    fun initiateRekey(context: Context, contact: Contact): Boolean {
+        if (contact.initiator != true) return false
+        val key = contact.keyBase64 ?: return false
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank()) return false
+        if (!WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_REKEY)) return false
+        val store = RatchetStore(context, storageCrypto)
+        if (store.load(contact.id) == null) return false
+        val (pkI, skI) = DoubleRatchet.generateKemKeyPair()
+        val rekeyId = ByteArray(WireExt.REKEY_ID_BYTES).also { SecureRandom().nextBytes(it) }
+        if (!store.updateLocked(contact.id) {
+                it.copy(
+                    rekeyId = WireExt.toHex(rekeyId), rekeyPrivB64 = skI, rekeySsB64 = null,
+                    rekeyStage = RatchetState.Rekey.INIT_OFFERED
+                )
+            }
+        ) return false
+        return sendOneRatchet(context, contact, baseUrl) {
+            ChatEnvelope.buildRekeyPayload(WireExt.REKEY_OFFER, rekeyId, Base64Util.decode(pkI), System.currentTimeMillis())
+        }
+    }
+
+    /** Tělo re-key zprávy se dvěma částmi: `[2B lenA][a][2B lenB][b]`. */
+    private fun twoPartBody(a: ByteArray, b: ByteArray): ByteArray {
+        val out = ByteArray(2 + a.size + 2 + b.size)
+        ByteBuffer.wrap(out).putShort(a.size.toShort()).put(a).putShort(b.size.toShort()).put(b)
+        return out
+    }
+
+    private fun splitTwoPartBody(body: ByteArray): Pair<ByteArray, ByteArray>? = try {
+        val buf = ByteBuffer.wrap(body)
+        val a = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
+        val b = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
+        a to b
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Zpracuje jednu re-key řídicí zprávu (OFFER/ACCEPT/CONFIRM). KEM operace jsou
+     * CPU (mimo zámek); zápisy stavu atomicky ([RatchetStore.updateLocked]),
+     * přesejnutí (applyRekey, dotýká se OBOU půlek) pod [sendLock]. Idempotence:
+     * stage + rekeyId zahodí duplicitní/zastaralé zprávy.
+     */
+    private fun handleRekey(
+        context: Context,
+        contact: Contact,
+        baseUrl: String,
+        store: RatchetStore,
+        opened: ChatEnvelope.Opened.Rekey
+    ) {
+        val sendDir = sendDir(contact)
+        val recvDir = recvDir(contact)
+        val rekeyIdBytes = WireExt.fromHex(opened.rekeyIdHex) ?: return
+        when (opened.subtype) {
+            // Odpovídající: pkI → ssI, vygeneruj pkR, pošli ACCEPT (ctI‖pkR).
+            WireExt.REKEY_OFFER -> {
+                val st = store.load(contact.id) ?: return
+                if (st.rekeyStage == RatchetState.Rekey.RESP_ACCEPTED && st.rekeyId == opened.rekeyIdHex) return
+                val enc = try { PostQuantumKem.encapsulate(Base64Util.encode(opened.kem)) } catch (e: Exception) { return }
+                val (pkR, skR) = DoubleRatchet.generateKemKeyPair()
+                if (!store.updateLocked(contact.id) {
+                        it.copy(
+                            rekeyId = opened.rekeyIdHex, rekeyPrivB64 = skR,
+                            rekeySsB64 = enc.sharedKeys.aesKeyBase64, rekeyStage = RatchetState.Rekey.RESP_ACCEPTED
+                        )
+                    }
+                ) return
+                val body = twoPartBody(Base64Util.decode(enc.encapsulationBase64), Base64Util.decode(pkR))
+                sendOneRatchet(context, contact, baseUrl) {
+                    ChatEnvelope.buildRekeyPayload(WireExt.REKEY_ACCEPT, rekeyIdBytes, body, System.currentTimeMillis())
+                }
+            }
+            // Iniciátor: ctI → ssI, pkR → ssR, kombinuj ss, pošli CONFIRM (ctR).
+            // NEpřesejni (čeká na protějškovu novou generaci).
+            WireExt.REKEY_ACCEPT -> {
+                val st = store.load(contact.id) ?: return
+                if (st.rekeyStage != RatchetState.Rekey.INIT_OFFERED || st.rekeyId != opened.rekeyIdHex) return
+                val skI = st.rekeyPrivB64 ?: return
+                val (ctI, pkR) = splitTwoPartBody(opened.kem) ?: return
+                val ssI = try { PostQuantumKem.decapsulate(skI, Base64Util.encode(ctI)).aesKeyBase64 } catch (e: Exception) { return }
+                val encR = try { PostQuantumKem.encapsulate(Base64Util.encode(pkR)) } catch (e: Exception) { return }
+                val ss = DoubleRatchet.combineSecrets(ssI, encR.sharedKeys.aesKeyBase64)
+                if (!store.updateLocked(contact.id) {
+                        it.copy(rekeySsB64 = ss, rekeyPrivB64 = null, rekeyStage = RatchetState.Rekey.INIT_CONFIRMED)
+                    }
+                ) return
+                val ctR = Base64Util.decode(encR.encapsulationBase64)
+                sendOneRatchet(context, contact, baseUrl) {
+                    ChatEnvelope.buildRekeyPayload(WireExt.REKEY_CONFIRM, rekeyIdBytes, ctR, System.currentTimeMillis())
+                }
+            }
+            // Odpovídající: ctR → ssR, kombinuj ss, PŘESEJNI.
+            WireExt.REKEY_CONFIRM -> {
+                val st = store.load(contact.id) ?: return
+                if (st.rekeyStage != RatchetState.Rekey.RESP_ACCEPTED || st.rekeyId != opened.rekeyIdHex) return
+                val skR = st.rekeyPrivB64 ?: return
+                val ssI = st.rekeySsB64 ?: return
+                val ssR = try { PostQuantumKem.decapsulate(skR, Base64Util.encode(opened.kem)).aesKeyBase64 } catch (e: Exception) { return }
+                val ss = DoubleRatchet.combineSecrets(ssI, ssR)
+                synchronized(sendLock(contact.id)) {
+                    store.updateLocked(contact.id) { cur ->
+                        if (cur.rekeyStage != RatchetState.Rekey.RESP_ACCEPTED || cur.rekeyId != opened.rekeyIdHex) return@updateLocked null
+                        DoubleRatchet.applyRekey(cur, ss, sendDir, recvDir)
+                            .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyStage = RatchetState.Rekey.NONE)
+                    }
+                }
+                DiagnosticsLog.log(TAG, "KEM re-key dokončen (odpovídající), nová generace")
+            }
+        }
+    }
+
+    /**
+     * Iniciátor: protějšek přešel na PŘÍŠTÍ generaci (dokončil re-key). Máme-li
+     * hotové ss ([RatchetState.Rekey.INIT_CONFIRMED]), přesejni jím (pod [sendLock]).
+     * Vrací true, když se přesejnulo - pak lze zprávu zkusit otevřít znovu.
+     */
+    private fun maybeApplyPendingRekey(context: Context, contact: Contact, store: RatchetStore, msgGeneration: Int): Boolean {
+        val st = store.load(contact.id) ?: return false
+        if (st.rekeyStage != RatchetState.Rekey.INIT_CONFIRMED || msgGeneration != st.generation + 1) return false
+        val ss = st.rekeySsB64 ?: return false
+        val sendDir = sendDir(contact)
+        val recvDir = recvDir(contact)
+        var applied = false
+        synchronized(sendLock(contact.id)) {
+            store.updateLocked(contact.id) { cur ->
+                if (cur.rekeyStage != RatchetState.Rekey.INIT_CONFIRMED || msgGeneration != cur.generation + 1) return@updateLocked null
+                applied = true
+                DoubleRatchet.applyRekey(cur, ss, sendDir, recvDir)
+                    .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyStage = RatchetState.Rekey.NONE)
+            }
+        }
+        if (applied) DiagnosticsLog.log(TAG, "KEM re-key dokončen (iniciátor), nová generace")
+        return applied
+    }
+
     /**
      * Zašifruje a odešle už zařazenou zprávu (text, fotku nebo soubor) do schránky
      * a aktualizuje její stav (SENT/FAILED). Vrací, zda se doručila.
@@ -702,9 +849,26 @@ object RelaySync {
                         }
                         // Skok za strop → karanténa (mezera se může uzavřít mezizprávami).
                         DoubleRatchet.RecvStep.SkipTooLarge -> ChatEnvelope.Result.Unreadable
-                        // Novější generace, než na jakou jsme přesejni (KEM re-key
-                        // ještě nedoběhl) → karanténa; po zpracování re-key se přečte.
-                        DoubleRatchet.RecvStep.FutureGeneration -> ChatEnvelope.Result.Unreadable
+                        // Novější generace: protějšek dokončil re-key a přešel dál.
+                        // Iniciátor s hotovým ss teď přesejne a zkusí zprávu znovu;
+                        // jinak karanténa (odpovídající re-key dorazí později).
+                        DoubleRatchet.RecvStep.FutureGeneration -> {
+                            if (maybeApplyPendingRekey(context, contact, ratchetStore, header.generation)) {
+                                val st2 = ratchetStore.load(contact.id)
+                                val step2 = if (st2 != null)
+                                    DoubleRatchet.recvKey(st2, header.epoch, header.generation, header.msgNo)
+                                else null
+                                if (step2 is DoubleRatchet.RecvStep.Key) {
+                                    val r = ChatEnvelope.openRatchet(blob, step2.aesKey, step2.iv, dir)
+                                    if (r !is ChatEnvelope.Result.Unreadable) pendingRatchetState = step2.state
+                                    r
+                                } else {
+                                    ChatEnvelope.Result.Unreadable
+                                }
+                            } else {
+                                ChatEnvelope.Result.Unreadable
+                            }
+                        }
                         // Pozici už jsme zpracovali → zahoď a nech potvrdit (klíč se
                         // sem už nevrátí, karanténa by nikdy nepomohla).
                         DoubleRatchet.RecvStep.AlreadyConsumed -> {
@@ -767,12 +931,19 @@ object RelaySync {
                         )
                     )
 
-                    // KEM re-key (PCS): řídicí zpráva, není do historie. Fáze 4b-1
-                    // definuje jen FORMÁT - handshake (OFFER/ACCEPT/CONFIRM →
-                    // applyRekey) se zapojí ve 4b-2. Zatím zahodit a potvrdit; žádný
-                    // re-key se ještě neiniciuje, takže sem reálně nic nechodí.
-                    is ChatEnvelope.Opened.Rekey ->
-                        DiagnosticsLog.log(TAG, "re-key zpráva (subtype ${opened.subtype}) - handshake zatím nezapojen")
+                    // KEM re-key (PCS): řídicí zpráva, není do historie. Nejdřív ulož
+                    // posun recvKey na TÉTO zprávě (aby applyRekey v handleRekey stavěl
+                    // na uloženém stavu a úspěšná větev to nepřepsala), pak zpracuj
+                    // handshake. Když se posun neuloží, dávku nepotvrzuj.
+                    is ChatEnvelope.Opened.Rekey -> {
+                        val saved = pendingRatchetState?.let { ratchetStore.saveRecv(contact.id, it) } ?: true
+                        pendingRatchetState = null
+                        if (!saved) {
+                            allSafe = false
+                        } else {
+                            handleRekey(context, contact, baseUrl, ratchetStore, opened)
+                        }
+                    }
 
                     // Reakce: není to zpráva do historie, jen se přilepí k cílové
                     // zprávě. Schválně NEjde přes arrived() - nesmí zvýšit počet

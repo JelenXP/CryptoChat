@@ -76,8 +76,29 @@ data class RatchetState(
      */
     val prevRecvChainKeyB64: String? = null,
     val prevRecvGeneration: Int = -1,
-    val prevRecvMsgNo: Int = 0
+    val prevRecvMsgNo: Int = 0,
+    /**
+     * Přechodný stav re-key HANDSHAKE (Fáze 4b). Perzistentní, ať handshake přežije
+     * restart. [rekeyStage]: 0=žádný, 1=iniciátor odeslal OFFER (čeká ACCEPT),
+     * 2=iniciátor odeslal CONFIRM (čeká na protějškovu novou generaci → pak přesejne
+     * pomocí [rekeySsB64]), 3=odpovídající odeslal ACCEPT (čeká CONFIRM).
+     * [rekeyPrivB64] = můj ML-KEM privát k pubkey, který jsem poslal.
+     * [rekeySsB64] = iniciátor: hotové kombinované tajemství čekající na přesejnutí;
+     * odpovídající: dílčí ssI mezi ACCEPT a CONFIRM.
+     */
+    val rekeyId: String? = null,
+    val rekeyPrivB64: String? = null,
+    val rekeySsB64: String? = null,
+    val rekeyStage: Int = 0
 ) {
+
+    /** Fáze re-key handshake ([rekeyStage]). */
+    object Rekey {
+        const val NONE = 0
+        const val INIT_OFFERED = 1
+        const val INIT_CONFIRMED = 2
+        const val RESP_ACCEPTED = 3
+    }
 
     /**
      * Fáze migrace ze statického klíče kontaktu na Double Ratchet.
@@ -143,6 +164,10 @@ data class RatchetState(
         prevRecvChainKeyB64?.let { put("pck", it) }
         if (prevRecvGeneration != -1) put("pg", prevRecvGeneration)
         if (prevRecvMsgNo != 0) put("pn", prevRecvMsgNo)
+        rekeyId?.let { put("rkid", it) }
+        rekeyPrivB64?.let { put("rkpriv", it) }
+        rekeySsB64?.let { put("rkss", it) }
+        if (rekeyStage != 0) put("rkst", rekeyStage)
     }
 
     companion object {
@@ -191,7 +216,11 @@ data class RatchetState(
                 generation = o.optInt("gen", 0),
                 prevRecvChainKeyB64 = o.optStringOrNull("pck"),
                 prevRecvGeneration = o.optInt("pg", -1),
-                prevRecvMsgNo = o.optInt("pn", 0)
+                prevRecvMsgNo = o.optInt("pn", 0),
+                rekeyId = o.optStringOrNull("rkid"),
+                rekeyPrivB64 = o.optStringOrNull("rkpriv"),
+                rekeySsB64 = o.optStringOrNull("rkss"),
+                rekeyStage = o.optInt("rkst", 0)
             )
         }
     }

@@ -260,12 +260,26 @@ object DoubleRatchet {
 
     // --- KEM re-key (Fáze 4, PCS) ---
 
+    private const val REKEY_COMBINE = "CryptoChat/ratchet/rekey-combine/v1"
+
     /**
      * Vygeneruje čerstvý ML-KEM pár pro re-key. Vrací (public, private) Base64.
      */
     fun generateKemKeyPair(): Pair<String, String> {
         val kp = com.jelenxp.cryptochat.crypto.PostQuantumKem.generateKeyPair()
         return kp.publicKeyBase64 to kp.privateKeyBase64
+    }
+
+    /**
+     * Zkombinuje dvě KEM tajemství do jednoho 32B (Base64). ssI = protějšek
+     * zapouzdřil k mému pubkey, ssR = já jsem zapouzdřil k protějškovu pubkey.
+     * Vmíchat OBĚ znamená, že re-key injektuje čerstvou entropii z OBOU stran →
+     * uzdravení (PCS) proti kompromitaci kterékoli z nich. Obě strany dojdou ke
+     * stejnému výsledku (mají ssI i ssR).
+     */
+    fun combineSecrets(ssIB64: String, ssRB64: String): String {
+        val ikm = Base64Util.decode(ssIB64) + Base64Util.decode(ssRB64)
+        return Base64Util.encode(Hkdf.derive(ikm, REKEY_COMBINE, KEY_BYTES))
     }
 
     /**

@@ -113,6 +113,19 @@ class RatchetStore(
         save(contactId, cur.copy(pointerMarker = marker))
     }
 
+    /**
+     * Atomický read-modify-write pod companion zámkem: načte stav, [transform] ho
+     * změní, uloží. Pro operace, které se dotýkají OBOU půlek naráz (KEM re-key,
+     * handshake stav) - slučovací saveSend/saveRecv by nestačily. Vrací false, když
+     * stav nejde načíst/zapsat; `null` z [transform] = neukládat (no-op → true).
+     */
+    fun updateLocked(contactId: String, transform: (RatchetState) -> RatchetState?): Boolean =
+        synchronized(lock) {
+            val cur = load(contactId) ?: return false
+            val next = transform(cur) ?: return true
+            save(contactId, next)
+        }
+
     /** Zapomene stav kontaktu (při jeho smazání). */
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)
