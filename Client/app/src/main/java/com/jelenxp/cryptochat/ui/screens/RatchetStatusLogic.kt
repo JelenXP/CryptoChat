@@ -46,4 +46,37 @@ object RatchetStatusLogic {
                 rekeying = rekeyStage != RatchetState.Rekey.NONE
             )
         }
+
+    /**
+     * KTEROU variantu karty vykreslit. Tohle rozhodnutí (dřív zapečené v composable,
+     * neotestované) patří sem - skrývá se v něm bug (priorita, práh uzdravení), ne
+     * v tom, jaký string se ukáže. Composable jen mapuje [Display] na ikonu/text.
+     */
+    sealed interface Display {
+        /** Stav se ještě načítá (I/O) - karta se NEkreslí, ať neblikne „vypnutá". */
+        data object Loading : Display
+        /** Ratchet neběží. */
+        data object Inactive : Display
+        /** Rotace běží, zatím bez uzdravení (generace 0). */
+        data object Active : Display
+        /** Rotace běží, [count]× se už klíč obnovil (generace > 0). */
+        data class Healed(val count: Int) : Display
+        /** Právě probíhá výměna - má PŘEDNOST před počtem uzdravení. */
+        data object Rekeying : Display
+    }
+
+    /**
+     * @param loaded stav už byl načten z úložiště (false = ještě běží I/O → [Display.Loading])
+     * @param status výsledek [status]
+     *
+     * Priorita je záměrná: probíhající výměna přebije počet uzdravení; „uzdraveno"
+     * platí jen pro generaci > 0 (gen 0 je čerstvý seed, ještě se nehojilo).
+     */
+    fun display(loaded: Boolean, status: Status): Display = when {
+        !loaded -> Display.Loading
+        status is Status.Active && status.rekeying -> Display.Rekeying
+        status is Status.Active && status.generation > 0 -> Display.Healed(status.generation)
+        status is Status.Active -> Display.Active
+        else -> Display.Inactive
+    }
 }

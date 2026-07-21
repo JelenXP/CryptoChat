@@ -434,6 +434,7 @@ object RelaySync {
         if (!store.updateLocked(contact.id) {
                 it.copy(
                     rekeyId = WireExt.toHex(rekeyId), rekeyPrivB64 = skI, rekeySsB64 = null,
+                    rekeyConfirmB64 = null,
                     rekeyStage = RatchetState.Rekey.INIT_OFFERED,
                     // Zaznamenej provoz pro rozestup opakování (Fáze 4c). Vlastní OFFER
                     // teprve posune sendMsgNo, takže marker sedí na stavu PŘED odesláním.
@@ -465,10 +466,43 @@ object RelaySync {
             msgsThisGeneration = st.sendMsgNo + st.recvMsgNo,
             rekeyMarker = st.rekeyMarker
         )
-        if (decide && initiateRekey(context, contact)) {
+        if (!decide) return
+        // KLÍČOVÉ (audit VYSOKÁ): z INIT_CONFIRMED se re-key NESMÍ RESTARTOVAT
+        // (initiateRekey zahodí hotové ss → trvalá desynchronizace, když protějšek
+        // mezitím přesejnul a dorazí jeho stará in-flight zpráva). Místo toho jen
+        // idempotentně PŘEPOŠLI CONFIRM - odblokuje uvíznutý protějšek a ss zachová.
+        if (st.rekeyStage == RatchetState.Rekey.INIT_CONFIRMED) {
+            if (resendConfirm(context, contact)) {
+                DiagnosticsLog.log(TAG, "auto re-key: CONFIRM přeposlán (gen ${st.generation})")
+            }
+        } else if (initiateRekey(context, contact)) {
             DiagnosticsLog.log(
                 TAG, "auto re-key zahájen (gen ${st.generation}, provoz ${st.sendMsgNo + st.recvMsgNo})"
             )
+        }
+    }
+
+    /**
+     * Iniciátor v INIT_CONFIRMED (poslal CONFIRM, čeká na protějškovu novou generaci),
+     * ale handshake možná uvázl (ztracený CONFIRM/ACCEPT). Znovu pošle IDENTICKÝ CONFIRM
+     * (stejný rekeyId, uložený `ctR` z [RatchetState.rekeyConfirmB64]) - záměrně NE přes
+     * [initiateRekey], protože ten zahodí hotové `ss` i schopnost dohnat příští generaci.
+     * Re-CONFIRM je bezpečný VŽDY: protějšek v RESP_ACCEPTED ho dokončí, už přesejnutý
+     * protějšek ho zahodí (stage != RESP_ACCEPTED). Aktualizuje jen [RatchetState.rekeyMarker]
+     * (rozestup opakování), na `ss`/stage nesahá. Vrací true při odeslání.
+     */
+    private fun resendConfirm(context: Context, contact: Contact): Boolean {
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank()) return false
+        val store = RatchetStore(context, storageCrypto)
+        val st = store.load(contact.id) ?: return false
+        if (st.rekeyStage != RatchetState.Rekey.INIT_CONFIRMED) return false
+        val rekeyId = st.rekeyId?.let { WireExt.fromHex(it) } ?: return false
+        val ctR = st.rekeyConfirmB64?.let { Base64Util.decode(it) } ?: return false
+        // Posuň jen marker (rozestup opakování) - NEsahej na ss ani stage.
+        if (!store.updateLocked(contact.id) { it.copy(rekeyMarker = it.sendMsgNo + it.recvMsgNo) }) return false
+        return sendOneRatchet(context, contact, baseUrl) {
+            ChatEnvelope.buildRekeyPayload(WireExt.REKEY_CONFIRM, rekeyId, ctR, System.currentTimeMillis())
         }
     }
 
@@ -533,8 +567,15 @@ object RelaySync {
                 val ssI = try { PostQuantumKem.decapsulate(skI, Base64Util.encode(ctI)).aesKeyBase64 } catch (e: Exception) { return }
                 val encR = try { PostQuantumKem.encapsulate(Base64Util.encode(pkR)) } catch (e: Exception) { return }
                 val ss = DoubleRatchet.combineSecrets(ssI, encR.sharedKeys.aesKeyBase64)
+                // Ulož ctR do stavu (rekeyConfirmB64), ať jde CONFIRM idempotentně
+                // PŘEPOSLAT při zaseknutí, aniž bychom zahodili ss (re-encapsulace by
+                // dala jiné ss → desync). Viz resendConfirm / audit VYSOKÁ.
                 if (!store.updateLocked(contact.id) {
-                        it.copy(rekeySsB64 = ss, rekeyPrivB64 = null, rekeyStage = RatchetState.Rekey.INIT_CONFIRMED)
+                        it.copy(
+                            rekeySsB64 = ss, rekeyPrivB64 = null,
+                            rekeyStage = RatchetState.Rekey.INIT_CONFIRMED,
+                            rekeyConfirmB64 = encR.encapsulationBase64
+                        )
                     }
                 ) return
                 val ctR = Base64Util.decode(encR.encapsulationBase64)
@@ -554,7 +595,7 @@ object RelaySync {
                     store.updateLocked(contact.id) { cur ->
                         if (cur.rekeyStage != RatchetState.Rekey.RESP_ACCEPTED || cur.rekeyId != opened.rekeyIdHex) return@updateLocked null
                         DoubleRatchet.applyRekey(cur, ss, sendDir, recvDir)
-                            .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyStage = RatchetState.Rekey.NONE)
+                            .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyConfirmB64 = null, rekeyStage = RatchetState.Rekey.NONE)
                     }
                 }
                 DiagnosticsLog.log(TAG, "KEM re-key dokončen (odpovídající), nová generace")
@@ -579,7 +620,7 @@ object RelaySync {
                 if (cur.rekeyStage != RatchetState.Rekey.INIT_CONFIRMED || msgGeneration != cur.generation + 1) return@updateLocked null
                 applied = true
                 DoubleRatchet.applyRekey(cur, ss, sendDir, recvDir)
-                    .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyStage = RatchetState.Rekey.NONE)
+                    .copy(rekeyId = null, rekeyPrivB64 = null, rekeySsB64 = null, rekeyConfirmB64 = null, rekeyStage = RatchetState.Rekey.NONE)
             }
         }
         if (applied) DiagnosticsLog.log(TAG, "KEM re-key dokončen (iniciátor), nová generace")
@@ -936,9 +977,16 @@ object RelaySync {
                     // Ratchet: zprávu jsme autentizovaně „přečetli", jen neumíme
                     // funkci → posuň stav, ať nevznikne mezera. (Zahazujeme obsah,
                     // ne pozici v řetězu.) saveRecv: přepiš jen přijímací půlku.
-                    pendingRatchetState?.let { ratchetStore.saveRecv(contact.id, it) }
-                    ReplayGuard.remember(context, contact.id, blob)
-                    item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                    // Když posun stavu selže (disk), dávku NEPOTVRZUJ - stejně jako
+                    // úspěšná větev níž (jinak by se ACKlo bez posunu → mezera).
+                    val recvSaved = pendingRatchetState?.let { ratchetStore.saveRecv(contact.id, it) } ?: true
+                    if (!recvSaved) {
+                        DiagnosticsLog.error(TAG, "posun ratchet stavu (Unsupported) selhal, dávku nepotvrzuji")
+                        allSafe = false
+                    } else {
+                        ReplayGuard.remember(context, contact.id, blob)
+                        item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                    }
                     continue
                 }
                 val ok = result as? ChatEnvelope.Result.Ok

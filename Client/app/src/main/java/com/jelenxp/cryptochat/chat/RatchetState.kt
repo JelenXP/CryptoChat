@@ -91,6 +91,15 @@ data class RatchetState(
     val rekeySsB64: String? = null,
     val rekeyStage: Int = 0,
     /**
+     * Iniciátorův uložený CONFIRM payload (`ctR`, base64) po odeslání CONFIRM
+     * (stage INIT_CONFIRMED). Umožňuje CONFIRM **idempotentně přeposlat** při
+     * zaseknutém handshake, aniž by se zahodilo hotové [rekeySsB64] (re-encapsulace
+     * by dala jiné `ss` → desync). Restart re-key z INIT_CONFIRMED je zakázaný
+     * (audit: vedl k trvalé desynchronizaci), proto se místo něj re-CONFIRMuje.
+     * Maže se při dokončení re-key a při zahájení nového (OFFER).
+     */
+    val rekeyConfirmB64: String? = null,
+    /**
      * Provoz (`sendMsgNo + recvMsgNo` v AKTUÁLNÍ generaci) v okamžiku posledního
      * odeslaného OFFER (Fáze 4c, auto-politika [RekeyPolicy]). Slouží k rozestupu
      * opakovaných pokusů o re-key, když handshake uvázne (ztracený OFFER/ACCEPT/
@@ -140,7 +149,11 @@ data class RatchetState(
         recvMsgNo = s.recvMsgNo,
         skipped = s.skipped,
         inboundMarker = s.inboundMarker,
+        // Grace-trojice MUSÍ migrovat pohromadě - dřív se přenášel jen řetěz a msgNo,
+        // ale generace ne, takže při souběhu recv-merge × re-key mohla trojice tvrdit
+        // „řetěz generace G je <řetěz z G-1>" a grace zprávy by se přestaly dešifrovat.
         prevRecvChainKeyB64 = s.prevRecvChainKeyB64,
+        prevRecvGeneration = s.prevRecvGeneration,
         prevRecvMsgNo = s.prevRecvMsgNo
     )
 
@@ -178,6 +191,7 @@ data class RatchetState(
         rekeySsB64?.let { put("rkss", it) }
         if (rekeyStage != 0) put("rkst", rekeyStage)
         if (rekeyMarker != 0) put("rkm", rekeyMarker)
+        rekeyConfirmB64?.let { put("rkcf", it) }
     }
 
     companion object {
@@ -231,7 +245,8 @@ data class RatchetState(
                 rekeyPrivB64 = o.optStringOrNull("rkpriv"),
                 rekeySsB64 = o.optStringOrNull("rkss"),
                 rekeyStage = o.optInt("rkst", 0),
-                rekeyMarker = o.optInt("rkm", 0)
+                rekeyMarker = o.optInt("rkm", 0),
+                rekeyConfirmB64 = o.optStringOrNull("rkcf")
             )
         }
     }

@@ -272,11 +272,14 @@ object DoubleRatchet {
     }
 
     /**
-     * Zkombinuje dvě KEM tajemství do jednoho 32B (Base64). ssI = protějšek
-     * zapouzdřil k mému pubkey, ssR = já jsem zapouzdřil k protějškovu pubkey.
-     * Vmíchat OBĚ znamená, že re-key injektuje čerstvou entropii z OBOU stran →
-     * uzdravení (PCS) proti kompromitaci kterékoli z nich. Obě strany dojdou ke
-     * stejnému výsledku (mají ssI i ssR).
+     * Zkombinuje dvě KEM tajemství do jednoho 32B (Base64). **Pořadí je vázané na
+     * ROLI KLÍČE, ne na „já/protějšek":** `ssI` = tajemství k INICIÁTOROVU ephemeral
+     * pubkey (`pkI`), `ssR` = tajemství k ODPOVÍDAJÍCÍHO pubkey (`pkR`). Obě strany
+     * tak skládají `(K_pkI ‖ K_pkR)` ve STEJNÉM pořadí → shodné `ss` → shodný kořen.
+     * (HKDF NENÍ komutativní; kdyby se pořadí odvozovalo z „mého/protějškova" pohledu,
+     * byl by pro každou stranu opačný a řetěze by se navždy rozešly - proto to takhle
+     * NEMĚNIT.) Vmíchání OBOU stran = re-key injektuje entropii z obou → PCS uzdravení
+     * proti kompromitaci kterékoli z nich.
      */
     fun combineSecrets(ssIB64: String, ssRB64: String): String {
         val ikm = Base64Util.decode(ssIB64) + Base64Util.decode(ssRB64)
@@ -329,12 +332,13 @@ object DoubleRatchet {
      * jen původní kotvu.
      *
      * Odvozeno HKDF z kořene s vlastním doménovým labelem → kořen neprozradí a
-     * nekoliduje s klíči řetězů/re-key. Formát je stejný jako otisk: 8 bajtů hex
-     * po skupinách (`AB12 CD34 EF56 78AB`). Nezávisí na směru (kořen taky ne),
-     * takže odesílatel i příjemce dostanou shodný kód.
+     * nekoliduje s klíči řetězů/re-key. **16 bajtů (128 bitů)** hex po skupinách
+     * (`AB12 CD34 … 78AB`) - dost na odolnost proti birthday kolizi (audit: 64 bitů
+     * bylo málo). Nezávisí na směru (kořen taky ne), takže odesílatel i příjemce
+     * dostanou shodný kód.
      */
     fun safetyNumber(state: RatchetState): String {
-        val out = Hkdf.derive(Base64Util.decode(state.rootKeyB64), SAFETY, 8)
+        val out = Hkdf.derive(Base64Util.decode(state.rootKeyB64), SAFETY, 16)
         return out.joinToString("") { "%02x".format(it) }.uppercase().chunked(4).joinToString(" ")
     }
 }

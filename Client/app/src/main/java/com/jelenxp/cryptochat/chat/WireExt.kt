@@ -498,6 +498,9 @@ object WireExt {
     /** Opak [toHex]. Vrací null, když řetězec není platný hex očekávané délky. */
     fun fromHex(hex: String, expectedBytes: Int = MSG_ID_BYTES): ByteArray? {
         if (hex.length != expectedBytes * 2) return null
+        // Každý znak MUSÍ být hex číslice. `toIntOrNull(16)` totiž přijme i znaménko
+        // (`-5`, `+A`), což by vpustilo neplatný vstup (audit: obrana do hloubky).
+        if (hex.any { it !in '0'..'9' && it !in 'a'..'f' && it !in 'A'..'F' }) return null
         val out = ByteArray(expectedBytes)
         for (i in 0 until expectedBytes) {
             val v = hex.substring(i * 2, i * 2 + 2).toIntOrNull(16) ?: return null

@@ -20,17 +20,18 @@ package com.jelenxp.cryptochat.chat
  * - **Brzké PRVNÍ uzdravení**: generace 0 vznikla ze statického `M` kontaktu (to
  *   mohlo uniknout ještě před instalací téhle verze). Proto se gen 0 re-keyuje už
  *   po [REKEY_INITIAL_MSGS] provozu - `M` nemá zůstat jediným tajemstvím dlouho.
- * - **Zotavení zaseknutého handshake**: když se OFFER/ACCEPT/CONFIRM ztratil,
- *   po [REKEY_RETRY_MSGS] dalšího provozu se re-key zopakuje (iniciátor pošle nový
- *   OFFER s novým `rekeyId`, čímž starý pokus přepíše).
- *   - Restart z [RatchetState.Rekey.INIT_OFFERED] je **vždy bezpečný** - ani jedna
- *     strana ještě nepřešla na novou generaci.
- *   - Restart z [RatchetState.Rekey.INIT_CONFIRMED] je bezpečný **jen když je
- *     protějšek prokazatelně pozadu**: kdyby už přešel (poslal novou generaci),
- *     [RelaySync] by tu zprávu rovnou přesejnul a stav by NEbyl INIT_CONFIRMED.
- *     Že jsme v tomto pollu přijali obsah (`peerOnline`) a přesto ZŮSTALI
- *     INIT_CONFIRMED tedy dokazuje, že šlo o zprávu STARÉ generace → protějšek
- *     nepřešel → restart je bezpečný. Právě proto je `peerOnline` podmínkou i tady.
+ * - **Zotavení zaseknutého handshake**: když se OFFER/ACCEPT/CONFIRM ztratil, po
+ *   [REKEY_RETRY_MSGS] dalšího provozu se re-key posune vpřed. Tahle funkce vrací
+ *   jen „ANO, posuň re-key" - KONKRÉTNÍ akci volí volající ([RelaySync.maybeAutoRekey])
+ *   podle fáze, protože se zásadně liší:
+ *   - Z [RatchetState.Rekey.INIT_OFFERED] (a NONE) se pošle nový OFFER - **vždy
+ *     bezpečné**, ani jedna strana ještě nepřešla na novou generaci.
+ *   - Z [RatchetState.Rekey.INIT_CONFIRMED] se re-key **NIKDY nerestartuje** (nový
+ *     OFFER by zahodil hotové `ss` → trvalá desynchronizace, když protějšek mezitím
+ *     přesejnul a dorazí jeho stará in-flight zpráva). Místo toho se idempotentně
+ *     PŘEPOŠLE CONFIRM (zachová `ss`). To je bezpečné bez ohledu na to, kde protějšek
+ *     je - `peerOnline` je tu jen výkonnostní gate (neposílat do prázdna), NE důkaz
+ *     „protějšek je pozadu" (ten NEPLATÍ: stará zpráva mohla dorazit až po přesejnutí).
  */
 object RekeyPolicy {
 

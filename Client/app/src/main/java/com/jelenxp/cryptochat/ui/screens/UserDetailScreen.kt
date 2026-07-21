@@ -124,9 +124,13 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
 
     // Stav rotace klíčů (Fáze 5). Čte se MIMO kompozici (RatchetStore jde přes
     // Keystore = I/O, v kompozici by hrozil ANR); snapshot při otevření detailu.
+    // `ratchetLoaded` odlišuje „ještě nenačteno" od „ratchet neexistuje", ať karta
+    // neblikne „rotace vypnutá", než doběhne čtení.
     var ratchetState by remember(id) { mutableStateOf<RatchetState?>(null) }
+    var ratchetLoaded by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
         ratchetState = withContext(Dispatchers.IO) { RatchetStore(context).load(id) }
+        ratchetLoaded = true
     }
 
     // --- Stav dialogů / menu ---
@@ -361,12 +365,13 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                 generation = ratchetState?.generation ?: 0,
                 rekeyStage = ratchetState?.rekeyStage ?: RatchetState.Rekey.NONE
             )
-            SecurityStatusCard(rotationStatus)
+            SecurityStatusCard(RatchetStatusLogic.display(ratchetLoaded, rotationStatus))
             // Volitelné ověření AKTUÁLNÍ generace (rozklikávací). Kód je levné HKDF
-            // nad kořenem - bezpečné počítat v kompozici (žádné I/O).
+            // nad kořenem - bezpečné počítat v kompozici (žádné I/O). runCatching:
+            // poškozený kořen v úložišti nesmí shodit obrazovku.
             if (rotationStatus is RatchetStatusLogic.Status.Active) {
                 val safetyCode = remember(ratchetState?.rootKeyB64) {
-                    ratchetState?.let { DoubleRatchet.safetyNumber(it) }
+                    ratchetState?.let { runCatching { DoubleRatchet.safetyNumber(it) }.getOrNull() }
                 }
                 if (safetyCode != null) {
                     SafetyNumberReveal(generation = rotationStatus.generation, code = safetyCode)
@@ -814,32 +819,33 @@ private fun FileResultCard(title: String, name: String, preview: ImageBitmap?, o
  * [RatchetStatusLogic.Status] na ikonu + text; žádná logika tu není.
  */
 @Composable
-private fun SecurityStatusCard(status: RatchetStatusLogic.Status) {
-    val (icon, title, detail) = when (status) {
-        RatchetStatusLogic.Status.Inactive -> Triple(
+private fun SecurityStatusCard(display: RatchetStatusLogic.Display) {
+    // Loading: nekresli nic (ať karta neblikne „vypnutá", než doběhne čtení stavu).
+    if (display is RatchetStatusLogic.Display.Loading) return
+    val (icon, title, detail) = when (display) {
+        RatchetStatusLogic.Display.Loading -> return
+        RatchetStatusLogic.Display.Inactive -> Triple(
             Icons.Default.Lock,
             stringResource(R.string.security_status_inactive_title),
             stringResource(R.string.security_status_inactive_detail)
         )
-        is RatchetStatusLogic.Status.Active -> when {
-            status.rekeying -> Triple(
-                Icons.Default.Autorenew,
-                stringResource(R.string.security_status_rekeying_title),
-                stringResource(R.string.security_status_rekeying_detail)
-            )
-            status.generation > 0 -> Triple(
-                Icons.Default.VerifiedUser,
-                stringResource(R.string.security_status_active_title),
-                stringResource(R.string.security_status_healed_detail, status.generation)
-            )
-            else -> Triple(
-                Icons.Default.VerifiedUser,
-                stringResource(R.string.security_status_active_title),
-                stringResource(R.string.security_status_active_detail)
-            )
-        }
+        RatchetStatusLogic.Display.Rekeying -> Triple(
+            Icons.Default.Autorenew,
+            stringResource(R.string.security_status_rekeying_title),
+            stringResource(R.string.security_status_rekeying_detail)
+        )
+        is RatchetStatusLogic.Display.Healed -> Triple(
+            Icons.Default.VerifiedUser,
+            stringResource(R.string.security_status_active_title),
+            stringResource(R.string.security_status_healed_detail, display.count)
+        )
+        RatchetStatusLogic.Display.Active -> Triple(
+            Icons.Default.VerifiedUser,
+            stringResource(R.string.security_status_active_title),
+            stringResource(R.string.security_status_active_detail)
+        )
     }
-    val active = status is RatchetStatusLogic.Status.Active
+    val active = display !is RatchetStatusLogic.Display.Inactive
     val container = if (active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val onContainer = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(shape = RoundedCornerShape(14.dp), color = container, contentColor = onContainer, modifier = Modifier.fillMaxWidth()) {

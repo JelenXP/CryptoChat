@@ -264,7 +264,13 @@ object ContactBackup {
             // Stav Double Ratchetu (verze 3). Guardované zvlášť: poškozený stav
             // ratchetu NESMÍ shodit obnovu kontaktu - kontakt i historie se obnoví
             // i bez něj (jede pak legacy cestou / dorovná se přes rouru, Fáze 3).
-            if (obj.has("ratchet")) runCatching {
+            // NEREGREDOVAT: import nesmí přepsat ŽIVÝ (rozjetý) ratchet starším
+            // snímkem ze zálohy - vrácení odesílacího řetěze/čítačů zpět by zopakovalo
+            // AES-GCM (klíč,IV), což je fatální (obnova keystreamu, forgery). Ratchet
+            // obnovujeme JEN když na zařízení žádný není (Absent) - typicky migrace na
+            // nový telefon. Existující stav je vždy aktuálnější než záloha. (Signal
+            // z téhož důvodu odesílací řetěz mezi zařízeními neklonuje.)
+            if (obj.has("ratchet") && ratchetStore.read(id) is RatchetStore.Load.Absent) runCatching {
                 RatchetState.fromJson(obj.getJSONObject("ratchet"))?.let { ratchetStore.save(id, it) }
             }.onFailure {
                 Log.w(TAG, "Přeskakuji poškozený ratchet stav kontaktu $id (${it.javaClass.simpleName})")

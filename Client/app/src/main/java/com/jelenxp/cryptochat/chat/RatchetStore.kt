@@ -92,14 +92,22 @@ class RatchetStore(
      * zápis selhal.
      */
     fun saveSend(contactId: String, sendState: RatchetState): Boolean = synchronized(lock) {
-        val cur = load(contactId)   // reentrantní zámek
-        save(contactId, if (cur != null) cur.withSendFrom(sendState) else sendState)
+        when (val cur = read(contactId)) {   // reentrantní zámek
+            is Load.Loaded -> save(contactId, cur.state.withSendFrom(sendState))
+            Load.Absent -> save(contactId, sendState)
+            // Unreadable: poškozený-ale-živý stav NEPŘEPISOVAT prázdnou půlkou (jinak
+            // nevratná desynchronizace - proto vůbec existuje sealed Load).
+            Load.Unreadable -> false
+        }
     }
 
     /** Uloží PŘIJÍMACÍ půlku stavu a nechá odesílací. Viz [saveSend]. */
     fun saveRecv(contactId: String, recvState: RatchetState): Boolean = synchronized(lock) {
-        val cur = load(contactId)
-        save(contactId, if (cur != null) cur.withRecvFrom(recvState) else recvState)
+        when (val cur = read(contactId)) {
+            is Load.Loaded -> save(contactId, cur.state.withRecvFrom(recvState))
+            Load.Absent -> save(contactId, recvState)
+            Load.Unreadable -> false
+        }
     }
 
     /**
