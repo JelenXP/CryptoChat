@@ -82,6 +82,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.ActiveChat
+import com.jelenxp.cryptochat.chat.ChatNotifications
 import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
@@ -161,6 +162,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             ActiveChat.currentId = id
             withContext(Dispatchers.IO) { repo.markRead(id) }  // otevřená konverzace = přečteno
+            // Uživatel obsah právě čte - shoď případnou notifikaci tohoto kontaktu
+            // z lišty (jinak by tam visela, dokud na ni neklepne).
+            ChatNotifications.cancelMessage(context, id)
             // Pro .onion relay nastartuj zabudovaný Tor (idempotentní) a popožeň
             // službu, ať pro čerstvě spárovaný kontakt nečekáme na hlídač.
             // ensureStarted dělá diskovou IO (getDir + stavba runtime) - mimo main.

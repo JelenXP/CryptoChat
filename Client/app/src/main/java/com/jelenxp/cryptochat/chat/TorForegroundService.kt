@@ -52,8 +52,12 @@ class TorForegroundService : Service() {
     private val fingerprints = HashMap<String, String>()
     @Volatile private var syncStarted = false
 
-    /** Poslední text trvalé notifikace - přepisujeme ji jen při skutečné změně. */
-    private var lastNotificationText: String? = null
+    /**
+     * Poslední text trvalé notifikace - přepisujeme ji jen při skutečné změně.
+     * `@Volatile`, protože `updateNotification()` teď volá i warmUp a poll smyčky
+     * (různá vlákna IO dispatcheru), ne jen tik hlídače.
+     */
+    @Volatile private var lastNotificationText: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -312,6 +316,10 @@ class TorForegroundService : Service() {
             RelayStatus.refresh(ctx)          // blokuje než health doběhne; no-op při souběhu
             if (RelayStatus.state == RelayConn.CONNECTED) {
                 DiagnosticsLog.log(TAG, "spojení zahřáto (relay dostupný)")
+                // Přepiš trvalou notifikaci HNED („Připojuji…" → „Připojeno").
+                // Bez tohohle by text visel na „Připojuji…" až do prvního tiku
+                // hlídače (i 2 minuty), i když je spojení dávno navázané.
+                updateNotification()
                 return
             }
             // Rostoucí odstup: když server neběží (uspaný notebook), nemá smysl
@@ -378,6 +386,7 @@ class TorForegroundService : Service() {
                         // Server nedostupný (uspaný notebook) - srovnej indikátor.
                         RelayStatus.markUnreachable()
                     }
+                    updateNotification()   // promptně srovnej i text trvalé notifikace
                     backoff = sleepBackoff(backoff)
                 } else {
                     backoff = BACKOFF_START_MS
@@ -386,6 +395,7 @@ class TorForegroundService : Service() {
                     // trvalou notifikaci na „připojeno", i když se health ve
                     // warmUpu nestihl (jinak by uvázly na „připojuji").
                     RelayStatus.markConnected()
+                    updateNotification()   // „Připojuji…" → „Připojeno" hned po prvním úspěchu
                     // Pojistka proti serveru, který nectí long-poll (vrátí se hned):
                     // bez podlahy by se smyčka roztočila na 100 % CPU a stavěla okruh
                     // za okruhem. Výchozí relay drží ~60 s, takže se sem nedostane.

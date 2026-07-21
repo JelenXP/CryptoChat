@@ -114,10 +114,26 @@ object ChatNotifications {
             .setContentIntent(open)
             .build()
         try {
-            nm.notify(MESSAGE_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF), notification)
+            nm.notify(messageNotificationId(contactId), notification)
         } catch (e: SecurityException) {
             // Povolení mezitím odebráno - ignorovat.
         }
+    }
+
+    /**
+     * Stabilní ID notifikace zpráv daného kontaktu. Per-KONTAKT (ne per-zpráva),
+     * takže novější zpráva přepíše starší. Jediný zdroj toho ID: [notifyMessage] i
+     * [cancelMessage] ho MUSÍ počítat odsud, jinak by se notifikace nedala zrušit.
+     */
+    fun messageNotificationId(contactId: String): Int =
+        MESSAGE_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF)
+
+    /**
+     * Zruší notifikaci zpráv daného kontaktu. Volá se při otevření jeho konverzace:
+     * uživatel obsah právě čte, takže notifikace o něm nemá dál viset v liště.
+     */
+    fun cancelMessage(context: Context, contactId: String) {
+        NotificationManagerCompat.from(context).cancel(messageNotificationId(contactId))
     }
 
     /**
