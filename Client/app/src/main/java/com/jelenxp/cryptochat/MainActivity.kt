@@ -466,7 +466,14 @@ fun CryptoChatApp(
     LaunchedEffect(openChatId) {
         val id = openChatId ?: return@LaunchedEffect
         onOpenChatConsumed()
-        navController.navigate("chat/$id")
+        // `popUpTo("main")` sloupne případný jiný otevřený chat: kdyby se nová
+        // konverzace jen naskládala NA něj, „zpět" by nevedlo na seznam, ale do
+        // toho druhého (náhodně otevřeného) kontaktu. `launchSingleTop` pak
+        // zabrání zdvojení při dvojím klepnutí na tutéž notifikaci.
+        navController.navigate("chat/$id") {
+            popUpTo("main")
+            launchSingleTop = true
+        }
     }
 
     NavHost(
