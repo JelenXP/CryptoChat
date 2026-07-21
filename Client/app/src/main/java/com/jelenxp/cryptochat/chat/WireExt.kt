@@ -72,6 +72,23 @@ object WireExt {
     const val TYPE_MAX_MAJOR = 5
     const val TYPE_CAPABILITIES = 6
 
+    /**
+     * KEM re-key (Fáze 4, PCS). Hodnota TLV: `[1B subtype][16B rekeyId]`. Tělo
+     * zprávy nese ML-KEM materiál (velký, nevejde se do TLV). Na rozdíl od
+     * [TYPE_CONTROL] má tahle „řídicí" zpráva NEPRÁZDNÉ tělo, takže se gatuje
+     * schopností [CAP_REKEY] (posílá se JEN protějšku, který ji umí zpracovat -
+     * jinak by starší verze zobrazila KEM bajty jako text).
+     */
+    const val TYPE_REKEY = 7
+
+    /** Fáze re-key handshake (subtype v [TYPE_REKEY]). Čísla se nerecyklují. */
+    const val REKEY_OFFER = 0
+    const val REKEY_ACCEPT = 1
+    const val REKEY_CONFIRM = 2
+
+    /** Délka náhodného identifikátoru re-key (spojuje OFFER/ACCEPT/CONFIRM). */
+    const val REKEY_ID_BYTES = 16
+
     /** Délka stabilního ID zprávy. 16 B = stejná odolnost proti kolizi jako UUID. */
     const val MSG_ID_BYTES = 16
 
@@ -87,13 +104,15 @@ object WireExt {
     // bitmapa) - odlišuje protějšek, který kanál zná, od staršího, co ho neposílá.
     //
     // Registr bitů - čísla se NIKDY nerecyklují (ani když funkce zanikne):
-    // | bit | jméno     | význam                    |
-    // |-----|-----------|---------------------------|
-    // | 0   | REACTIONS | umí zobrazit reakce emoji |
+    // | bit | jméno     | význam                          |
+    // |-----|-----------|---------------------------------|
+    // | 0   | REACTIONS | umí zobrazit reakce emoji       |
+    // | 1   | REKEY     | umí KEM re-key (PCS, Fáze 4)    |
     const val CAP_REACTIONS = 0
+    const val CAP_REKEY = 1
 
     /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
-    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS)
+    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY)
 
     /**
      * Zabalí množinu bitů do bitmapy (LSB-first): bit `i` leží v bajtu `i/8`,
@@ -156,6 +175,9 @@ object WireExt {
 
     /** Reakce vytažená z traileru. */
     data class ReactionData(val targetHex: String, val emoji: String, val remove: Boolean)
+
+    /** Metadata KEM re-key vytažená z traileru (fáze + id); materiál je v těle zprávy. */
+    data class RekeyData(val subtype: Int, val rekeyIdHex: String)
 
     /** Operace reakce. Čísla se stejně jako typy TLV nerecyklují. */
     const val OP_SET = 0
@@ -324,6 +346,14 @@ object WireExt {
                 val featureId = ((v[0].toInt() and 0xFF) shl 8) or (v[1].toInt() and 0xFF)
                 return Control(featureId, v[2].toInt() and 0xFF)
             }
+
+        /** KEM re-key metadata (fáze + id), nebo null. Materiál je v těle zprávy. */
+        val rekey: RekeyData?
+            get() {
+                val v = first(TYPE_REKEY) ?: return null
+                if (v.size != 1 + REKEY_ID_BYTES) return null
+                return RekeyData(v[0].toInt() and 0xFF, toHex(v.copyOfRange(1, 1 + REKEY_ID_BYTES)))
+            }
     }
 
     /** Skládá trailer k odeslání. */
@@ -372,6 +402,15 @@ object WireExt {
          */
         fun putCapabilities(caps: Set<Int>): Builder =
             put(TYPE_CAPABILITIES, encodeCapabilities(caps))
+
+        /** KEM re-key metadata: `[1B subtype][16B rekeyId]`. Materiál je v těle zprávy. */
+        fun putRekey(subtype: Int, rekeyId: ByteArray): Builder {
+            require(rekeyId.size == REKEY_ID_BYTES) { "rekeyId musí mít $REKEY_ID_BYTES B" }
+            val v = ByteArray(1 + REKEY_ID_BYTES)
+            v[0] = subtype.toByte()
+            System.arraycopy(rekeyId, 0, v, 1, REKEY_ID_BYTES)
+            return put(TYPE_REKEY, v)
+        }
 
         /** Prázdné pole, když není co posílat - pak se trailer vůbec nezapíše. */
         fun build(): ByteArray {

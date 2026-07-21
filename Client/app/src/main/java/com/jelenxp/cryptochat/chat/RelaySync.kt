@@ -767,6 +767,13 @@ object RelaySync {
                         )
                     )
 
+                    // KEM re-key (PCS): řídicí zpráva, není do historie. Fáze 4b-1
+                    // definuje jen FORMÁT - handshake (OFFER/ACCEPT/CONFIRM →
+                    // applyRekey) se zapojí ve 4b-2. Zatím zahodit a potvrdit; žádný
+                    // re-key se ještě neiniciuje, takže sem reálně nic nechodí.
+                    is ChatEnvelope.Opened.Rekey ->
+                        DiagnosticsLog.log(TAG, "re-key zpráva (subtype ${opened.subtype}) - handshake zatím nezapojen")
+
                     // Reakce: není to zpráva do historie, jen se přilepí k cílové
                     // zprávě. Schválně NEjde přes arrived() - nesmí zvýšit počet
                     // nepřečtených ani vyvolat notifikaci.

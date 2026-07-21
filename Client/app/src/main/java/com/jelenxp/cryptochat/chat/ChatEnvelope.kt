@@ -87,6 +87,18 @@ object ChatEnvelope {
             val emoji: String,
             val remove: Boolean
         ) : Opened
+
+        /**
+         * Řídicí zpráva KEM re-key (Fáze 4, PCS). Není to zpráva pro historii -
+         * [subtype] je [WireExt.REKEY_OFFER]/[WireExt.REKEY_ACCEPT]/[WireExt.REKEY_CONFIRM],
+         * [rekeyIdHex] spojuje fáze, [kem] je ML-KEM materiál (pubkey / ciphertext).
+         */
+        data class Rekey(
+            override val timestamp: Long,
+            val subtype: Int,
+            val rekeyIdHex: String,
+            val kem: ByteArray
+        ) : Opened
     }
 
     /**
@@ -271,6 +283,24 @@ object ChatEnvelope {
         return buildRawPayload(KIND_FILE_CHUNK, data.array(), timestamp)
     }
 
+    /**
+     * Vnitřní plaintext KEM re-key zprávy (Fáze 4): TĚLO = ML-KEM materiál,
+     * trailer nese REKEY TLV ([subtype] + [rekeyId]). Pozná se podle traileru,
+     * ne podle `kind` (ten je TEXT). Padding do košů jako u textu.
+     */
+    internal fun buildRekeyPayload(subtype: Int, rekeyId: ByteArray, kem: ByteArray, timestamp: Long): ByteArray {
+        val trailer = WireExt.Builder()
+            .putRekey(subtype, rekeyId)
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
+            .putCapabilities(WireExt.LOCAL_CAPABILITIES)
+            .build()
+        val padded = ByteArray(bucketFor(HEADER + kem.size + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, kem.size)
+        System.arraycopy(kem, 0, padded, HEADER, kem.size)
+        System.arraycopy(trailer, 0, padded, HEADER + kem.size, trailer.size)
+        return padded
+    }
+
     /** Vnitřní plaintext obecné zprávy typu [kind] s daty (bez šifrování). */
     private fun buildRawPayload(kind: Byte, data: ByteArray, timestamp: Long): ByteArray {
         val payload = ByteArray(HEADER + data.size)
@@ -375,6 +405,20 @@ object ChatEnvelope {
         // Trailer leží ZA daty. Když tam není nebo je poškozený, chováme se
         // jako by nebyl - zprávu kvůli vadné ozdobě nikdy nezahazujeme.
         val trailer = WireExt.parse(payload, HEADER + len)
+
+        // KEM re-key (Fáze 4): tělo NENÍ text, ale ML-KEM materiál - pozná se
+        // podle REKEY TLV v traileru. Musí se otestovat DŘÍV než textová větev
+        // (re-key má NEprázdné tělo). Posílá se jen protějšku s CAP_REKEY, takže
+        // starší verze (bez REKEY TLV) sem nikdy nedostane KEM bajty jako „text".
+        trailer?.rekey?.let { rk ->
+            return Result.Ok(
+                senderMinor,
+                Opened.Rekey(timestamp, rk.subtype, rk.rekeyIdHex, data),
+                trailer.msgIdHex,
+                maxMajor = trailer.maxMajor,
+                capabilities = trailer.capabilities
+            )
+        }
 
         // Řídicí zpráva pro funkci, kterou neumíme -> tiše zahodit.
         //
