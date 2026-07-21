@@ -20,5 +20,9 @@ captures/
 .claude/
 CLAUDE.md
 
+# --- Chatová verze má vlastní repozitář (JelenXP/CryptoChatOnline) ---
+# Leží fyzicky tady, ale je to samostatný git repo - starý repo ji ignoruje.
+/CryptoChatServer/
+
 # --- Různé ---
 *.log
