@@ -81,6 +81,10 @@ By default the app uses the built-in relay over Tor. In **Chat server** you can 
 
 - **AES-256-GCM** authenticated encryption of messages and photos.
 - **Post-quantum** key exchange (ML-KEM-768, NIST FIPS 203) with a spoken verification code.
+- **Automatic key rotation** — keys refresh themselves as you chat (a forward-secret
+  ratchet, plus a periodic post-quantum re-key that heals after a possible leak), with no
+  re-pairing. The contact detail shows the current state and an optional **security code**
+  you can compare to confirm you're both on the same fresh key.
 - **Built-in Tor** — the server never sees your IP address, and you install nothing extra.
 - **The server is a blind dead-drop** — no accounts; mailbox IDs are derived from your
   shared key (which the server has never seen) and rotate daily, so the server cannot link
@@ -197,6 +201,10 @@ přepnout na **Vlastní** a zadat svou adresu (vlastní relay v místní síti n
 
 - **AES-256-GCM** autentizované šifrování zpráv i fotek.
 - **Post-kvantová** výměna klíče (ML-KEM-768, NIST FIPS 203) s nahlas ověřovaným kódem.
+- **Automatická rotace klíčů** — klíče se během psaní samy obměňují (forward-secret ratchet
+  plus občasný post-kvantový re-key, který uzdraví po možném úniku), bez nutnosti znovu se
+  párovat. Detail kontaktu ukazuje aktuální stav a volitelný **bezpečnostní kód**, který si
+  můžeš porovnat a ověřit, že máte oba stejný čerstvý klíč.
 - **Zabudovaný Tor** — server nevidí tvoji IP adresu a ty nic dalšího neinstaluješ.
 - **Server je slepá schránka** — žádné účty; ID schránek se odvozují ze sdíleného klíče
   (který server nikdy neviděl) a každý den se mění, takže server nespojí konverzaci
