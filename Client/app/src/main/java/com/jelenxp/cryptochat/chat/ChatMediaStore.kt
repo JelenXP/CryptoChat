@@ -24,7 +24,16 @@ object ChatMediaStore {
 
     private const val TAG = "ChatMediaStore"
     private const val DIR = "chat_media"
-    private const val MAX_DIMENSION = 1920
+
+    /**
+     * Max delší hrana ODESÍLANÉ fotky (px). Příjemce ji stejně zobrazuje jen
+     * podvzorkovanou na [decodeForDisplay] `maxPx` (1080), takže posílat víc je
+     * jen plýtvání daty přes Tor. 1440 nechává rezervu nad zobrazením (přiblížení,
+     * budoucí větší displeje) a přitom má ~44 % méně pixelů než dřívějších 1920 →
+     * zhruba polovina bajtů u největšího přenosu, na oko beze změny. Týká se JEN
+     * odchozích fotek; přijaté se ukládají tak, jak je poslal protějšek.
+     */
+    private const val MAX_DIMENSION = 1440
 
     /** Strop velikosti (relay MAX_BLOB_SIZE 2 MB minus rezerva na GCM + hlavičku). */
     const val MAX_BYTES = 1_900_000
