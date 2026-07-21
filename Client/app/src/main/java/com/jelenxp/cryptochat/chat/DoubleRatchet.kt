@@ -303,6 +303,8 @@ object DoubleRatchet {
             recvChainKeyB64 = enc(newRecv),
             sendMsgNo = 0,
             recvMsgNo = 0,
+            // Nová generace = auto-politika (Fáze 4c) měří provoz od nuly.
+            rekeyMarker = 0,
             // Ulož DOSAVADNÍ přijímací řetěz jako předchozí generaci: in-order konec
             // staré generace, co dorazí přes relay AŽ po re-key, se pak ještě
             // dešifruje (grace, viz recvKey větev 3). Bez toho by se tiše ztratil.

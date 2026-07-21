@@ -434,12 +434,41 @@ object RelaySync {
         if (!store.updateLocked(contact.id) {
                 it.copy(
                     rekeyId = WireExt.toHex(rekeyId), rekeyPrivB64 = skI, rekeySsB64 = null,
-                    rekeyStage = RatchetState.Rekey.INIT_OFFERED
+                    rekeyStage = RatchetState.Rekey.INIT_OFFERED,
+                    // Zaznamenej provoz pro rozestup opakování (Fáze 4c). Vlastní OFFER
+                    // teprve posune sendMsgNo, takže marker sedí na stavu PŘED odesláním.
+                    rekeyMarker = it.sendMsgNo + it.recvMsgNo
                 )
             }
         ) return false
         return sendOneRatchet(context, contact, baseUrl) {
             ChatEnvelope.buildRekeyPayload(WireExt.REKEY_OFFER, rekeyId, Base64Util.decode(pkI), System.currentTimeMillis())
+        }
+    }
+
+    /**
+     * Auto-politika re-key (Fáze 4c): po pollu zváží, jestli má iniciátor spustit
+     * (nebo zopakovat) re-key. Vlastní rozhodnutí je čisté v [RekeyPolicy]; tady se
+     * jen dosadí reálné signály - schopnost protějšku a „online" (v pollu něco
+     * přišlo) - a případně zahájí handshake ([initiateRekey], ten sám přepíše
+     * zaseknutý pokus novým `rekeyId`). Volá se z [poll] jen pro aktivní ratchet.
+     */
+    private fun maybeAutoRekey(context: Context, contact: Contact, store: RatchetStore, received: Int) {
+        if (contact.initiator != true) return
+        val st = store.load(contact.id) ?: return
+        val decide = RekeyPolicy.shouldInitiate(
+            initiator = true,
+            peerSupportsRekey = WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_REKEY),
+            peerOnline = received > 0,
+            generation = st.generation,
+            rekeyStage = st.rekeyStage,
+            msgsThisGeneration = st.sendMsgNo + st.recvMsgNo,
+            rekeyMarker = st.rekeyMarker
+        )
+        if (decide && initiateRekey(context, contact)) {
+            DiagnosticsLog.log(
+                TAG, "auto re-key zahájen (gen ${st.generation}, provoz ${st.sendMsgNo + st.recvMsgNo})"
+            )
         }
     }
 
@@ -1174,6 +1203,9 @@ object RelaySync {
             }
             // Long-poll cílové ratchet epochy (aktuální, sousední nebo z beaconu).
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, target), LONGPOLL_SECONDS, ratchet = true)
+            // Auto-politika PCS re-key (Fáze 4c): teď víme, jestli protějšek právě
+            // psal (received) - zváž zahájení/zopakování re-key.
+            maybeAutoRekey(context, contact, ratchetStore, received)
             return PollResult(received, failed, reachable)
         }
 

@@ -89,7 +89,16 @@ data class RatchetState(
     val rekeyId: String? = null,
     val rekeyPrivB64: String? = null,
     val rekeySsB64: String? = null,
-    val rekeyStage: Int = 0
+    val rekeyStage: Int = 0,
+    /**
+     * Provoz (`sendMsgNo + recvMsgNo` v AKTUÁLNÍ generaci) v okamžiku posledního
+     * odeslaného OFFER (Fáze 4c, auto-politika [RekeyPolicy]). Slouží k rozestupu
+     * opakovaných pokusů o re-key, když handshake uvázne (ztracený OFFER/ACCEPT/
+     * CONFIRM). 0 = v této generaci se re-key ještě nezkoušel; [DoubleRatchet.applyRekey]
+     * ho na nové generaci resetuje na 0. Není v [withSendFrom]/[withRecvFrom] -
+     * mění ho jen re-key přes plný zámek, takže ho slučovací uložení nepřepíše.
+     */
+    val rekeyMarker: Int = 0
 ) {
 
     /** Fáze re-key handshake ([rekeyStage]). */
@@ -168,6 +177,7 @@ data class RatchetState(
         rekeyPrivB64?.let { put("rkpriv", it) }
         rekeySsB64?.let { put("rkss", it) }
         if (rekeyStage != 0) put("rkst", rekeyStage)
+        if (rekeyMarker != 0) put("rkm", rekeyMarker)
     }
 
     companion object {
@@ -220,7 +230,8 @@ data class RatchetState(
                 rekeyId = o.optStringOrNull("rkid"),
                 rekeyPrivB64 = o.optStringOrNull("rkpriv"),
                 rekeySsB64 = o.optStringOrNull("rkss"),
-                rekeyStage = o.optInt("rkst", 0)
+                rekeyStage = o.optInt("rkst", 0),
+                rekeyMarker = o.optInt("rkm", 0)
             )
         }
     }
