@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.chat.DoubleRatchet
 import com.jelenxp.cryptochat.chat.RatchetState
 import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.crypto.CryptoManager
@@ -355,13 +356,22 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
             }
 
             // Stav automatické rotace klíčů (Fáze 5).
-            SecurityStatusCard(
-                RatchetStatusLogic.status(
-                    ratchetPresent = ratchetState != null,
-                    generation = ratchetState?.generation ?: 0,
-                    rekeyStage = ratchetState?.rekeyStage ?: RatchetState.Rekey.NONE
-                )
+            val rotationStatus = RatchetStatusLogic.status(
+                ratchetPresent = ratchetState != null,
+                generation = ratchetState?.generation ?: 0,
+                rekeyStage = ratchetState?.rekeyStage ?: RatchetState.Rekey.NONE
             )
+            SecurityStatusCard(rotationStatus)
+            // Volitelné ověření AKTUÁLNÍ generace (rozklikávací). Kód je levné HKDF
+            // nad kořenem - bezpečné počítat v kompozici (žádné I/O).
+            if (rotationStatus is RatchetStatusLogic.Status.Active) {
+                val safetyCode = remember(ratchetState?.rootKeyB64) {
+                    ratchetState?.let { DoubleRatchet.safetyNumber(it) }
+                }
+                if (safetyCode != null) {
+                    SafetyNumberReveal(generation = rotationStatus.generation, code = safetyCode)
+                }
+            }
 
             // Přepínač Zašifrovat / Dešifrovat (klouzavá pilulka)
             SegmentedControl(
@@ -839,6 +849,41 @@ private fun SecurityStatusCard(status: RatchetStatusLogic.Status) {
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyMedium, color = onContainer)
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = onContainer.copy(alpha = 0.82f))
+            }
+        }
+    }
+}
+
+/**
+ * Volitelné ověření aktuální generace (Fáze 5): rozklikávací řádek, který ukáže
+ * bezpečnostní kód generace. Ryze prezentace - kód i generaci dostane hotové.
+ */
+@Composable
+private fun SafetyNumberReveal(generation: Int, code: String) {
+    var shown by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { shown = !shown }.padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(if (shown) R.string.security_code_hide else R.string.security_code_show),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        AnimatedVisibility(visible = shown) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                Text(code, style = MonoStyle, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.security_code_hint, generation),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

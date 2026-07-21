@@ -267,6 +267,9 @@
     <string name="security_status_rekeying_detail">Na pozadí se domlouvá čerstvý klíč.</string>
     <string name="security_status_inactive_title">Automatická rotace: vypnutá</string>
     <string name="security_status_inactive_detail">Spustí se, jakmile bude druhý telefon online s kompatibilní verzí.</string>
+    <string name="security_code_show">Zobrazit bezpečnostní kód</string>
+    <string name="security_code_hide">Skrýt bezpečnostní kód</string>
+    <string name="security_code_hint">Kód generace %1$d. Když ho oba vidíte stejný (porovnáno jiným kanálem), máte shodný aktuální klíč. Mění se při každé obměně.</string>
 
     <!-- Šifrování / dešifrování souborů -->
     <string name="btn_send_file">Odeslat soubor</string>

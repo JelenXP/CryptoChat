@@ -267,6 +267,9 @@
     <string name="security_status_rekeying_detail">A fresh key is being agreed in the background.</string>
     <string name="security_status_inactive_title">Automatic rotation: off</string>
     <string name="security_status_inactive_detail">Starts once the other phone is online with a compatible version.</string>
+    <string name="security_code_show">Show security code</string>
+    <string name="security_code_hide">Hide security code</string>
+    <string name="security_code_hint">Generation %1$d code. If you both see the same code (compared over another channel), your current key matches. It changes with every renewal.</string>
 
     <!-- Encrypt / decrypt files -->
     <string name="btn_send_file">Send file</string>

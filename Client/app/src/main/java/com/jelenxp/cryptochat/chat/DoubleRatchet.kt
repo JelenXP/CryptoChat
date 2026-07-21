@@ -36,6 +36,7 @@ object DoubleRatchet {
     private const val LABEL_CK = "CryptoChat/ratchet/ck/v1"
     private const val LABEL_AEAD = "CryptoChat/ratchet/aead/v1"
     private const val REKEY_ROOT = "CryptoChat/ratchet/rekey-root/v1"
+    private const val SAFETY = "CryptoChat/ratchet/safety-number/v1"
 
     private const val KEY_BYTES = 32
     private const val AEAD_BYTES = 44   // 32 klíč + 12 IV
@@ -317,4 +318,23 @@ object DoubleRatchet {
     }
 
     private fun enc(bytes: ByteArray): String = Base64Util.encode(bytes)
+
+    /**
+     * Krátký ověřovací kód **aktuální generace** ratchetu (Fáze 5). Obě strany,
+     * které jsou v synchronizaci (stejná generace = stejný kořen), spočítají
+     * stejný kód a můžou si ho porovnat jiným kanálem - ověří tím, že ratchet
+     * nesešel z cesty (útokem ani bugem/ztrátou stavu). Na rozdíl od
+     * [com.jelenxp.cryptochat.crypto.CryptoManager.fingerprint] (otisk STATICKÉHO
+     * klíče M) se tenhle mění při každém re-key, takže ověřuje čerstvý stav, ne
+     * jen původní kotvu.
+     *
+     * Odvozeno HKDF z kořene s vlastním doménovým labelem → kořen neprozradí a
+     * nekoliduje s klíči řetězů/re-key. Formát je stejný jako otisk: 8 bajtů hex
+     * po skupinách (`AB12 CD34 EF56 78AB`). Nezávisí na směru (kořen taky ne),
+     * takže odesílatel i příjemce dostanou shodný kód.
+     */
+    fun safetyNumber(state: RatchetState): String {
+        val out = Hkdf.derive(Base64Util.decode(state.rootKeyB64), SAFETY, 8)
+        return out.joinToString("") { "%02x".format(it) }.uppercase().chunked(4).joinToString(" ")
+    }
 }
