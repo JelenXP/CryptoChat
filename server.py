@@ -30,6 +30,7 @@ import os
 import re
 import secrets
 import struct
+import sys
 import threading
 import tempfile
 import time
@@ -721,6 +722,18 @@ class RelayServer(ThreadingHTTPServer):
             super().shutdown_request(request)
         finally:
             self._slots.release()
+
+    def handle_error(self, request, client_address):
+        # Bezne odpojeni klienta (rozpadly Tor okruh, prepnuta sit) uprostred
+        # odpovedi NENI chyba serveru - klient jen zmizel. Default handler by na
+        # stderr (a tim do journalu) vysypal cely traceback: jediny zaznam s casem,
+        # ktery pripomina "access log". Zamlcime ho: podporuje to zasadu "server
+        # nevede zadne provozni zaznamy" (soukromi) a odstranuje sum z journalu.
+        # Skutecne chyby (bug v handleru) se logují dal.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, ConnectionError):
+            return
+        super().handle_error(request, client_address)
 
 
 def main():

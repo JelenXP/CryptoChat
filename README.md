@@ -41,8 +41,17 @@ Server naslouchá na `127.0.0.1:8787`. Konfigurace přes proměnné prostředí:
 | `CC_MAX_BLOB_SIZE` | `2097152` (2 MB) | Max velikost jednoho blobu (fotka / kousek souboru) |
 | `CC_MAX_MAILBOX_BLOBS` | `200` | Max blobků čekajících v jedné schránce |
 | `CC_TTL_SECONDS` | `86400` (24 h) | Za jak dlouho nevyzvednutá schránka expiruje |
-| `CC_MAX_TOTAL_BYTES` | `536870912` (512 MB) | Globální strop paměti |
-| `CC_LONGPOLL_MAX` | `25` | Strop long-pollu (kolik sekund smí GET čekat na zprávu) |
+| `CC_MAX_TOTAL_BYTES` | `536870912` (512 MB) | Globální strop paměti (nad → eviction, pak `507`) |
+| `CC_LONGPOLL_MAX` | `90` | Strop long-pollu (kolik sekund smí GET čekat na zprávu) |
+| `CC_DRAIN_CAP` | `8388608` (8 MB) | Kolik přerostlého těla „vypít", aby klient stihl `413` (nad → odpojit) |
+| `CC_MAX_CONNECTIONS` | `512` | Strop souběžných spojení (vláken); nad → spojení se zavře |
+| `CC_MAX_PEEK_BYTES` | `8388608` (8 MB) | Max bajtů vrácených v jedné GET odpovědi |
+| `CC_RATE_LIMIT_REQUESTS` | `3000` | Rate limit na okno (za Torem je to JEDEN společný kbelík — jen pojistka při přímém vystavení) |
+| `CC_RATE_LIMIT_WINDOW` | `60` | Okno rate limitu (s) |
+| `CC_REPORTS_DIR` | auto | Kam ukládat hlášení chyb (viz `POST /report` níže) |
+| `CC_MAX_REPORT_SIZE` | `262144` (256 KB) | Max velikost jednoho hlášení |
+| `CC_MAX_REPORTS` | `500` | Max počet složek hlášení na disku |
+| `CC_MAX_REPORTS_BYTES` | `67108864` (64 MB) | Max celková velikost hlášení na disku |
 
 Trvalý běh na serveru (Linux): použij přiloženou službu **`cryptochat-relay.service`** (systemd).
 
@@ -75,8 +84,9 @@ Dvě cesty, `<id>` je 16–128 znaků z `A–Z a–z 0–9 _ -`:
 - **`POST /report`** — dobrovolné hlášení chyby z appky (JSON) → `204`.
   Jediná věc, kterou server ukládá **na disk**: každé hlášení do vlastní složky
   `reports/<timestamp>-<náhodný suffix>/report.json` (tělo přesně tak, jak přišlo,
-  nic o odesílateli). Kořen se dá přepnout přes `CC_REPORTS_DIR` (výchozí `./reports`),
-  strop velikosti přes `CC_MAX_REPORT_SIZE` (výchozí 256 KB).
+  nic o odesílateli). Kořen se dá přepnout přes `CC_REPORTS_DIR`; bez něj server
+  vezme první zapisovatelný z `/var/lib/cryptochat-relay/reports`, `~/cryptochat-reports`,
+  `/tmp/cryptochat-reports`. Strop velikosti přes `CC_MAX_REPORT_SIZE` (výchozí 256 KB).
   Chyby: `411` (chybí délka), `413` (moc velké), `500` (nelze zapsat).
   Obsah je anonymní už od klienta — žádné zprávy, klíče, jména kontaktů ani ID schránek.
 
