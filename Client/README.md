@@ -56,7 +56,11 @@ man-in-the-middle.
   Both phones need a recent version; until then reactions simply aren't sent.
 - **Copy or delete** — holding a message also lets you copy its text or delete it from
   this phone only. The other person keeps their copy.
-- The contact list shows the **last message** and highlights **unread** chats.
+- **Straight from the notification** — a new-message notification shows all the unseen
+  messages as a conversation. You can **Reply** right there (it's sent as a normal message)
+  or tap **Like** to put a 👍 on the last one. Opening the chat clears its notification.
+- The contact list shows the **last message**, highlights **unread** chats, and keeps the
+  **most recently active** conversation at the top.
 - The **cloud icon** at the top shows the connection: spinner while connecting, a cloud
   with a check when connected.
 
@@ -176,7 +180,11 @@ man-in-the-middle.
   Oba telefony potřebují novější verzi; do té doby se reakce prostě neposílají.
 - **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat
   jen z tohohle telefonu. Protějšku jeho kopie zůstane.
-- V seznamu kontaktů je vidět **poslední zpráva** a **nepřečtené** chaty jsou zvýrazněné.
+- **Přímo z oznámení** — oznámení o nové zprávě ukáže všechny nepřečtené zprávy jako
+  konverzaci. Můžeš na něj rovnou **Odpovědět** (odešle se jako normální zpráva) nebo
+  ťuknout na **To se mi líbí** a dát 👍 na poslední. Otevřením chatu oznámení zmizí.
+- V seznamu kontaktů je vidět **poslední zpráva**, **nepřečtené** chaty jsou zvýrazněné
+  a **naposledy aktivní** konverzace je nahoře.
 - **Ikona cloudu** nahoře ukazuje spojení: kolečko při připojování, cloud s fajfkou po
   připojení.
 
