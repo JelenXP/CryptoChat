@@ -98,4 +98,39 @@ object ChatScreenLogic {
      */
     fun doubleTapReaction(mine: String?): String? =
         if (mine != null) null else DEFAULT_REACTION
+
+    /**
+     * Je seznam konverzace „u dna"? Rozhoduje, jestli se má při změně obsahu nebo
+     * výšky viewportu (dekódování fotky, přidání reakce, otevření klávesnice)
+     * ZNOVU přirolovat dolů, nebo ne.
+     *
+     * Vytaženo z composable schválně: přesně tenhle výpočet stál za třemi UI bugy
+     * (chat se neotevřel úplně dole u fotky; psaní odscrollované zprávy skočilo na
+     * konec; reakce zaskočila konec pod vstupní lištu). Rozhodnutí „jsem dole"
+     * musí jít otestovat bez Androidu, proto bere jen čísla z `LazyListState`.
+     *
+     * @param lastVisibleIndex index posledního VIDITELNÉHO prvku (`null` = seznam prázdný)
+     * @param lastVisibleItemEnd spodní hrana posledního viditelného prvku (offset + size)
+     * @param totalItems celkový počet prvků v seznamu
+     * @param viewportEnd spodní hrana viewportu (`layoutInfo.viewportEndOffset`)
+     * @param tolerancePx rezerva na zaokrouhlení; do téhle vzdálenosti od dna se
+     *   pořád považujeme za „u dna"
+     * @return `true` když je poslední prvek seznamu vidět celý (není co odrolovat)
+     */
+    fun isAtBottom(
+        lastVisibleIndex: Int?,
+        lastVisibleItemEnd: Int,
+        totalItems: Int,
+        viewportEnd: Int,
+        tolerancePx: Int
+    ): Boolean {
+        // Prázdný seznam bereme jako „u dna" - není kam rolovat, a chceme, aby se
+        // první příchozí zpráva ukázala.
+        if (totalItems == 0 || lastVisibleIndex == null) return true
+        // Poslední prvek musí být vidět jako poslední v seznamu…
+        if (lastVisibleIndex < totalItems - 1) return false
+        // …a jeho spodní hrana nesmí být pod dnem viewportu (s tolerancí). U velmi
+        // vysoké poslední zprávy to platí až po odrolování na její konec.
+        return lastVisibleItemEnd <= viewportEnd + tolerancePx
+    }
 }

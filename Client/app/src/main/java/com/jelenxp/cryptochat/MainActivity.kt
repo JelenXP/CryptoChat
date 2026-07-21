@@ -139,7 +139,15 @@ class MainActivity : AppCompatActivity() {
                                         sharedText = sharedTextState.value,
                                         onSharedTextConsumed = { sharedTextState.value = null },
                                         openChatId = openChatIdState.value,
-                                        onOpenChatConsumed = { openChatIdState.value = null }
+                                        onOpenChatConsumed = {
+                                            openChatIdState.value = null
+                                            // Vymaž extra i z intentu Aktivity. Jinak by ho
+                                            // onCreate po recreate() (změna jazyka appky přes
+                                            // setApplicationLocales, rotace, obnova procesu)
+                                            // přečetl ZNOVU a po „zpět" by uživatele vrátil do
+                                            // konverzace, ze které odešel.
+                                            intent?.removeExtra(EXTRA_OPEN_CHAT)
+                                        }
                                     )
                                 }
                             }

@@ -52,7 +52,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +72,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
@@ -128,7 +128,6 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
     }
     var input by remember { mutableStateOf("") }
-    var inputFocused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
     // Vybrané zprávy (dlouhý stisk vybere, klepnutí ve výběru přepíná) a zpráva,
@@ -148,6 +147,35 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // --- Držení konverzace „u dna" (řeší tři UI bugy: fotka neotevře úplně dole,
+    // psaní odscrollované zprávy skočí na konec, reakce zaskočí konec pod lištu) ---
+    // Rezerva na zaokrouhlení: do téhle vzdálenosti od dna se pořád počítáme za „u dna".
+    val bottomTolerancePx = with(LocalDensity.current) { 12.dp.roundToPx() }
+    // Je uživatel u dna? Rozhodovací výpočet je vytažený do ChatScreenLogic.isAtBottom
+    // (otestovatelný bez Androidu); tady jen dodáme čísla z LazyListState.
+    val atBottom by remember(listState) {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            ChatScreenLogic.isAtBottom(
+                lastVisibleIndex = last?.index,
+                lastVisibleItemEnd = last?.let { it.offset + it.size } ?: 0,
+                totalItems = info.totalItemsCount,
+                viewportEnd = info.viewportEndOffset,
+                tolerancePx = bottomTolerancePx
+            )
+        }
+    }
+    // „Chceme být u dna": drží se, dokud uživatel neodroluje pryč. Přehodnocuje se AŽ
+    // po dojetí scrollu, NE při změně výšky viewportu od klávesnice - jinak by
+    // otevření klávesnice u dna flag shodilo a poslední zpráva by zůstala za lištou.
+    var stickToBottom by remember(id) { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .filter { !it }               // jen když scroll DOJEL (uživatelský i programový)
+            .collect { stickToBottom = atBottom }
+    }
 
     // ChatScreen ZÁMĚRNĚ NEPOLLUJE. Relay je dead-drop - GET zprávu smaže, takže
     // dva nezávislí příjemci téže schránky by o každou zprávu závodili: jednou by
@@ -201,19 +229,22 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             } else {
                 listState.animateScrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
             }
+            // Nový příspěvek (odeslaný i přijatý) = jdeme k dnu a chceme tam zůstat.
+            // Zachovává dosavadní chování „po odeslání to odscrolluje dopředu, i když
+            // jsem byl vzadu v konverzaci".
+            stickToBottom = true
         }
     }
 
-    // Když se spodní část zvětší (klávesnice zmenší okno přes adjustResize, vstup
-    // naroste na víc řádků, nebo se objeví náhled odpovědi), poslední zpráva by
-    // se schovala za ni. Dokud uživatel píše (fokus) nebo odpovídá, drž seznam
-    // u skutečného dna a reaguj i na samotnou změnu výšky viewportu.
-    val composing = inputFocused || replyTo != null
-    LaunchedEffect(composing) {
-        if (!composing) return@LaunchedEffect
-        snapshotFlow { listState.layoutInfo.viewportSize.height }
-            .collect {
-                if (messages.isNotEmpty()) {
+    // Jednotné držení u dna. Když tam být MÁME (stickToBottom), ale nejsme (obsah
+    // povyrostl dekódovanou fotkou / přidanou reakcí, nebo se zmenšil viewport od
+    // klávesnice / náhledu odpovědi / víc řádků vstupu), přirolujeme na skutečné dno.
+    // Když uživatel odscrolloval do historie (stickToBottom == false), NEVYSKAKUJEME
+    // na konec - to byl přesně ten otravný skok při psaní odscrollované zprávy.
+    LaunchedEffect(listState) {
+        snapshotFlow { Triple(stickToBottom, atBottom, listState.isScrollInProgress) }
+            .collect { (stick, bottom, scrolling) ->
+                if (stick && !bottom && !scrolling && messages.isNotEmpty()) {
                     listState.scrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
                 }
             }
@@ -594,7 +625,6 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier
                             .weight(1f)
-                            .onFocusChanged { inputFocused = it.isFocused }
                     )
                     FilledIconButton(
                         onClick = { sendCurrent() },
