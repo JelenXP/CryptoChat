@@ -68,6 +68,30 @@ data class RatchetState(
      */
     enum class Mode { LEGACY, DUAL, RATCHET }
 
+    /**
+     * Sloučí ODESÍLACÍ půlku z [s] do tohoto stavu (přijímací nechá beze změny).
+     * Send a recv pole jsou disjunktní, takže souběžný posun odesílání a příjmu
+     * si nesmí navzájem přepsat stav (jinak by se `sendMsgNo` vrátil a opakoval
+     * by se GCM klíč). V Fázi 3 jsou root/KEM/mode konstantní (mění je až KEM krok
+     * ve Fázi 4 - ten se dotýká OBOU půlek a bude potřeba řešit zvlášť).
+     */
+    fun withSendFrom(s: RatchetState): RatchetState = copy(
+        sendChainKeyB64 = s.sendChainKeyB64,
+        sendEpoch = s.sendEpoch,
+        sendMsgNo = s.sendMsgNo,
+        msgsSinceEpoch = s.msgsSinceEpoch,
+        pointerMarker = s.pointerMarker
+    )
+
+    /** Sloučí PŘIJÍMACÍ půlku z [s] (odesílací nechá beze změny). Viz [withSendFrom]. */
+    fun withRecvFrom(s: RatchetState): RatchetState = copy(
+        recvChainKeyB64 = s.recvChainKeyB64,
+        recvEpoch = s.recvEpoch,
+        recvMsgNo = s.recvMsgNo,
+        skipped = s.skipped,
+        inboundMarker = s.inboundMarker
+    )
+
     /** Serializace do JSON (pro [RatchetStore] i zálohu). */
     fun toJson(): JSONObject = JSONObject().apply {
         put("sv", STATE_VERSION)

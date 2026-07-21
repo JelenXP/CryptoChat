@@ -85,6 +85,23 @@ class RatchetStore(
         return true
     }
 
+    /**
+     * Uloží ODESÍLACÍ půlku stavu a NECHÁ přijímací, jak je právě na disku.
+     * Atomicky (read-merge-write pod companion zámkem), aby souběžný posun příjmu
+     * nepřepsal odeslání a naopak (viz [RatchetState.withSendFrom]). Vrací false =
+     * zápis selhal.
+     */
+    fun saveSend(contactId: String, sendState: RatchetState): Boolean = synchronized(lock) {
+        val cur = load(contactId)   // reentrantní zámek
+        save(contactId, if (cur != null) cur.withSendFrom(sendState) else sendState)
+    }
+
+    /** Uloží PŘIJÍMACÍ půlku stavu a nechá odesílací. Viz [saveSend]. */
+    fun saveRecv(contactId: String, recvState: RatchetState): Boolean = synchronized(lock) {
+        val cur = load(contactId)
+        save(contactId, if (cur != null) cur.withRecvFrom(recvState) else recvState)
+    }
+
     /** Zapomene stav kontaktu (při jeho smazání). */
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)

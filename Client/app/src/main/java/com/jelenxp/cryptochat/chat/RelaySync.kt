@@ -183,11 +183,17 @@ object RelaySync {
             return ReactionSend.FAILED
         }
         val delivered = try {
-            val dir = sendDir(contact)
-            val blob = ChatEnvelope.sealReaction(
-                target, emoji ?: "", emoji == null, now, key, dir
-            )
-            transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+            if (shouldSendRatchet(context, contact)) {
+                sendOneRatchet(context, contact, baseUrl) {
+                    ChatEnvelope.buildReactionPayload(target, emoji ?: "", emoji == null, now)
+                }
+            } else {
+                val dir = sendDir(contact)
+                val blob = ChatEnvelope.sealReaction(
+                    target, emoji ?: "", emoji == null, now, key, dir
+                )
+                transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+            }
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání reakce selhalo (${e.javaClass.simpleName})")
             false
@@ -254,6 +260,108 @@ object RelaySync {
         return message
     }
 
+    // --- Ratchet odesílání (Fáze 3b) ---
+
+    /** Zámky serializující odeslání per kontakt (proti opakování GCM klíče). */
+    private val sendLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    private fun sendLock(contactId: String): Any = sendLocks.getOrPut(contactId) { Any() }
+
+    /**
+     * Posílat ratchetem? Jen pro kontakt s bootstrapnutým stavem, jehož protějšek
+     * autentizovaně inzeroval, že umí major 4. `peerCanReadMajor` je monotónní,
+     * takže se rozhodnutí jednou zapnuté už nemění (žádné přepínání legacy↔ratchet).
+     */
+    private fun shouldSendRatchet(context: Context, contact: Contact): Boolean =
+        contact.initiator != null &&
+            WireCompat.peerCanReadMajor(context, contact.id, WireCompat.WIRE_MAJOR_RATCHET) &&
+            RatchetStore(context, storageCrypto).load(contact.id) != null
+
+    /**
+     * Odešle JEDEN ratchet blob (text/fotka/reakce). **Advance-immediately:**
+     * odesílací řetěz se posune a ULOŽÍ ještě PŘED `put`, pod [sendLock]. Tím se
+     * `msgNo` nikdy nepoužije pro dva různé obsahy (opakování GCM páru klíč+IV je
+     * fatální). Cena je spálený `msgNo` při selhání `put` - příjemce ho přeskočí
+     * (strop SKIP_MAX dává rezervu) a zpráva se retrykuje s NOVÝM `msgNo` a stejným
+     * `wireId`, takže ji příjemce dedupuje podle obsahu. [buildPayload] proto MUSÍ
+     * být deterministický (stabilní `wireId`/ts/obsah).
+     */
+    private fun sendOneRatchet(
+        context: Context,
+        contact: Contact,
+        baseUrl: String,
+        buildPayload: () -> ByteArray
+    ): Boolean {
+        val key = contact.keyBase64 ?: return false
+        val dir = sendDir(contact)
+        val store = RatchetStore(context, storageCrypto)
+        val step = synchronized(sendLock(contact.id)) {
+            val state = store.load(contact.id) ?: return false
+            val s = DoubleRatchet.nextSendStep(state)
+            // Posun ULOŽ HNED; když se nepovede, NEODESÍLEJ (stav se nezměnil,
+            // retry re-derivuje týž msgNo).
+            if (!store.saveSend(contact.id, s.state)) return false
+            s
+        }
+        val blob = ChatEnvelope.encryptRatchet(buildPayload(), step.aesKey, step.iv, step.epoch, step.msgNo, dir)
+        val mailbox = RelayCrypto.ratchetMailboxId(key, dir, step.epoch)
+        return try {
+            transport.put(baseUrl, mailbox, blob)
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "odeslání ratchet blobu selhalo (${e.javaClass.simpleName})")
+            false
+        }
+    }
+
+    /**
+     * Odešle soubor ratchetem (manifest + kousky); každý blob přes vlastní posun
+     * řetězu (advance-immediately, uloženo po každém blobu).
+     */
+    private fun deliverFileRatchet(
+        context: Context,
+        contact: Contact,
+        key: String,
+        baseUrl: String,
+        message: ChatMessage,
+        file: File,
+        totalChunks: Int,
+        totalSize: Long,
+        fileId: ByteArray
+    ): Boolean {
+        val dir = sendDir(contact)
+        val store = RatchetStore(context, storageCrypto)
+        fun sendPayload(payload: ByteArray): Boolean {
+            val step = synchronized(sendLock(contact.id)) {
+                val state = store.load(contact.id) ?: return false
+                val s = DoubleRatchet.nextSendStep(state)
+                if (!store.saveSend(contact.id, s.state)) return false
+                s
+            }
+            val blob = ChatEnvelope.encryptRatchet(payload, step.aesKey, step.iv, step.epoch, step.msgNo, dir)
+            return try {
+                transport.put(baseUrl, RelayCrypto.ratchetMailboxId(key, dir, step.epoch), blob)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        val manifest = ChatEnvelope.buildManifestPayload(
+            fileId, totalChunks, totalSize,
+            message.mimeType ?: "application/octet-stream", message.text, message.timestamp
+        )
+        if (!sendPayload(manifest)) return false
+        var index = 0
+        file.inputStream().use { input ->
+            val buffer = ByteArray(CHUNK_SIZE)
+            while (index < totalChunks) {
+                val read = readChunkFully(input, buffer)
+                val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
+                if (!sendPayload(ChatEnvelope.buildChunkPayload(fileId, index, chunk, message.timestamp))) return false
+                index++
+                MediaTransfers.setProgress(message.id, index.toFloat() / totalChunks)
+            }
+        }
+        return true
+    }
+
     /**
      * Zašifruje a odešle už zařazenou zprávu (text, fotku nebo soubor) do schránky
      * a aktualizuje její stav (SENT/FAILED). Vrací, zda se doručila.
@@ -265,6 +373,18 @@ object RelaySync {
         val delivered = try {
             if (key.isNullOrBlank() || baseUrl.isBlank()) {
                 false
+            } else if (shouldSendRatchet(context, contact)) {
+                val msgId = message.wireId?.let { WireExt.fromHex(it) }
+                val replyTo = message.replyToWireId?.let { WireExt.fromHex(it) }
+                sendOneRatchet(context, contact, baseUrl) {
+                    if (message.kind == ChatMessage.Kind.IMAGE && message.mediaPath != null) {
+                        ChatEnvelope.buildImagePayload(
+                            java.io.File(message.mediaPath).readBytes(), message.timestamp, msgId
+                        )
+                    } else {
+                        ChatEnvelope.buildTextPayload(message.text, message.timestamp, msgId, replyTo)
+                    }
+                }
             } else {
                 val dir = sendDir(contact)
                 // Stabilní ID se veze v traileru obálky. Starší appka (minor 1)
@@ -314,43 +434,48 @@ object RelaySync {
                 val totalChunks = ((totalSize + CHUNK_SIZE - 1) / CHUNK_SIZE)
                     .toInt().coerceAtLeast(1)
                 val fileId = MediaTransfers.fromHex(message.id)
-                val dir = sendDir(contact)
-                val mailbox = RelayCrypto.mailboxId(key, dir, currentEpoch())
                 MediaTransfers.setProgress(message.id, 0f)
-
-                val manifest = ChatEnvelope.sealFileManifest(
-                    fileId, totalChunks, totalSize,
-                    message.mimeType ?: "application/octet-stream",
-                    message.text, message.timestamp, key, dir
-                )
-                if (!transport.put(baseUrl, mailbox, manifest)) {
-                    false
+                if (shouldSendRatchet(context, contact)) {
+                    deliverFileRatchet(
+                        context, contact, key, baseUrl, message, file, totalChunks, totalSize, fileId
+                    )
                 } else {
-                    var index = 0
-                    var ok = true
-                    file.inputStream().use { input ->
-                        val buffer = ByteArray(CHUNK_SIZE)
-                        // Krájíme PŘESNĚ totalChunks kousků. read() nemusí naplnit
-                        // celý buffer ani uprostřed souboru (krátké čtení), proto
-                        // readChunkFully - jinak by vzniklo víc kousků než totalChunks,
-                        // příjemce by přebytek zahodil a složil ZKRÁCENÝ soubor.
-                        // U 0bajtového souboru (totalChunks=1) se pošle jeden prázdný
-                        // kousek, jinak by příjemce uvázl navždy v RECEIVING.
-                        while (index < totalChunks) {
-                            val read = readChunkFully(input, buffer)
-                            val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
-                            val blob = ChatEnvelope.sealFileChunk(
-                                fileId, index, chunk, message.timestamp, key, dir
-                            )
-                            if (!transport.put(baseUrl, mailbox, blob)) {
-                                ok = false
-                                break
+                    val dir = sendDir(contact)
+                    val mailbox = RelayCrypto.mailboxId(key, dir, currentEpoch())
+                    val manifest = ChatEnvelope.sealFileManifest(
+                        fileId, totalChunks, totalSize,
+                        message.mimeType ?: "application/octet-stream",
+                        message.text, message.timestamp, key, dir
+                    )
+                    if (!transport.put(baseUrl, mailbox, manifest)) {
+                        false
+                    } else {
+                        var index = 0
+                        var ok = true
+                        file.inputStream().use { input ->
+                            val buffer = ByteArray(CHUNK_SIZE)
+                            // Krájíme PŘESNĚ totalChunks kousků. read() nemusí naplnit
+                            // celý buffer ani uprostřed souboru (krátké čtení), proto
+                            // readChunkFully - jinak by vzniklo víc kousků než totalChunks,
+                            // příjemce by přebytek zahodil a složil ZKRÁCENÝ soubor.
+                            // U 0bajtového souboru (totalChunks=1) se pošle jeden prázdný
+                            // kousek, jinak by příjemce uvázl navždy v RECEIVING.
+                            while (index < totalChunks) {
+                                val read = readChunkFully(input, buffer)
+                                val chunk = if (read == buffer.size) buffer.copyOf() else buffer.copyOf(read)
+                                val blob = ChatEnvelope.sealFileChunk(
+                                    fileId, index, chunk, message.timestamp, key, dir
+                                )
+                                if (!transport.put(baseUrl, mailbox, blob)) {
+                                    ok = false
+                                    break
+                                }
+                                index++
+                                MediaTransfers.setProgress(message.id, index.toFloat() / totalChunks)
                             }
-                            index++
-                            MediaTransfers.setProgress(message.id, index.toFloat() / totalChunks)
                         }
+                        ok
                     }
-                    ok
                 }
             }
         } catch (e: Exception) {
@@ -566,8 +691,8 @@ object RelaySync {
                     )
                     // Ratchet: zprávu jsme autentizovaně „přečetli", jen neumíme
                     // funkci → posuň stav, ať nevznikne mezera. (Zahazujeme obsah,
-                    // ne pozici v řetězu.)
-                    pendingRatchetState?.let { ratchetStore.save(contact.id, it) }
+                    // ne pozici v řetězu.) saveRecv: přepiš jen přijímací půlku.
+                    pendingRatchetState?.let { ratchetStore.saveRecv(contact.id, it) }
                     ReplayGuard.remember(context, contact.id, blob)
                     item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
                     continue
@@ -759,7 +884,8 @@ object RelaySync {
                     // Když se neuloží, dávku nepotvrzuj - blob dorazí znovu a klíč se
                     // re-derivuje (stav se nezměnil). ReplayGuard/quarantine úklid pak
                     // taky ne, ať se blob zpracuje znovu celý.
-                    val stateSaved = pendingRatchetState?.let { ratchetStore.save(contact.id, it) } ?: true
+                    // saveRecv: přepiš jen přijímací půlku (odesílání běží souběžně).
+                    val stateSaved = pendingRatchetState?.let { ratchetStore.saveRecv(contact.id, it) } ?: true
                     if (!stateSaved) {
                         DiagnosticsLog.error(TAG, "uložení ratchet stavu selhalo, dávku nepotvrzuji")
                         allSafe = false
