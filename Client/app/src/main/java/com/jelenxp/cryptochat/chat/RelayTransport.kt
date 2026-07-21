@@ -24,6 +24,14 @@ interface RelayTransport {
 
     /** Potvrdí bezpečné uložení blobů až po `seq` - teprve teď je server smaže. */
     fun ack(baseUrl: String, mailboxId: String, seq: Long): Boolean
+
+    /**
+     * Předehřeje Tor okruh pro danou SOCKS [isolation] (= odesílací schránku), aby
+     * první reálný [put] nemusel čekat na studenou stavbu okruhu. Čistě best-effort
+     * optimalizace bez záruky; výchozí implementace nedělá nic (přenosy, které okruhy
+     * neřeší, ji ignorují).
+     */
+    fun prewarm(baseUrl: String, isolation: String) {}
 }
 
 /** Ostrý přenos: skutečný relay přes HTTP nebo Tor. */
@@ -36,4 +44,7 @@ object RealRelayTransport : RelayTransport {
 
     override fun ack(baseUrl: String, mailboxId: String, seq: Long): Boolean =
         RelayClient.ack(baseUrl, mailboxId, seq)
+
+    override fun prewarm(baseUrl: String, isolation: String) =
+        RelayClient.prewarm(baseUrl, isolation)
 }

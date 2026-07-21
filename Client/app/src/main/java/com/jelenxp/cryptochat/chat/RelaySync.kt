@@ -628,6 +628,33 @@ object RelaySync {
     }
 
     /**
+     * Předehřeje ODESÍLACÍ Tor okruh pro kontakt: spočítá izolaci PŘESNĚ té
+     * schránky, do které půjde příští odeslání (legacy i ratchet), a nechá
+     * [transport] postavit okruh dopředu. Volá se, když uživatel začne psát, aby
+     * první PUT nečekal na studený okruh.
+     *
+     * **Ratchet NEPOSOUVÁ** - čte jen uložený `sendEpoch` (schránka závisí na
+     * epoše, ne na `msgNo`, viz [DoubleRatchet.nextSendStep]), takže je bezpečné
+     * volat opakovaně a nespálí se tím žádný `msgNo`. Best-effort; při chybě mlčí.
+     *
+     * MUSÍ běžet mimo hlavní vlákno (čte SharedPreferences + Keystore a jde na síť).
+     */
+    fun prewarmSend(context: Context, contact: Contact) {
+        val key = contact.keyBase64 ?: return
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank()) return
+        val dir = sendDir(contact)
+        val isolation = if (shouldSendRatchet(context, contact)) {
+            // Read-only: sendEpoch bez posunu řetězu (příští zpráva jede na tuhle epochu).
+            val state = RatchetStore(context, storageCrypto).load(contact.id) ?: return
+            RelayCrypto.ratchetMailboxId(key, dir, state.sendEpoch)
+        } else {
+            RelayCrypto.mailboxId(key, dir, currentEpoch())
+        }
+        transport.prewarm(baseUrl, isolation)
+    }
+
+    /**
      * Zašifruje a odešle už zařazenou zprávu (text, fotku nebo soubor) do schránky
      * a aktualizuje její stav (SENT/FAILED). Vrací, zda se doručila.
      */

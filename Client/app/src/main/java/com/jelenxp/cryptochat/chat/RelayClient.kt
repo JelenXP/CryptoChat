@@ -201,6 +201,30 @@ object RelayClient {
         return acked
     }
 
+    /**
+     * Předehřeje Tor okruh pro danou SOCKS [isolation] (= odesílací schránku).
+     * Tor izoluje okruhy podle SOCKS jména ([socksUserPassAuth]), takže levný
+     * GET /health poslaný pod stejnou izolací postaví PŘESNĚ ten okruh, který pak
+     * použije [put] do téže schránky - první odeslání pak nečeká na studenou stavbu.
+     *
+     * Cesta požadavku je /health (ne /m/<schránka>), takže se relayi neprozradí ID
+     * schránky; izolace je jen lokální SOCKS jméno mezi appkou a jejím Torem.
+     * Best-effort: všechny chyby spolkne (je to jen optimalizace). U přímého
+     * (ne-onion) spojení se okruhy nestaví, takže se nedělá nic.
+     */
+    fun prewarm(baseUrl: String, isolation: String) {
+        try {
+            val target = Target.parse(baseUrl, "/health")
+            if (TorManager.isOnion(target.host)) {
+                onionRequest(target, "GET", null, ONION_READ_TIMEOUT_MS, isolation = isolation)
+            }
+        } catch (e: Exception) {
+            // Adresu ani izolaci nelogujeme - jen typ chyby.
+            Log.w(TAG, "předehřátí okruhu selhalo: ${e.javaClass.simpleName}")
+            DiagnosticsLog.log(TAG, "předehřátí okruhu selhalo (${e.javaClass.simpleName})")
+        }
+    }
+
     /** Ověří dostupnost relaye (GET /health). */
     fun health(baseUrl: String): Boolean {
         val ok = try {

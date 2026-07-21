@@ -145,6 +145,18 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val hasKey = contact?.keyBase64 != null
     val canChat = hasKey && relayUrl.isNotBlank()
 
+    // Předehřátí ODESÍLACÍHO Tor okruhu: jakmile uživatel začne psát (vstup přestane
+    // být prázdný), postav dopředu okruh pro odesílací schránku, ať první PUT nečeká
+    // na studenou stavbu. Jen při přechodu prázdný→neprázdný (derivedStateOf drží
+    // boolean, LaunchedEffect se restartuje jen na jeho změně), mimo main, best-effort.
+    // Neposouvá ratchet (prewarmSend čte jen sendEpoch).
+    val inputNotBlank by remember { derivedStateOf { input.isNotBlank() } }
+    LaunchedEffect(inputNotBlank, canChat) {
+        if (inputNotBlank && canChat && contact != null) {
+            withContext(Dispatchers.IO) { RelaySync.prewarmSend(context, contact) }
+        }
+    }
+
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
