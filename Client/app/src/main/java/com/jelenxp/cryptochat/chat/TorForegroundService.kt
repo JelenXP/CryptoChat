@@ -360,19 +360,17 @@ class TorForegroundService : Service() {
                 // tu si zprávu zobrazí sama. Kontroluje se AŽ TEĎ, protože poll
                 // mohl běžet ještě z doby, než uživatel chat otevřel.
                 if (result.received > 0 && ActiveChat.currentId != contact.id) {
-                    val lastIncoming = repo.getMessages(contact.id).lastOrNull { !it.outgoing }
+                    // Celá historie nepřečtených (ne jen poslední) do MessagingStyle.
+                    val unseen = ChatNotificationLogic.unseenIncoming(
+                        repo.getMessages(contact.id), repo.getUnreadCount(contact.id)
+                    )
                     // Jméno čti ČERSTVÉ z repozitáře, ne ze snapshotu smyčky:
                     // přejmenování kontaktu smyčku nerestartuje (fingerprint hlídá
                     // jen klíč a roli), takže snapshot by v notifikaci ukázal staré
                     // jméno až do restartu.
                     val currentName = ContactRepository(ctx).getContacts()
                         .find { it.id == contact.id }?.name ?: contact.name
-                    ChatNotifications.notifyMessage(
-                        ctx,
-                        contact.id,
-                        currentName,
-                        lastIncoming?.text ?: getString(R.string.notif_new_message)
-                    )
+                    ChatNotifications.notifyMessage(ctx, contact.id, currentName, unseen)
                 }
                 if (result.failed) {
                     DiagnosticsLog.warn(TAG, "poll selhal, zpomaluji (backoff $backoff ms)")

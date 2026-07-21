@@ -430,6 +430,12 @@
     <string name="notif_connecting">Připojuji k serveru chatu…</string>
     <string name="notif_connected">Připojeno k serveru chatu</string>
     <string name="notif_new_message">Nová zpráva</string>
+    <string name="notif_you">Já</string>
+    <string name="notif_photo">📷 Fotka</string>
+    <string name="notif_file">📎 Soubor</string>
+    <string name="notif_action_reply">Odpovědět</string>
+    <string name="notif_action_like">To se mi líbí</string>
+    <string name="notif_reply_hint">Zpráva</string>
 
     <!-- Průvodce povoleními pro pozadí -->
     <string name="onb_step_counter">Krok %1$d z %2$d</string>

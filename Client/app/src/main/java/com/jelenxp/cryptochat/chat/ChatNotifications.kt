@@ -9,6 +9,8 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import com.jelenxp.cryptochat.MainActivity
 import com.jelenxp.cryptochat.R
 
@@ -92,10 +94,21 @@ object ChatNotifications {
         }
     }
 
-    /** Notifikace nové zprávy od kontaktu. Klepnutí otevře jeho konverzaci. */
-    fun notifyMessage(context: Context, contactId: String, contactName: String, text: String) {
+    /**
+     * Notifikace nových zpráv od kontaktu jako KONVERZACE (MessagingStyle): ukáže
+     * celou historii nepřečtených [unseen], ne jen poslední zprávu. Přidá tlačítka
+     * Odpovědět (inline RemoteInput → normální zpráva) a To se mi líbí (👍 na
+     * poslední zprávu, když na ni jde reakci navěsit). Klepnutí na tělo otevře
+     * konverzaci; obě tlačítka obsluhuje [ChatNotificationReceiver].
+     */
+    fun notifyMessage(
+        context: Context,
+        contactId: String,
+        contactName: String,
+        unseen: List<ChatMessage>
+    ) {
         val nm = NotificationManagerCompat.from(context)
-        if (!nm.areNotificationsEnabled()) return
+        if (!nm.areNotificationsEnabled() || unseen.isEmpty()) return
         val open = PendingIntent.getActivity(
             context, contactId.hashCode(),
             Intent(context, MainActivity::class.java)
@@ -103,22 +116,79 @@ object ChatNotifications {
                 .putExtra(MainActivity.EXTRA_OPEN_CHAT, contactId),
             pendingFlags()
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+
+        // MessagingStyle = konverzace: každá nepřečtená zpráva jako vlastní řádek.
+        val them = Person.Builder().setName(contactName).build()
+        val style = NotificationCompat.MessagingStyle(
+            Person.Builder().setName(context.getString(R.string.notif_you)).build()
+        )
+        val photo = context.getString(R.string.notif_photo)
+        val file = context.getString(R.string.notif_file)
+        val fallback = context.getString(R.string.notif_new_message)
+        unseen.forEach { m ->
+            style.addMessage(ChatNotificationLogic.lineText(m, photo, file, fallback), m.timestamp, them)
+        }
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_relay)
-            .setContentTitle(contactName)
-            .setContentText(text)
+            .setStyle(style)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            // Obsah se na zamčené obrazovce skryje (jen "nová zpráva"); po odemčení je vidět.
+            // Obsah se na zamčené obrazovce skryje; po odemčení je vidět.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(open)
-            .build()
+            .addAction(replyAction(context, contactId))
+
+        // „To se mi líbí" jen když je na co reakci navěsit (poslední zpráva má wireRef).
+        if (ChatNotificationLogic.likeTarget(unseen) != null) {
+            builder.addAction(likeAction(context, contactId))
+        }
+
         try {
-            nm.notify(messageNotificationId(contactId), notification)
+            nm.notify(messageNotificationId(contactId), builder.build())
         } catch (e: SecurityException) {
             // Povolení mezitím odebráno - ignorovat.
         }
     }
+
+    /** Akce „Odpovědět" s inline RemoteInput - odešle NORMÁLNÍ zprávu. */
+    private fun replyAction(context: Context, contactId: String): NotificationCompat.Action {
+        val intent = Intent(context, ChatNotificationReceiver::class.java)
+            .setAction(ChatNotificationReceiver.ACTION_REPLY)
+            .putExtra(ChatNotificationReceiver.EXTRA_CONTACT_ID, contactId)
+        // RemoteInput vyžaduje MUTABLE PendingIntent (systém do něj vloží text);
+        // proto NE pendingFlags() (to je IMMUTABLE). Vlastní requestCode, ať se
+        // nepere s obsahovým intentem ani s akcí Like.
+        val pi = PendingIntent.getBroadcast(
+            context, ("reply:$contactId").hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag()
+        )
+        val remoteInput = RemoteInput.Builder(ChatNotificationReceiver.KEY_REPLY)
+            .setLabel(context.getString(R.string.notif_reply_hint))
+            .build()
+        return NotificationCompat.Action.Builder(
+            0, context.getString(R.string.notif_action_reply), pi
+        ).addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(false)
+            .build()
+    }
+
+    /** Akce „To se mi líbí" - 👍 na poslední příchozí zprávu. */
+    private fun likeAction(context: Context, contactId: String): NotificationCompat.Action {
+        val intent = Intent(context, ChatNotificationReceiver::class.java)
+            .setAction(ChatNotificationReceiver.ACTION_LIKE)
+            .putExtra(ChatNotificationReceiver.EXTRA_CONTACT_ID, contactId)
+        val pi = PendingIntent.getBroadcast(
+            context, ("like:$contactId").hashCode(), intent, pendingFlags()
+        )
+        return NotificationCompat.Action.Builder(
+            0, context.getString(R.string.notif_action_like), pi
+        ).build()
+    }
+
+    /** MUTABLE flag pro RemoteInput; na < S se mutabilita řeší absencí IMMUTABLE. */
+    private fun mutableFlag(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
 
     /**
      * Stabilní ID notifikace zpráv daného kontaktu. Per-KONTAKT (ne per-zpráva),

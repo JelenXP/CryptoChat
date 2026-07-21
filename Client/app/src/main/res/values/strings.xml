@@ -430,6 +430,12 @@
     <string name="notif_connecting">Connecting to the chat server…</string>
     <string name="notif_connected">Connected to the chat server</string>
     <string name="notif_new_message">New message</string>
+    <string name="notif_you">You</string>
+    <string name="notif_photo">📷 Photo</string>
+    <string name="notif_file">📎 File</string>
+    <string name="notif_action_reply">Reply</string>
+    <string name="notif_action_like">Like</string>
+    <string name="notif_reply_hint">Message</string>
 
     <!-- Background permissions onboarding -->
     <string name="onb_step_counter">Step %1$d of %2$d</string>

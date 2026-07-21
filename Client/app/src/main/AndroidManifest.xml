@@ -85,6 +85,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- Tlačítka v notifikaci zprávy (Odpovědět / To se mi líbí). Spouští se
+             jen naším explicitním PendingIntentem, takže není exportovaný. -->
+        <receiver
+            android:name=".chat.ChatNotificationReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Sken QR kódu zamčený na výšku (portrait) - viz ui/qr/QrScan.kt. -->
         <activity
             android:name=".ui.qr.PortraitCaptureActivity"
