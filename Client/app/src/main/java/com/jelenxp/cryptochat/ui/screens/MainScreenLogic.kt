@@ -25,6 +25,20 @@ object MainScreenLogic {
         return contacts.filter { it.name.contains(q, ignoreCase = true) }
     }
 
+    /**
+     * Seřadí kontakty podle poslední aktivity: kdo psal (nebo komu přišlo)
+     * NEJNOVĚJI, je nahoře. Kontakty bez jediné zprávy spadnou dolů a mezi sebou
+     * si drží dosavadní pořadí (pořadí přidání ze storage).
+     *
+     * Klíč se bere z [lastActivity] (id kontaktu → čas poslední zprávy v ms).
+     * Chybějící záznam = žádná zpráva → `Long.MIN_VALUE`, tedy úplně dolů; díky
+     * tomu je řazení jednoznačné (ne závislé na tom, jak `sortedByDescending`
+     * zachází s `null`). Řazení je stabilní, takže shodné klíče (i ta spousta
+     * `MIN_VALUE`) zachovají vstupní pořadí.
+     */
+    fun sortByActivity(contacts: List<Contact>, lastActivity: Map<String, Long>): List<Contact> =
+        contacts.sortedByDescending { lastActivity[it.id] ?: Long.MIN_VALUE }
+
     /** Co ukázat jako podtitulek kontaktu v seznamu. */
     sealed interface Subtitle {
         /** Kontakt nemá klíč - nedá se s ním zatím psát. */

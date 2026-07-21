@@ -143,8 +143,17 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
         }
     }
 
-    // Live filtrování podle jména (logika v MainScreenLogic, ať jde otestovat).
-    val filtered = remember(contacts, query) { MainScreenLogic.filterContacts(contacts, query) }
+    // Řazení podle poslední aktivity (nejnověji psané nahoře) + live filtrování
+    // podle jména. Obojí je v MainScreenLogic, ať jde otestovat. Klíč řazení bere
+    // čas poslední zprávy z náhledů (počítají se mimo hlavní vlákno); dokud se
+    // nenačtou, drží se pořadí ze storage a přeskládá se, jakmile náhledy dojdou.
+    val filtered = remember(contacts, previews, query) {
+        val lastActivity = previews.mapValues { it.value.first?.timestamp ?: Long.MIN_VALUE }
+        MainScreenLogic.filterContacts(
+            MainScreenLogic.sortByActivity(contacts, lastActivity),
+            query
+        )
+    }
 
     val errorDeleteFailed = stringResource(R.string.error_delete_failed)
 
