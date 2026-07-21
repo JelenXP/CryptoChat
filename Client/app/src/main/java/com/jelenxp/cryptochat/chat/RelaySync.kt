@@ -94,6 +94,13 @@ object RelaySync {
     private val legacyGraceCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * Jak stará (ms) musí být zpráva ve stavu SENDING, aby ji outbox považoval za
+     * ZASEKLOU a zkusil znovu. Čerstvé SENDING právě posílá UI - to nechme být, ať
+     * se nepošle dvakrát. FAILED se retryuje bez ohledu na stáří (viz [outboxNeedsSend]).
+     */
+    private const val OUTBOX_STALE_MS = 60_000L
+
+    /**
      * Velikost jednoho kousku souboru. Kousek i s obálkou se MUSÍ vejít pod
      * per-blob limit relaye ([ChatMediaStore.RELAY_BLOB_LIMIT]) - jinak server
      * odmítne každý `put` a přenos souboru tiše selže. Rezervu hlídá
@@ -674,6 +681,27 @@ object RelaySync {
             RelayCrypto.mailboxId(key, dir, currentEpoch())
         }
         transport.prewarm(baseUrl, isolation)
+    }
+
+    /**
+     * Po ÚSPĚŠNÉM pollu zkusí (znovu) doručit odchozí zprávy, které uvázly: FAILED
+     * (relay byl předtím nedostupný) a STARÉ SENDING (proces umřel uprostřed
+     * [deliver]). Volá se JEN po úspěšném pollu - relay právě odpověděl, takže se
+     * přes výpadek NEopakuje (u ratchetu by každý pokus spálil `msgNo`). Čerstvé
+     * SENDING právě posílá UI, ta se nechají být (jinak by šla zpráva dvakrát).
+     *
+     * Doručuje v pořadí historie; [deliver] si stav SENT/FAILED přepíná sám a na
+     * SENT jde jen při 2xx, takže neúspěch se nikdy nepotvrdí. Idempotence stojí na
+     * stabilním `wireId` (příjemce retry dedupuje). MUSÍ běžet mimo hlavní vlákno.
+     */
+    fun flushOutbox(context: Context, contact: Contact) {
+        val now = System.currentTimeMillis()
+        val pending = repoFor(context).getMessages(contact.id).filter {
+            outboxNeedsSend(it.outgoing, it.status, now - it.timestamp, OUTBOX_STALE_MS)
+        }
+        for (message in pending) {
+            deliver(context, contact, message)
+        }
     }
 
     /**
@@ -1433,6 +1461,22 @@ internal fun shouldCheckPrevEpochAt(
  */
 internal fun shouldCheckLegacyGraceAt(now: Long, lastCheckedAt: Long?, recheckMs: Long): Boolean =
     lastCheckedAt == null || now - lastCheckedAt >= recheckMs
+
+/**
+ * Má outbox (znovu) doručit tuhle odchozí zprávu? Čistá funkce (testovatelná bez
+ * sítě). Jen odchozí; FAILED vždy (relay byl nedostupný); SENDING jen když je
+ * starší než [staleMs] (zaseklá - proces umřel v deliveru); jinak (SENT/přijaté) ne.
+ */
+internal fun outboxNeedsSend(
+    outgoing: Boolean,
+    status: ChatMessage.Status,
+    ageMs: Long,
+    staleMs: Long
+): Boolean = outgoing && when (status) {
+    ChatMessage.Status.FAILED -> true
+    ChatMessage.Status.SENDING -> ageMs > staleMs
+    else -> false
+}
 
 /**
  * Směr schránky, na který strana POSÍLÁ, podle role při párování ([Contact.initiator]).

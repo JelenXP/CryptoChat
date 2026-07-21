@@ -397,6 +397,11 @@ class TorForegroundService : Service() {
                     // warmUpu nestihl (jinak by uvázly na „připojuji").
                     RelayStatus.markConnected()
                     updateNotification()   // „Připojuji…" → „Připojeno" hned po prvním úspěchu
+                    // Outbox: relay právě odpověděl (dosažitelný), tak zkus (znovu)
+                    // doručit odchozí zprávy, které uvázly (FAILED / staré SENDING).
+                    // JEN po úspěšném pollu - přes výpadek relaye by opakování u
+                    // ratchetu zbytečně pálilo msgNo. Čerstvé SENDING nechá být.
+                    RelaySync.flushOutbox(ctx, contact)
                     // Pojistka proti serveru, který nectí long-poll (vrátí se hned):
                     // bez podlahy by se smyčka roztočila na 100 % CPU a stavěla okruh
                     // za okruhem. Výchozí relay drží ~60 s, takže se sem nedostane.
