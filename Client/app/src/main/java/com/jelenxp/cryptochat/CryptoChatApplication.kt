@@ -2,6 +2,8 @@ package com.jelenxp.cryptochat
 
 import android.app.Application
 import android.util.Log
+import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.data.SettingsRepository
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -45,8 +47,34 @@ class CryptoChatApplication : Application() {
             defaultHandler?.uncaughtException(thread, throwable)
         }
 
-        // Foreground service (drží Tor teplý + zprávy na pozadí) se spouští
-        // z MainActivity.onStart, kdy je appka v popředí - odtud ho Android 12+
-        // pustit smí (z Application.onCreate to občas zakazuje).
+        // Předehřátí Toru: bootstrap zabudovaného Toru trvá desítky sekund a je
+        // to nejpomalejší část cesty k prvnímu spojení. Když ho nastartujeme už
+        // tady (se startem procesu), překryje se s nafouknutím UI místo aby na něj
+        // čekal - appka je tak připravená přijímat/posílat znatelně dřív.
+        //
+        // POZOR na invariant: startuje se JEN samotný Tor proces
+        // (TorController.ensureStarted = enqueue StartDaemon), NIKOLIV foreground
+        // service. FGS (drží Tor teplý + zprávy na pozadí) se dál spouští až
+        // z MainActivity.onStart / BootReceiver, kdy je appka v popředí - odtud ho
+        // Android 12+ pustit smí (z Application.onCreate to hází
+        // ForegroundServiceStartNotAllowedException). Tenhle zákaz se týká startu
+        // SLUŽBY, ne tor procesu, takže předehřátí ho neporušuje.
+        //
+        // ensureStarted je idempotentní (@Synchronized, no-op když už runtime žije),
+        // takže pozdější volání z FGS nic nezdvojí. Dělá diskovou IO (getDir +
+        // stavba runtime + čtení SharedPreferences), proto na pozadí, ne na hlavním
+        // vlákně. Gatováno na nastavený .onion relay - bez chatu Tor nestartujeme.
+        val appContext = this
+        Thread {
+            try {
+                if (SettingsRepository(appContext).getRelayUrl().contains(".onion")) {
+                    TorController.ensureStarted(appContext)
+                }
+            } catch (t: Throwable) {
+                // Předehřátí je čistě optimalizace - když selže, appka běží dál
+                // a Tor se stejně nahodí z FGS při přechodu do popředí.
+                Log.w("CryptoChatApp", "Predehrati Toru pri startu selhalo", t)
+            }
+        }.apply { isDaemon = true; name = "tor-prewarm" }.start()
     }
 }
