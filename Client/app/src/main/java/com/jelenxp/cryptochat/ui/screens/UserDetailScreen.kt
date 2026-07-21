@@ -66,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.chat.RatchetState
+import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.crypto.CryptoManager
 import com.jelenxp.cryptochat.crypto.FileStreamCipher
 import com.jelenxp.cryptochat.data.SettingsRepository
@@ -118,6 +120,13 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
     val clipboard = LocalClipboardManager.current
 
     LaunchedEffect(Unit) { FileTransfer.clearTemp(context) }
+
+    // Stav rotace klíčů (Fáze 5). Čte se MIMO kompozici (RatchetStore jde přes
+    // Keystore = I/O, v kompozici by hrozil ANR); snapshot při otevření detailu.
+    var ratchetState by remember(id) { mutableStateOf<RatchetState?>(null) }
+    LaunchedEffect(id) {
+        ratchetState = withContext(Dispatchers.IO) { RatchetStore(context).load(id) }
+    }
 
     // --- Stav dialogů / menu ---
     var menuOpen by remember { mutableStateOf(false) }
@@ -344,6 +353,15 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                 }
                 return@Column
             }
+
+            // Stav automatické rotace klíčů (Fáze 5).
+            SecurityStatusCard(
+                RatchetStatusLogic.status(
+                    ratchetPresent = ratchetState != null,
+                    generation = ratchetState?.generation ?: 0,
+                    rekeyStage = ratchetState?.rekeyStage ?: RatchetState.Rekey.NONE
+                )
+            )
 
             // Přepínač Zašifrovat / Dešifrovat (klouzavá pilulka)
             SegmentedControl(
@@ -776,6 +794,51 @@ private fun FileResultCard(title: String, name: String, preview: ImageBitmap?, o
                 FilledTonalButton(onClick = onShare, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.btn_share_file))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Karta stavu automatické rotace klíčů (Fáze 5). Překládá čistý
+ * [RatchetStatusLogic.Status] na ikonu + text; žádná logika tu není.
+ */
+@Composable
+private fun SecurityStatusCard(status: RatchetStatusLogic.Status) {
+    val (icon, title, detail) = when (status) {
+        RatchetStatusLogic.Status.Inactive -> Triple(
+            Icons.Default.Lock,
+            stringResource(R.string.security_status_inactive_title),
+            stringResource(R.string.security_status_inactive_detail)
+        )
+        is RatchetStatusLogic.Status.Active -> when {
+            status.rekeying -> Triple(
+                Icons.Default.Autorenew,
+                stringResource(R.string.security_status_rekeying_title),
+                stringResource(R.string.security_status_rekeying_detail)
+            )
+            status.generation > 0 -> Triple(
+                Icons.Default.VerifiedUser,
+                stringResource(R.string.security_status_active_title),
+                stringResource(R.string.security_status_healed_detail, status.generation)
+            )
+            else -> Triple(
+                Icons.Default.VerifiedUser,
+                stringResource(R.string.security_status_active_title),
+                stringResource(R.string.security_status_active_detail)
+            )
+        }
+    }
+    val active = status is RatchetStatusLogic.Status.Active
+    val container = if (active) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    val onContainer = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(shape = RoundedCornerShape(14.dp), color = container, contentColor = onContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = onContainer)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = onContainer)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = onContainer.copy(alpha = 0.82f))
             }
         }
     }

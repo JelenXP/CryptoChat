@@ -259,6 +259,15 @@
     <string name="rekey_title">Obnovit klíč</string>
     <string name="rekey_warning">Obnovením se stávající klíč nahradí novým. Výměnu musíte dokončit oba znovu a zprávy zašifrované starým klíčem už nepůjdou dešifrovat.</string>
 
+    <!-- Stav rotace klíčů (automatický Double Ratchet / KEM re-key) -->
+    <string name="security_status_active_title">Automatická rotace klíčů je zapnutá</string>
+    <string name="security_status_active_detail">Klíče se během psaní samy obměňují — nemusíš nic dělat.</string>
+    <string name="security_status_healed_detail">Zatím obnoveno %1$d× (uzdravení po možném úniku).</string>
+    <string name="security_status_rekeying_title">Probíhá obměna klíče…</string>
+    <string name="security_status_rekeying_detail">Na pozadí se domlouvá čerstvý klíč.</string>
+    <string name="security_status_inactive_title">Automatická rotace: vypnutá</string>
+    <string name="security_status_inactive_detail">Spustí se, jakmile bude druhý telefon online s kompatibilní verzí.</string>
+
     <!-- Šifrování / dešifrování souborů -->
     <string name="btn_send_file">Odeslat soubor</string>
     <string name="btn_receive_file">Otevřít soubor</string>

@@ -259,6 +259,15 @@
     <string name="rekey_title">Renew key</string>
     <string name="rekey_warning">Renewing the key replaces the current one. You\'ll both need to complete the exchange again, and messages secured with the old key can no longer be decrypted.</string>
 
+    <!-- Key-rotation status (automatic Double Ratchet / KEM re-key) -->
+    <string name="security_status_active_title">Automatic key rotation is on</string>
+    <string name="security_status_active_detail">Keys refresh themselves as you chat — no action needed.</string>
+    <string name="security_status_healed_detail">Renewed %1$d× so far (recovery after a possible leak).</string>
+    <string name="security_status_rekeying_title">Refreshing the key…</string>
+    <string name="security_status_rekeying_detail">A fresh key is being agreed in the background.</string>
+    <string name="security_status_inactive_title">Automatic rotation: off</string>
+    <string name="security_status_inactive_detail">Starts once the other phone is online with a compatible version.</string>
+
     <!-- Encrypt / decrypt files -->
     <string name="btn_send_file">Send file</string>
     <string name="btn_receive_file">Open file</string>
