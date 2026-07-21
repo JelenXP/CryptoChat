@@ -5,6 +5,8 @@ import android.util.Log
 import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.RatchetState
+import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.crypto.BackupCrypto
 import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
 import com.jelenxp.cryptochat.crypto.StorageCrypto
@@ -27,7 +29,16 @@ import java.util.Base64
 object ContactBackup {
 
     private const val TAG = "ContactBackup"
-    private const val VERSION = 2
+
+    /**
+     * Verze formátu zálohy.
+     *  - 1: kontakty + klíče.
+     *  - 2: + profilové fotky, historie chatů, nepřečtené, `initiator`.
+     *  - 3: + stav Double Ratchetu per kontakt ([RatchetState]). Starší verze
+     *       (1, 2) se dál načtou - ratchet stav prostě chybí a kontakt jede
+     *       legacy cestou.
+     */
+    private const val VERSION = 3
 
     /**
      * Zašifrovaná záloha všeho (celý obsah souboru).
@@ -42,6 +53,7 @@ object ContactBackup {
         crypto: StorageCrypto = KeystoreStorageCrypto
     ): ByteArray {
         val chatRepo = ChatRepository(context, crypto)
+        val ratchetStore = RatchetStore(context, crypto)
         val encoder = Base64.getEncoder()
         val array = JSONArray()
         contacts.forEach { c ->
@@ -99,6 +111,10 @@ object ContactBackup {
             val unread = chatRepo.getUnreadCount(c.id)
             if (unread > 0) obj.put("unread", unread)
 
+            // Stav Double Ratchetu (verze 3). Chybí u kontaktů, které ještě
+            // nepřešly na ratchet - pak se do zálohy nepřidá.
+            ratchetStore.load(c.id)?.let { obj.put("ratchet", it.toJson()) }
+
             array.put(obj)
         }
         val root = JSONObject().put("version", VERSION).put("contacts", array)
@@ -122,6 +138,7 @@ object ContactBackup {
         val array = root.getJSONArray("contacts")
         val contactRepo = ContactRepository(context, crypto)
         val chatRepo = ChatRepository(context, crypto)
+        val ratchetStore = RatchetStore(context, crypto)
         val decoder = Base64.getDecoder()
         var count = 0
 
@@ -243,6 +260,15 @@ object ContactBackup {
                 chatRepo.restoreMerging(id, messages)
             }
             if (obj.has("unread")) chatRepo.setUnread(id, obj.optInt("unread", 0))
+
+            // Stav Double Ratchetu (verze 3). Guardované zvlášť: poškozený stav
+            // ratchetu NESMÍ shodit obnovu kontaktu - kontakt i historie se obnoví
+            // i bez něj (jede pak legacy cestou / dorovná se přes rouru, Fáze 3).
+            if (obj.has("ratchet")) runCatching {
+                RatchetState.fromJson(obj.getJSONObject("ratchet"))?.let { ratchetStore.save(id, it) }
+            }.onFailure {
+                Log.w(TAG, "Přeskakuji poškozený ratchet stav kontaktu $id (${it.javaClass.simpleName})")
+            }
         } catch (e: Exception) {
             // Jeden vadný záznam v záloze nesmí přerušit celý import (zbytek
             // kontaktů má pořád dorazit). Přeskoč a pokračuj.
