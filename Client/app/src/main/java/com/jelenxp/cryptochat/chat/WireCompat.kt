@@ -127,13 +127,14 @@ object WireCompat {
     const val WIRE_MINOR: Int = 4
 
     /**
-     * Nejvyšší wire MAJOR, který TAHLE verze umí PŘEČÍST. Dnes = [WIRE_MAJOR]
-     * (posíláme i čteme jen jeden major). Až přijde major migrace, „bridge"
-     * verze bude číst {starý, nový}, takže tady bude nový major, zatímco odeslání
-     * zůstane na starém, dokud se nepotvrdí, že protějšek nový umí přečíst.
-     * Inzeruje se v traileru každé zprávy (viz [WireExt.TYPE_MAX_MAJOR]).
+     * Nejvyšší wire MAJOR, který TAHLE verze umí PŘEČÍST. = [WIRE_MAJOR_RATCHET]
+     * (4): umíme přečíst legacy (3) i ratchet (4). **Odeslání** ale zůstává na
+     * legacy majoru 3, dokud se per kontakt nepotvrdí, že protějšek ratchet umí
+     * (`peerCanReadMajor(id, 4)`) - přesně „bridge" migrace. Inzeruje se v traileru
+     * každé zprávy (viz [WireExt.TYPE_MAX_MAJOR]), takže se protějšek autentizovaně
+     * dozví, že ratchet umíme.
      */
-    const val MAX_READABLE_MAJOR: Int = WIRE_MAJOR
+    const val MAX_READABLE_MAJOR: Int = WIRE_MAJOR_RATCHET
 
     /** Minor, od kterého protějšek umí reakce ZOBRAZIT (v1.2). */
     const val MINOR_REACTIONS = 3
@@ -291,7 +292,9 @@ object WireCompat {
      */
     fun acceptMajor(context: Context, contactId: String, blob: ByteArray): Boolean {
         val major = readMajor(blob) ?: (WIRE_MAJOR - 1)  // bez bajtu verze = starší formát
-        if (major != WIRE_MAJOR) {
+        // Přijímáme legacy (3) i ratchet (4) - viz [MAX_READABLE_MAJOR]. Konkrétní
+        // dešifrování (open vs openRatchet) si podle majoru zvolí RelaySync.
+        if (major != WIRE_MAJOR && major != WIRE_MAJOR_RATCHET) {
             // POZOR: tenhle bajt NENÍ autentizovaný (u cizího majoru neumíme
             // ověřit GCM tag). Nedůvěryhodný relay by tedy mohl podstrčit blob
             // s falešnou verzí a natrvalo uživateli zobrazit „aktualizuj si

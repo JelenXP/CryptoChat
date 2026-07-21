@@ -376,6 +376,16 @@ object RelaySync {
         val repo = repoFor(context)
         val dir = recvDir(contact)
         val epoch = currentEpoch()
+        val ratchetStore = RatchetStore(context, storageCrypto)
+        // Bootstrap ratchetu, jakmile protějšek inzeruje, že umí major 4 (a jen pro
+        // kontakty s definovanou rolí - jinak by se směry schránek kryly). `is Absent`:
+        // nepřepisuj existující ani nečitelný stav.
+        if (contact.initiator != null &&
+            ratchetStore.read(contact.id) is RatchetStore.Load.Absent &&
+            WireCompat.peerCanReadMajor(context, contact.id, WireCompat.WIRE_MAJOR_RATCHET)
+        ) {
+            ratchetStore.save(contact.id, DoubleRatchet.bootstrap(key, sendDir(contact), recvDir(contact)))
+        }
         var failed = false
         // Server aspoň jednou odpověděl (get prošel) - pro indikátor dostupnosti.
         var reachable = false
@@ -385,12 +395,11 @@ object RelaySync {
         // Vyzvedne jednu schránku (dané epochy), otevře bloby a uloží je. Vrací
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
         // do `failed`, aby volající mohl zpomalit.
-        fun fetch(e: Long, waitSeconds: Int): Int {
+        fun fetch(mailbox: String, waitSeconds: Int, ratchet: Boolean): Int {
             // Reachable se vztahuje k TÉHLE operaci get (výsledek se vrací podle
             // ní). Reset na začátku, ať prev-epoch get, který uspěl, nemaskuje
             // následné síťové selhání aktuální epochy.
             reachable = false
-            val mailbox = RelayCrypto.mailboxId(key, dir, e)
             val fetched = try {
                 transport.get(baseUrl, mailbox, waitSeconds)
             } catch (ex: Exception) {
@@ -500,7 +509,37 @@ object RelaySync {
                 }
                 // Otevírá se PŘIJÍMACÍM směrem: blob zapsaný do odchozí schránky
                 // (a relayí přehozený sem) má v AAD druhý směr a neprojde.
-                val result = ChatEnvelope.open(blob, key, dir)
+                //
+                // Ratchet stav se smí uložit AŽ po ÚSPĚŠNÉM zpracování (tentativní -
+                // viz DoubleRatchet.recvKey). Drží se tu a commituje se níž (u
+                // Unsupported i v úspěšné větvi).
+                var pendingRatchetState: RatchetState? = null
+                val result: ChatEnvelope.Result = if (ratchet) {
+                    val header = ChatEnvelope.readRatchetHeader(blob)
+                    val st = if (header != null) ratchetStore.load(contact.id) else null
+                    if (header == null || st == null) {
+                        ChatEnvelope.Result.Unreadable
+                    } else when (val step = DoubleRatchet.recvKey(st, header.epoch, header.msgNo)) {
+                        is DoubleRatchet.RecvStep.Key -> {
+                            val r = ChatEnvelope.openRatchet(blob, step.aesKey, step.iv, dir)
+                            // Stav ulož jen když blob fakt otevřel (Ok/Unsupported) -
+                            // při Unreadable ho zahoď, ať podvrh nespotřebuje klíč.
+                            if (r !is ChatEnvelope.Result.Unreadable) pendingRatchetState = step.state
+                            r
+                        }
+                        // Skok za strop → karanténa (mezera se může uzavřít mezizprávami).
+                        DoubleRatchet.RecvStep.SkipTooLarge -> ChatEnvelope.Result.Unreadable
+                        // Pozici už jsme zpracovali → zahoď a nech potvrdit (klíč se
+                        // sem už nevrátí, karanténa by nikdy nepomohla).
+                        DoubleRatchet.RecvStep.AlreadyConsumed -> {
+                            ReplayGuard.remember(context, contact.id, blob)
+                            item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                            continue
+                        }
+                    }
+                } else {
+                    ChatEnvelope.open(blob, key, dir)
+                }
                 // Minor odesílatele, inzerovaný maxMajor i bitmapa schopností
                 // jsou až uvnitř šifry, takže jsou známé (a autentizované) teprve
                 // teď.
@@ -525,6 +564,10 @@ object RelaySync {
                         "zpráva používá funkci, kterou tahle verze neumí " +
                             "(minor protějšku ${result.senderMinor}), zahazuji"
                     )
+                    // Ratchet: zprávu jsme autentizovaně „přečetli", jen neumíme
+                    // funkci → posuň stav, ať nevznikne mezera. (Zahazujeme obsah,
+                    // ne pozici v řetězu.)
+                    pendingRatchetState?.let { ratchetStore.save(contact.id, it) }
                     ReplayGuard.remember(context, contact.id, blob)
                     item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
                     continue
@@ -712,10 +755,20 @@ object RelaySync {
                 // Zpracováno bez zádrhelu - teprve teď si blob zapamatuj,
                 // ať ho příště nezpracujeme podruhé.
                 if (ok != null && allSafe == safeBefore) {
-                    ReplayGuard.remember(context, contact.id, blob)
-                    // Úspěšně zpracovaný karanténní blob teď z karantény ukliď -
-                    // do teď tam ležel jako jediná kopie (viz BlobQuarantine.takeAll).
-                    item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                    // Ratchet: teprve TEĎ (po úspěšném dispatchi) se smí posunout stav.
+                    // Když se neuloží, dávku nepotvrzuj - blob dorazí znovu a klíč se
+                    // re-derivuje (stav se nezměnil). ReplayGuard/quarantine úklid pak
+                    // taky ne, ať se blob zpracuje znovu celý.
+                    val stateSaved = pendingRatchetState?.let { ratchetStore.save(contact.id, it) } ?: true
+                    if (!stateSaved) {
+                        DiagnosticsLog.error(TAG, "uložení ratchet stavu selhalo, dávku nepotvrzuji")
+                        allSafe = false
+                    } else {
+                        ReplayGuard.remember(context, contact.id, blob)
+                        // Úspěšně zpracovaný karanténní blob teď z karantény ukliď -
+                        // do teď tam ležel jako jediná kopie (viz BlobQuarantine.takeAll).
+                        item.token?.let { BlobQuarantine.discard(context, contact.id, it) }
+                    }
                 }
             } catch (ex: Throwable) {
                 // Throwable: dešifrování velkého blobu může hodit OutOfMemoryError,
@@ -745,11 +798,30 @@ object RelaySync {
             return n
         }
 
+        // Ratchet aktivní (stav existuje) → příjem na RATCHET schránky. Odesílatel
+        // posílá major 4; legacy krátce dočítáme jako grace (zprávy v letu).
+        // POZN. (3a): beacon pro hlubokou obnovu po dlouhém offline (odesílatel utekl
+        // za sousední epochu) přijde ve 3b; teď se hledá aktuální a sousední epocha.
+        val ratchetState = ratchetStore.load(contact.id)
+        if (ratchetState != null) {
+            var received = 0
+            val re = ratchetState.recvEpoch
+            // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
+            received += fetch(RelayCrypto.ratchetMailboxId(key, dir, re + 1), 0, ratchet = true)
+            // Rychle: legacy grace (zprávy odeslané ještě před přepnutím protějšku).
+            received += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false)
+            // Long-poll AKTUÁLNÍ ratchet epochy (mohla se právě posunout výše, když
+            // sousední fetch něco přijal a posunul recvEpoch).
+            val cur = ratchetStore.load(contact.id)?.recvEpoch ?: re
+            received += fetch(RelayCrypto.ratchetMailboxId(key, dir, cur), LONGPOLL_SECONDS, ratchet = true)
+            return PollResult(received, failed, reachable)
+        }
+
         // Kolem přelomu dne nejdřív rychlá (neblokující) kontrola předchozí epochy;
         // když něco přišlo, ukaž to hned. Mimo to okno se přeskočí - jinak by se
         // každý cyklus platil onion request navíc.
         if (shouldCheckPrevEpoch(contact.id, epoch)) {
-            val prev = fetch(epoch - 1, waitSeconds = 0)
+            val prev = fetch(RelayCrypto.mailboxId(key, dir, epoch - 1), 0, ratchet = false)
             // Za vyřízenou ji považuj AŽ po úspěšném dotazu. Kdyby se označila
             // rovnou, jediný neúspěšný pokus (nedostupný server) by kontrolu
             // spotřeboval a zpráva odeslaná těsně před přelomem dne by se už
@@ -762,7 +834,7 @@ object RelaySync {
         }
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,
         // takže chodí skoro okamžitě a mezitím se nic nebudí.
-        return PollResult(fetch(epoch, waitSeconds = LONGPOLL_SECONDS), failed, reachable)
+        return PollResult(fetch(RelayCrypto.mailboxId(key, dir, epoch), LONGPOLL_SECONDS, ratchet = false), failed, reachable)
     }
 
     /**
