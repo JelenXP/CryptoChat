@@ -155,10 +155,13 @@ beacon(dir)    = b64url( HKDF(ikm=mailbox_seed, info="beacon|dir=<dir>", 24) )
 - **Směr:** odchozí na `mailbox(sendDir, e_send)`; příjem pollne
   `mailbox(recvDir, e_recv .. e_recv+W)` + `beacon(recvDir)`.
 
-**Beacon pointer** (Fáze 3, discovery): do `beacon(dir)` odesílatel při posunu
-epochy položí drobný šifrovaný ukazatel aktuální epochy. Posílá se **jen při
-pozorovaném jednosměrném tichu** + rate-limit (aby beacon nezabil
-neslinkovatelnost).
+**Beacon pointer** (Fáze 3b, discovery po dlouhém offline): odesílatel při posunu
+epochy zapíše do `beacon(dir)` šifrovaný ukazatel aktuální epochy. Zapisuje se
+**jednou za epochu** (spolehlivě přes `pointerMarker` = poslední úspěšně zapsaná
+epocha; dokud `put` neprojde, zkusí to každé další odeslání). Příjemce beacon čte
+**jen když sousední epocha `re+1` nic nepřinesla** (za běžného provozu se neplatí),
+bere **max** ze všech blobů a **neackuje** (aby o ukazatel nepřišel při selhání
+následného fetche; uklidí ho TTL).
 ```
 beacon_key  = HKDF(ikm=decode(M), info="CryptoChat/ratchet/beacon-key/v1", 32)
 payload     = [4B epoch BE]            # AES-256-GCM, aad = "ccrb|dir=<dir>"

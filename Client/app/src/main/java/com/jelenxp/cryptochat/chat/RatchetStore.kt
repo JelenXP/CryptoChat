@@ -102,6 +102,17 @@ class RatchetStore(
         save(contactId, if (cur != null) cur.withRecvFrom(recvState) else recvState)
     }
 
+    /**
+     * Posune JEN `pointerMarker` (poslední epocha zapsaná do beaconu). Sahá pouze
+     * na tohle jedno pole - NESMÍ přepsat `sendMsgNo` (to by mohlo vrátit odesílací
+     * řetěz a zopakovat GCM klíč). Monotónní: nikdy neregreduje. Best-effort.
+     */
+    fun updatePointerMarker(contactId: String, marker: Long): Boolean = synchronized(lock) {
+        val cur = load(contactId) ?: return false
+        if (cur.pointerMarker >= marker) return true
+        save(contactId, cur.copy(pointerMarker = marker))
+    }
+
     /** Zapomene stav kontaktu (při jeho smazání). */
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)

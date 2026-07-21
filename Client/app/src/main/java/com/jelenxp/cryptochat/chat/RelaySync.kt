@@ -277,6 +277,50 @@ object RelaySync {
             RatchetStore(context, storageCrypto).load(contact.id) != null
 
     /**
+     * Když se posunula odesílací epocha a beacon ještě neinzeruje aktuální, zapíše
+     * beacon ukazatel (viz [RatchetBeacon]). `pointerMarker` = poslední epocha, pro
+     * kterou beacon SKUTEČNĚ prošel; dokud se nepovede, každé další odeslání to
+     * zkusí znovu (spolehlivost bez re-zápisu v každém cyklu). Best-effort.
+     */
+    private fun maybeWriteBeacon(
+        context: Context,
+        contactId: String,
+        baseUrl: String,
+        key: String,
+        dir: Int,
+        store: RatchetStore
+    ) {
+        val st = store.load(contactId) ?: return
+        if (st.sendEpoch.toLong() <= st.pointerMarker) return
+        val ok = try {
+            transport.put(baseUrl, RelayCrypto.ratchetBeaconId(key, dir), RatchetBeacon.seal(st.sendEpoch, key, dir))
+        } catch (e: Exception) {
+            false
+        }
+        // JEN pointerMarker - saveSend by přepsal i sendMsgNo (možný souběžný posun).
+        if (ok) store.updatePointerMarker(contactId, st.sendEpoch.toLong())
+    }
+
+    /**
+     * Přečte beacon (ukazatel aktuální epochy odesílatele) z jeho stabilní schránky.
+     * Vrací nejvyšší inzerovanou epochu, nebo null (beacon není / nejde přečíst).
+     *
+     * **Beacon se NEackuje** (nemaže): kdyby se smazal a následné vyzvednutí vzdálené
+     * epochy selhalo, přišli bychom o ukazatel a odesílatel ho znovu nezapíše, dokud
+     * neposune epochu. Stará se o něj TTL relaye; `readBeacon` se navíc volá jen když
+     * sousední epocha nic nepřinesla (ne za běžného provozu), takže nakupení je malé.
+     */
+    private fun readBeacon(baseUrl: String, key: String, dir: Int): Int? {
+        val fetched = try {
+            transport.get(baseUrl, RelayCrypto.ratchetBeaconId(key, dir), 0)
+        } catch (e: Exception) {
+            return null
+        }
+        if (fetched.blobs.isEmpty()) return null
+        return fetched.blobs.mapNotNull { RatchetBeacon.open(it, key, dir) }.maxOrNull()
+    }
+
+    /**
      * Odešle JEDEN ratchet blob (text/fotka/reakce). **Advance-immediately:**
      * odesílací řetěz se posune a ULOŽÍ ještě PŘED `put`, pod [sendLock]. Tím se
      * `msgNo` nikdy nepoužije pro dva různé obsahy (opakování GCM páru klíč+IV je
@@ -304,12 +348,14 @@ object RelaySync {
         }
         val blob = ChatEnvelope.encryptRatchet(buildPayload(), step.aesKey, step.iv, step.epoch, step.msgNo, dir)
         val mailbox = RelayCrypto.ratchetMailboxId(key, dir, step.epoch)
-        return try {
+        val put = try {
             transport.put(baseUrl, mailbox, blob)
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání ratchet blobu selhalo (${e.javaClass.simpleName})")
             false
         }
+        if (put) maybeWriteBeacon(context, contact.id, baseUrl, key, dir, store)
+        return put
     }
 
     /**
@@ -337,11 +383,13 @@ object RelaySync {
                 s
             }
             val blob = ChatEnvelope.encryptRatchet(payload, step.aesKey, step.iv, step.epoch, step.msgNo, dir)
-            return try {
+            val put = try {
                 transport.put(baseUrl, RelayCrypto.ratchetMailboxId(key, dir, step.epoch), blob)
             } catch (e: Exception) {
                 false
             }
+            if (put) maybeWriteBeacon(context, contact.id, baseUrl, key, dir, store)
+            return put
         }
         val manifest = ChatEnvelope.buildManifestPayload(
             fileId, totalChunks, totalSize,
@@ -926,20 +974,25 @@ object RelaySync {
 
         // Ratchet aktivní (stav existuje) → příjem na RATCHET schránky. Odesílatel
         // posílá major 4; legacy krátce dočítáme jako grace (zprávy v letu).
-        // POZN. (3a): beacon pro hlubokou obnovu po dlouhém offline (odesílatel utekl
-        // za sousední epochu) přijde ve 3b; teď se hledá aktuální a sousední epocha.
         val ratchetState = ratchetStore.load(contact.id)
         if (ratchetState != null) {
             var received = 0
             val re = ratchetState.recvEpoch
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
+            // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, re + 1), 0, ratchet = true)
             // Rychle: legacy grace (zprávy odeslané ještě před přepnutím protějšku).
             received += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false)
-            // Long-poll AKTUÁLNÍ ratchet epochy (mohla se právě posunout výše, když
-            // sousední fetch něco přijal a posunul recvEpoch).
-            val cur = ratchetStore.load(contact.id)?.recvEpoch ?: re
-            received += fetch(RelayCrypto.ratchetMailboxId(key, dir, cur), LONGPOLL_SECONDS, ratchet = true)
+            var target = ratchetStore.load(contact.id)?.recvEpoch ?: re
+            if (target == re) {
+                // Sousední epocha nic nepřinesla → odesílatel mohl utéct dál (dlouhé
+                // offline). Beacon (ukazatel z neměnného M) řekne, na kterou epochu.
+                // Čte se JEN v tomhle případě, ať se za běžného provozu neplatí navíc.
+                val beaconEpoch = readBeacon(baseUrl, key, dir)
+                if (beaconEpoch != null && beaconEpoch > re) target = beaconEpoch
+            }
+            // Long-poll cílové ratchet epochy (aktuální, sousední nebo z beaconu).
+            received += fetch(RelayCrypto.ratchetMailboxId(key, dir, target), LONGPOLL_SECONDS, ratchet = true)
             return PollResult(received, failed, reachable)
         }
 
