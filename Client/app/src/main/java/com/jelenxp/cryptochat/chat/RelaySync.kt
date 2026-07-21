@@ -346,7 +346,7 @@ object RelaySync {
             if (!store.saveSend(contact.id, s.state)) return false
             s
         }
-        val blob = ChatEnvelope.encryptRatchet(buildPayload(), step.aesKey, step.iv, step.epoch, step.msgNo, dir)
+        val blob = ChatEnvelope.encryptRatchet(buildPayload(), step.aesKey, step.iv, step.epoch, step.msgNo, step.generation, dir)
         val mailbox = RelayCrypto.ratchetMailboxId(key, dir, step.epoch)
         val put = try {
             transport.put(baseUrl, mailbox, blob)
@@ -382,7 +382,7 @@ object RelaySync {
                 if (!store.saveSend(contact.id, s.state)) return false
                 s
             }
-            val blob = ChatEnvelope.encryptRatchet(payload, step.aesKey, step.iv, step.epoch, step.msgNo, dir)
+            val blob = ChatEnvelope.encryptRatchet(payload, step.aesKey, step.iv, step.epoch, step.msgNo, step.generation, dir)
             val put = try {
                 transport.put(baseUrl, RelayCrypto.ratchetMailboxId(key, dir, step.epoch), blob)
             } catch (e: Exception) {
@@ -692,7 +692,7 @@ object RelaySync {
                     val st = if (header != null) ratchetStore.load(contact.id) else null
                     if (header == null || st == null) {
                         ChatEnvelope.Result.Unreadable
-                    } else when (val step = DoubleRatchet.recvKey(st, header.epoch, header.msgNo)) {
+                    } else when (val step = DoubleRatchet.recvKey(st, header.epoch, header.generation, header.msgNo)) {
                         is DoubleRatchet.RecvStep.Key -> {
                             val r = ChatEnvelope.openRatchet(blob, step.aesKey, step.iv, dir)
                             // Stav ulož jen když blob fakt otevřel (Ok/Unsupported) -
@@ -702,6 +702,9 @@ object RelaySync {
                         }
                         // Skok za strop → karanténa (mezera se může uzavřít mezizprávami).
                         DoubleRatchet.RecvStep.SkipTooLarge -> ChatEnvelope.Result.Unreadable
+                        // Novější generace, než na jakou jsme přesejni (KEM re-key
+                        // ještě nedoběhl) → karanténa; po zpracování re-key se přečte.
+                        DoubleRatchet.RecvStep.FutureGeneration -> ChatEnvelope.Result.Unreadable
                         // Pozici už jsme zpracovali → zahoď a nech potvrdit (klíč se
                         // sem už nevrátí, karanténa by nikdy nepomohla).
                         DoubleRatchet.RecvStep.AlreadyConsumed -> {

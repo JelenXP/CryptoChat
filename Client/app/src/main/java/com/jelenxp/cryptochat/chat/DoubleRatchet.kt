@@ -35,6 +35,7 @@ object DoubleRatchet {
     private const val LABEL_MK = "CryptoChat/ratchet/mk/v1"
     private const val LABEL_CK = "CryptoChat/ratchet/ck/v1"
     private const val LABEL_AEAD = "CryptoChat/ratchet/aead/v1"
+    private const val REKEY_ROOT = "CryptoChat/ratchet/rekey-root/v1"
 
     private const val KEY_BYTES = 32
     private const val AEAD_BYTES = 44   // 32 klíč + 12 IV
@@ -71,6 +72,8 @@ object DoubleRatchet {
         val iv: ByteArray,
         val epoch: Int,
         val msgNo: Int,
+        /** Krypto generace (Fáze 4). `msgNo` je index UVNITŘ této generace. */
+        val generation: Int,
         val state: RatchetState
     )
 
@@ -106,7 +109,10 @@ object DoubleRatchet {
             sendEpoch = newEpoch,
             msgsSinceEpoch = newSince
         )
-        return SendStep(keyIv.copyOfRange(0, KEY_BYTES), keyIv.copyOfRange(KEY_BYTES, AEAD_BYTES), epoch, msgNo, newState)
+        return SendStep(
+            keyIv.copyOfRange(0, KEY_BYTES), keyIv.copyOfRange(KEY_BYTES, AEAD_BYTES),
+            epoch, msgNo, state.generation, newState
+        )
     }
 
     /** Výsledek pokusu o získání klíče pro příchozí zprávu. */
@@ -123,6 +129,13 @@ object DoubleRatchet {
          * (na rozdíl od karantény: klíč se sem už nikdy nevrátí).
          */
         object AlreadyConsumed : RecvStep
+
+        /**
+         * Zpráva z NOVĚJŠÍ generace, než na jakou jsme přesejni (KEM re-key ještě
+         * nedoběhl). Do karantény - jakmile se zpracuje odpovídající re-key
+         * ([applyRekey]), zpráva se dorozšifruje. Fáze 4.
+         */
+        object FutureGeneration : RecvStep
     }
 
     /**
@@ -144,57 +157,147 @@ object DoubleRatchet {
      * Idempotence příjmu (reprocessing po neúspěšném ACK) stojí primárně na
      * `ReplayGuard` (dedup blobu bez dešifrování) - viz plán, bug oblast A.
      */
-    fun recvKey(state: RatchetState, epoch: Int, msgNo: Int): RecvStep {
-        if (epoch < 0 || msgNo < 0) return RecvStep.AlreadyConsumed  // přetečení / podvrh
+    fun recvKey(state: RatchetState, epoch: Int, generation: Int, msgNo: Int): RecvStep {
+        if (epoch < 0 || msgNo < 0 || generation < 0) return RecvStep.AlreadyConsumed  // podvrh/přetečení
 
-        // 1) Přeskočená (out-of-order) zpráva: klíč máme uložený.
-        state.skipped.firstOrNull { it.msgNo == msgNo }?.let { hit ->
+        // Novější generace: ještě nemáme její řetěz (re-key nedoběhl) → karanténa.
+        if (generation > state.generation) return RecvStep.FutureGeneration
+
+        // 1) Přeskočená (out-of-order) zpráva: klíč máme uložený. Matchuje se
+        //    (generation, msgNo) - obslouží i opožděnou zprávu STARŠÍ generace
+        //    z mezery (staré klíče ve skipped-store tagované svou generací).
+        state.skipped.firstOrNull { it.generation == generation && it.msgNo == msgNo }?.let { hit ->
             val keyIv = Hkdf.derive(Base64Util.decode(hit.messageKeyB64), LABEL_AEAD, AEAD_BYTES)
             val newState = state.copy(
-                skipped = state.skipped.filterNot { it.msgNo == msgNo },
+                skipped = state.skipped.filterNot { it.generation == generation && it.msgNo == msgNo },
                 recvEpoch = maxOf(state.recvEpoch, epoch)
             )
             return RecvStep.Key(keyIv.copyOfRange(0, KEY_BYTES), keyIv.copyOfRange(KEY_BYTES, AEAD_BYTES), newState)
         }
 
-        // 2) Pod aktuální pozicí a není ve skipped → spotřebovaná/stará.
-        if (msgNo < state.recvMsgNo) return RecvStep.AlreadyConsumed
+        // 2) Aktuální generace: přetoč přijímací řetěz (mezeru ulož do skipped).
+        if (generation == state.generation) {
+            if (msgNo < state.recvMsgNo) return RecvStep.AlreadyConsumed
+            if (msgNo - state.recvMsgNo > SKIP_MAX) return RecvStep.SkipTooLarge
+            val adv = advanceChain(
+                state.recvChainKeyB64 ?: error("přijímací řetěz není inicializovaný"),
+                state.recvMsgNo, msgNo, epoch, generation
+            )
+            return RecvStep.Key(adv.aesKey, adv.iv, state.copy(
+                recvChainKeyB64 = adv.nextChainKeyB64,
+                recvMsgNo = adv.nextMsgNo,
+                recvEpoch = maxOf(state.recvEpoch, epoch),
+                skipped = boundSkipped(state.skipped + adv.skips)
+            ))
+        }
 
-        // 3) Aktuální nebo budoucí: přetoč řetěz (mezeru ulož jako skipped).
-        val gap = msgNo - state.recvMsgNo
-        if (gap > SKIP_MAX) return RecvStep.SkipTooLarge
+        // 3) PŘEDCHOZÍ generace (grace): in-order konec, co odesílatel poslal ještě
+        //    před re-key a dorazil AŽ teď. Přetoč uložený PŘEDCHOZÍ řetěz - bez toho
+        //    by se in-flight konec staré generace tiše ztratil (nález review 4a).
+        if (generation == state.prevRecvGeneration && state.prevRecvChainKeyB64 != null) {
+            if (msgNo < state.prevRecvMsgNo) return RecvStep.AlreadyConsumed
+            if (msgNo - state.prevRecvMsgNo > SKIP_MAX) return RecvStep.SkipTooLarge
+            val adv = advanceChain(state.prevRecvChainKeyB64, state.prevRecvMsgNo, msgNo, epoch, generation)
+            return RecvStep.Key(adv.aesKey, adv.iv, state.copy(
+                prevRecvChainKeyB64 = adv.nextChainKeyB64,
+                prevRecvMsgNo = adv.nextMsgNo,
+                recvEpoch = maxOf(state.recvEpoch, epoch),
+                skipped = boundSkipped(state.skipped + adv.skips)
+            ))
+        }
 
-        var ck = Base64Util.decode(
-            state.recvChainKeyB64 ?: error("přijímací řetěz není inicializovaný")
-        )
-        val newSkips = ArrayList<SkippedMessageKey>(gap)
-        var n = state.recvMsgNo
-        while (n < msgNo) {
+        // 4) Starší než předchozí generace nebo neznámé → spotřebované/pryč.
+        return RecvStep.AlreadyConsumed
+    }
+
+    /** Klíč cílové zprávy + posunutý řetěz + přeskočené klíče mezery. */
+    private class ChainAdvance(
+        val aesKey: ByteArray,
+        val iv: ByteArray,
+        val nextChainKeyB64: String,
+        val nextMsgNo: Int,
+        val skips: List<SkippedMessageKey>
+    )
+
+    /**
+     * Přetoč řetěz z [fromMsgNo] na [targetMsgNo]: vrátí klíč cílové zprávy,
+     * posunutý řetěz a přeskočené klíče mezery (tagované [generation]). Volající
+     * hlídá `targetMsgNo - fromMsgNo <= SKIP_MAX`.
+     */
+    private fun advanceChain(
+        chainKeyB64: String, fromMsgNo: Int, targetMsgNo: Int, epoch: Int, generation: Int
+    ): ChainAdvance {
+        var ck = Base64Util.decode(chainKeyB64)
+        val skips = ArrayList<SkippedMessageKey>(targetMsgNo - fromMsgNo)
+        var n = fromMsgNo
+        while (n < targetMsgNo) {
             val mk = Hkdf.derive(ck, LABEL_MK, KEY_BYTES)
-            newSkips.add(SkippedMessageKey(epoch, n, enc(mk), n.toLong()))
+            skips.add(SkippedMessageKey(epoch, n, enc(mk), n.toLong(), generation))
             ck = Hkdf.derive(ck, LABEL_CK, KEY_BYTES)
             n++
         }
         val targetMk = Hkdf.derive(ck, LABEL_MK, KEY_BYTES)
         val nextCk = Hkdf.derive(ck, LABEL_CK, KEY_BYTES)
         val keyIv = Hkdf.derive(targetMk, LABEL_AEAD, AEAD_BYTES)
-
-        val newState = state.copy(
-            recvChainKeyB64 = enc(nextCk),
-            recvMsgNo = msgNo + 1,
-            recvEpoch = maxOf(state.recvEpoch, epoch),
-            skipped = boundSkipped(state.skipped + newSkips)
+        return ChainAdvance(
+            keyIv.copyOfRange(0, KEY_BYTES), keyIv.copyOfRange(KEY_BYTES, AEAD_BYTES),
+            enc(nextCk), targetMsgNo + 1, skips
         )
-        return RecvStep.Key(keyIv.copyOfRange(0, KEY_BYTES), keyIv.copyOfRange(KEY_BYTES, AEAD_BYTES), newState)
     }
 
     /**
-     * Ořízne skipped-store na [SKIP_MAX] - nejstarší (nejnižší `msgNo`) padají
-     * první. Bez toho by protějšek mohl posílat samé mezery a nafouknout paměť.
+     * Ořízne skipped-store na [SKIP_MAX] - nejstarší (nejnižší (generace, index))
+     * padají první. Staré generace jdou ven dřív než nižší indexy v aktuální.
+     * Bez toho by protějšek mohl posílat samé mezery a nafouknout paměť.
      */
     private fun boundSkipped(list: List<SkippedMessageKey>): List<SkippedMessageKey> {
         if (list.size <= SKIP_MAX) return list
-        return list.sortedByDescending { it.msgNo }.take(SKIP_MAX).sortedBy { it.msgNo }
+        return list
+            .sortedWith(compareByDescending<SkippedMessageKey> { it.generation }.thenByDescending { it.msgNo })
+            .take(SKIP_MAX)
+            .sortedWith(compareBy<SkippedMessageKey> { it.generation }.thenBy { it.msgNo })
+    }
+
+    // --- KEM re-key (Fáze 4, PCS) ---
+
+    /**
+     * Vygeneruje čerstvý ML-KEM pár pro re-key. Vrací (public, private) Base64.
+     */
+    fun generateKemKeyPair(): Pair<String, String> {
+        val kp = com.jelenxp.cryptochat.crypto.PostQuantumKem.generateKeyPair()
+        return kp.publicKeyBase64 to kp.privateKeyBase64
+    }
+
+    /**
+     * Aplikuje dokončený KEM re-key: z čerstvého sdíleného tajemství [ssB64]
+     * (32B Base64, dohodnuté oběma stranami) vmíchá entropii do NOVÉ generace
+     * kořene a přeseje OBA řetěze. `sendMsgNo`/`recvMsgNo` (index v generaci) se
+     * resetují na 0; skipped-store se ZACHOVÁ (staré klíče tagované starou generací
+     * kvůli grace). **Obě strany MUSÍ volat se stejným `ssB64` a stejným kořenem**,
+     * jinak se řetěze rozejdou. Dotýká se obou půlek → aplikuj pod plným zámkem.
+     */
+    fun applyRekey(state: RatchetState, ssB64: String, sendDir: Int, recvDir: Int): RatchetState {
+        val ikm = Base64Util.decode(state.rootKeyB64) + Base64Util.decode(ssB64)
+        val newGen = state.generation + 1
+        val newRoot = Hkdf.derive(ikm, "$REKEY_ROOT|gen=$newGen", KEY_BYTES)
+        val newSend = Hkdf.derive(newRoot, "$CHAIN|dir=$sendDir|gen=$newGen", KEY_BYTES)
+        val newRecv = Hkdf.derive(newRoot, "$CHAIN|dir=$recvDir|gen=$newGen", KEY_BYTES)
+        return state.copy(
+            rootKeyB64 = enc(newRoot),
+            generation = newGen,
+            sendChainKeyB64 = enc(newSend),
+            recvChainKeyB64 = enc(newRecv),
+            sendMsgNo = 0,
+            recvMsgNo = 0,
+            // Ulož DOSAVADNÍ přijímací řetěz jako předchozí generaci: in-order konec
+            // staré generace, co dorazí přes relay AŽ po re-key, se pak ještě
+            // dešifruje (grace, viz recvKey větev 3). Bez toho by se tiše ztratil.
+            prevRecvChainKeyB64 = state.recvChainKeyB64,
+            prevRecvGeneration = state.generation,
+            prevRecvMsgNo = state.recvMsgNo
+            // skipped se ZÁMĚRNĚ nemaže - klíče z mezer (tag = generace) slouží
+            // opožděným out-of-order zprávám; ořízne je až SKIP_MAX.
+        )
     }
 
     private fun enc(bytes: ByteArray): String = Base64Util.encode(bytes)

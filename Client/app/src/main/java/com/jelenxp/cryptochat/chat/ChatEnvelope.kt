@@ -493,22 +493,34 @@ object ChatEnvelope {
 
     // --- Ratchet obálka (major 4) - viz RATCHET_WIRE.md ---
 
-    // Otevřená hlavička: major(1) + htype(1) + epoch(4 BE) + msgNo(4 BE).
-    private const val RATCHET_HEADER = 10
-    private const val RATCHET_HTYPE_PLAIN: Byte = 0
+    // Otevřená hlavička. Gen 0 (Fáze 3): major(1)+htype(1)+epoch(4)+msgNo(4) = 10 B.
+    // Gen > 0 (Fáze 4, htype bit1): major(1)+htype(1)+epoch(4)+generation(4)+msgNo(4) = 14 B.
+    // Gen-0 hlavička zůstává bajtově shodná s Fází 3 (golden platí).
+    private const val RATCHET_HEADER_PLAIN = 10
+    private const val RATCHET_HEADER_GEN = 14
+    private const val RATCHET_HTYPE_PLAIN = 0
+    private const val RATCHET_HTYPE_GEN = 0x02   // bit1 = přítomna generace
 
-    private fun ratchetHeaderBytes(epoch: Int, msgNo: Int): ByteArray {
-        val h = ByteArray(RATCHET_HEADER)
-        h[0] = WireCompat.WIRE_MAJOR_RATCHET.toByte()
-        h[1] = RATCHET_HTYPE_PLAIN
-        ByteBuffer.wrap(h, 2, 8).putInt(epoch).putInt(msgNo)
-        return h
+    private fun ratchetHeaderBytes(epoch: Int, msgNo: Int, generation: Int): ByteArray {
+        return if (generation == 0) {
+            val h = ByteArray(RATCHET_HEADER_PLAIN)
+            h[0] = WireCompat.WIRE_MAJOR_RATCHET.toByte()
+            h[1] = RATCHET_HTYPE_PLAIN.toByte()
+            ByteBuffer.wrap(h, 2, 8).putInt(epoch).putInt(msgNo)
+            h
+        } else {
+            val h = ByteArray(RATCHET_HEADER_GEN)
+            h[0] = WireCompat.WIRE_MAJOR_RATCHET.toByte()
+            h[1] = RATCHET_HTYPE_GEN.toByte()
+            ByteBuffer.wrap(h, 2, 12).putInt(epoch).putInt(generation).putInt(msgNo)
+            h
+        }
     }
 
     /**
      * AAD ratchet obálky: doménový štítek, směr a CELÁ čitelná hlavička (major,
-     * htype, epocha, pořadí - a ve Fázi 4 i KEM oddíl). Relay tak nemůže nic
-     * z toho přehodit ani podvrhnout (rozbil by GCM tag).
+     * htype, epocha, generace, pořadí). Relay tak nemůže nic z toho přehodit ani
+     * podvrhnout (rozbil by GCM tag).
      */
     private fun ratchetAad(dir: Int, header: ByteArray): ByteArray =
         "ccr|dir=$dir".toByteArray(Charsets.US_ASCII) + header
@@ -517,6 +529,7 @@ object ChatEnvelope {
     data class RatchetHeader(
         val epoch: Int,
         val msgNo: Int,
+        val generation: Int,
         val htype: Int,
         val ciphertextOffset: Int
     )
@@ -524,7 +537,8 @@ object ChatEnvelope {
     /**
      * Zašifruje připravený vnitřní [payload] (z build* funkcí) do RATCHET obálky
      * (major 4). Klíč i IV pocházejí z [DoubleRatchet.SendStep]; IV se NEPŘENÁŠÍ,
-     * je odvozený z klíče zprávy, který je unikátní per (směr, msgNo).
+     * je odvozený z klíče zprávy, který je unikátní per (generace, msgNo). [msgNo]
+     * je index UVNITŘ [generation].
      */
     internal fun encryptRatchet(
         payload: ByteArray,
@@ -532,9 +546,10 @@ object ChatEnvelope {
         iv: ByteArray,
         epoch: Int,
         msgNo: Int,
+        generation: Int,
         dir: Int
     ): ByteArray {
-        val header = ratchetHeaderBytes(epoch, msgNo)
+        val header = ratchetHeaderBytes(epoch, msgNo, generation)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
         cipher.updateAAD(ratchetAad(dir, header))
@@ -543,23 +558,34 @@ object ChatEnvelope {
 
     /**
      * Přečte otevřenou hlavičku ratchet blobu (major 4) BEZ dešifrování - z ní
-     * volající vezme epochu a pořadí pro [DoubleRatchet.recvKey]. Vrací null, když
-     * blob na ratchet formát nevypadá, je useknutý, nese neznámý příznak hlavičky
-     * (např. KEM oddíl z Fáze 4, který tahle verze ještě neumí → karanténa) nebo
-     * má nesmyslná (záporná) pole.
+     * volající vezme epochu, generaci a pořadí pro [DoubleRatchet.recvKey]. Vrací
+     * null, když blob na ratchet formát nevypadá, je useknutý, nese neznámý příznak
+     * hlavičky (budoucí rozšíření → karanténa) nebo má nesmyslná (záporná) pole.
      */
     fun readRatchetHeader(blob: ByteArray): RatchetHeader? {
-        if (blob.size < RATCHET_HEADER + GCM_TAG_BITS / 8) return null
+        if (blob.size < RATCHET_HEADER_PLAIN + GCM_TAG_BITS / 8) return null
         if ((blob[0].toInt() and 0xFF) != WireCompat.WIRE_MAJOR_RATCHET) return null
         val htype = blob[1].toInt() and 0xFF
-        // Zatím umíme jen prostou hlavičku. Neznámý příznak (KEM oddíl, Fáze 4) →
-        // null → karanténa, po aktualizaci se blob přečte.
-        if (htype != RATCHET_HTYPE_PLAIN.toInt()) return null
-        val buf = ByteBuffer.wrap(blob, 2, 8)
-        val epoch = buf.int
-        val msgNo = buf.int
-        if (epoch < 0 || msgNo < 0) return null
-        return RatchetHeader(epoch, msgNo, htype, RATCHET_HEADER)
+        val epoch: Int
+        val generation: Int
+        val msgNo: Int
+        val offset: Int
+        when (htype) {
+            RATCHET_HTYPE_PLAIN -> {
+                val buf = ByteBuffer.wrap(blob, 2, 8)
+                epoch = buf.int; generation = 0; msgNo = buf.int
+                offset = RATCHET_HEADER_PLAIN
+            }
+            RATCHET_HTYPE_GEN -> {
+                if (blob.size < RATCHET_HEADER_GEN + GCM_TAG_BITS / 8) return null
+                val buf = ByteBuffer.wrap(blob, 2, 12)
+                epoch = buf.int; generation = buf.int; msgNo = buf.int
+                offset = RATCHET_HEADER_GEN
+            }
+            else -> return null   // neznámý příznak → budoucí rozšíření → karanténa
+        }
+        if (epoch < 0 || msgNo < 0 || generation < 0) return null
+        return RatchetHeader(epoch, msgNo, generation, htype, offset)
     }
 
     /**

@@ -56,7 +56,27 @@ data class RatchetState(
     val skipped: List<SkippedMessageKey>,
     val inboundMarker: Long,
     val pointerMarker: Long,
-    val mode: Mode
+    val mode: Mode,
+    /**
+     * Krypto generace (Fáze 4, PCS). Roste o 1 při každém dokončeném KEM re-key
+     * (viz [com.jelenxp.cryptochat.chat.DoubleRatchet.applyRekey]). Kořen i oba
+     * řetěze pak vzniknou z čerstvé entropie a `sendMsgNo`/`recvMsgNo` (= index
+     * uvnitř generace) se resetují na 0. Mění ji JEN re-key (dotýká se obou půlek
+     * stavu → aplikuje se pod plným zámkem, ne přes withSend/withRecv). Gen 0 =
+     * Fáze 3 (bez KEM kroku), bajtově beze změny.
+     */
+    val generation: Int = 0,
+    /**
+     * PŘEDCHOZÍ generace přijímacího řetězu (grace, Fáze 4). Po re-key sem
+     * [com.jelenxp.cryptochat.chat.DoubleRatchet.applyRekey] uloží dosavadní
+     * přijímací řetěz (klíč + pozici), aby se in-order konec předchozí generace,
+     * co dorazí přes relay AŽ po re-key, ještě dal dešifrovat (jinak by se tiše
+     * ztratil - odesílatel ho poslal ještě před re-key). Drží se JEDNA předchozí
+     * generace; starší už jen ze skipped-store, jinak se zahodí.
+     */
+    val prevRecvChainKeyB64: String? = null,
+    val prevRecvGeneration: Int = -1,
+    val prevRecvMsgNo: Int = 0
 ) {
 
     /**
@@ -89,7 +109,9 @@ data class RatchetState(
         recvEpoch = s.recvEpoch,
         recvMsgNo = s.recvMsgNo,
         skipped = s.skipped,
-        inboundMarker = s.inboundMarker
+        inboundMarker = s.inboundMarker,
+        prevRecvChainKeyB64 = s.prevRecvChainKeyB64,
+        prevRecvMsgNo = s.prevRecvMsgNo
     )
 
     /** Serializace do JSON (pro [RatchetStore] i zálohu). */
@@ -117,6 +139,10 @@ data class RatchetState(
         put("im", inboundMarker)
         put("pm", pointerMarker)
         put("mode", mode.name)
+        if (generation != 0) put("gen", generation)
+        prevRecvChainKeyB64?.let { put("pck", it) }
+        if (prevRecvGeneration != -1) put("pg", prevRecvGeneration)
+        if (prevRecvMsgNo != 0) put("pn", prevRecvMsgNo)
     }
 
     companion object {
@@ -161,7 +187,11 @@ data class RatchetState(
                 skipped = skip,
                 inboundMarker = o.optLong("im", 0),
                 pointerMarker = o.optLong("pm", 0),
-                mode = mode
+                mode = mode,
+                generation = o.optInt("gen", 0),
+                prevRecvChainKeyB64 = o.optStringOrNull("pck"),
+                prevRecvGeneration = o.optInt("pg", -1),
+                prevRecvMsgNo = o.optInt("pn", 0)
             )
         }
     }
@@ -179,13 +209,16 @@ data class SkippedMessageKey(
     val epoch: Int,
     val msgNo: Int,
     val messageKeyB64: String,
-    val marker: Long
+    val marker: Long,
+    /** Krypto generace, do které klíč patří (Fáze 4). Matchuje se (generation, msgNo). */
+    val generation: Int = 0
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("e", epoch)
         .put("n", msgNo)
         .put("mk", messageKeyB64)
         .put("m", marker)
+        .apply { if (generation != 0) put("g", generation) }
 
     companion object {
         fun fromJson(o: JSONObject): SkippedMessageKey? {
@@ -194,7 +227,8 @@ data class SkippedMessageKey(
                 epoch = o.optInt("e", 0),
                 msgNo = o.optInt("n", 0),
                 messageKeyB64 = mk,
-                marker = o.optLong("m", 0)
+                marker = o.optLong("m", 0),
+                generation = o.optInt("g", 0)
             )
         }
     }
