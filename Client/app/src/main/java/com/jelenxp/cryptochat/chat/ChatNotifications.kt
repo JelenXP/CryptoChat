@@ -23,7 +23,11 @@ import com.jelenxp.cryptochat.ui.util.localizedContext
  */
 object ChatNotifications {
 
-    const val CHANNEL_SERVICE = "relay_service"
+    // Kanál trvalé notifikace spojení. IMPORTANCE_MIN = bez ikony ve status baru
+    // (jen v roztažené liště), aby se nepletla s ikonou nové zprávy. Nové id:
+    // důležitost kanálu už po vytvoření nejde snížit, takže starý (LOW) se maže.
+    const val CHANNEL_SERVICE = "relay_service_min"
+    private const val CHANNEL_SERVICE_OLD = "relay_service"
     const val CHANNEL_MESSAGES = "chat_messages"
     const val CHANNEL_UPDATES = "app_updates"
     const val SERVICE_NOTIFICATION_ID = 1001
@@ -42,11 +46,14 @@ object ChatNotifications {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val ctx = local(context)
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        // Starý kanál spojení (IMPORTANCE_LOW) měl ikonu ve status baru - smaž ho,
+        // ať se nepere s novým MIN kanálem a nekouká zbytečně ve výpisu kanálů.
+        runCatching { nm.deleteNotificationChannel(CHANNEL_SERVICE_OLD) }
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_SERVICE,
                 ctx.getString(R.string.notif_channel_service),
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = ctx.getString(R.string.notif_channel_service_desc)
                 setShowBadge(false)
@@ -77,7 +84,7 @@ object ChatNotifications {
         )
     }
 
-    /** Trvalá notifikace běžícího service (nízká priorita, sbalitelná). */
+    /** Trvalá notifikace běžícího service (minimální priorita, bez ikony ve status baru). */
     fun buildServiceNotification(context: Context, text: String): Notification {
         val ctx = local(context)
         val open = PendingIntent.getActivity(
@@ -86,12 +93,14 @@ object ChatNotifications {
             pendingFlags()
         )
         return NotificationCompat.Builder(context, CHANNEL_SERVICE)
-            .setSmallIcon(R.drawable.ic_stat_relay)
+            // Mrak (spojení), NE bublina se zámkem - ta patří jen novým zprávám,
+            // aby šla nová zpráva ve status baru spolehlivě poznat.
+            .setSmallIcon(R.drawable.ic_stat_connection)
             .setContentTitle(ctx.getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
             .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentIntent(open)
             .build()
     }
