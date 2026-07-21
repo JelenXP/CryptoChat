@@ -83,6 +83,17 @@ object RelaySync {
     private val prevEpochCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * Jak často se u ratchet kontaktu smí přečíst LEGACY grace schránka. Po přepnutí
+     * protějšku na ratchet je trvale prázdná, takže tady zůstává jen jako řídká
+     * pojistka na zprávy odeslané těsně PŘED přepnutím (TTL relaye 24 h >> tenhle
+     * interval, takže se žádná neztratí). Dřív to byl onion GET každých 60 s napořád.
+     */
+    private const val LEGACY_GRACE_RECHECK_MS = 30L * 60 * 1000
+
+    /** Kdy (ms) se u kontaktu naposledy četla legacy grace schránka (ratchet větev). */
+    private val legacyGraceCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
      * Velikost jednoho kousku souboru. Kousek i s obálkou se MUSÍ vejít pod
      * per-blob limit relaye ([ChatMediaStore.RELAY_BLOB_LIMIT]) - jinak server
      * odmítne každý `put` a přenos souboru tiše selže. Rezervu hlídá
@@ -109,6 +120,17 @@ object RelaySync {
             overlapMs = EPOCH_OVERLAP_MS,
             recheckMs = PREV_EPOCH_RECHECK_MS
         )
+
+    /**
+     * Vyčistí in-memory gating stav pollu (rozhoduje, kdy se řídce čte prev-epocha,
+     * legacy grace a beacon). JEN pro testy - jinak by stav z jednoho testu ovlivnil
+     * „první poll" v dalším (stejný singleton [RelaySync] v rámci JVM).
+     */
+    internal fun resetPollStateForTests() {
+        prevEpochChecked.clear()
+        prevEpochCheckedAt.clear()
+        legacyGraceCheckedAt.clear()
+    }
 
     /**
      * Výsledek jednoho pollu. [failed] = má se zpomalit (síťová I lokální chyba,
@@ -1263,16 +1285,26 @@ object RelaySync {
         if (ratchetState != null) {
             var received = 0
             val re = ratchetState.recvEpoch
+            val now = System.currentTimeMillis()
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
             // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, re + 1), 0, ratchet = true)
-            // Rychle: legacy grace (zprávy odeslané ještě před přepnutím protějšku).
-            received += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false)
+            // Legacy grace (zprávy odeslané ještě PŘED přepnutím protějšku na ratchet):
+            // po startu a pak už jen ŘÍDCE (ne každý cyklus). Po přepnutí je legacy
+            // schránka trvale prázdná, tak zbytečně neplatíme onion GET každých 60 s -
+            // TTL relaye (24 h) >> interval, takže žádná „zpráva v letu" se neztratí.
+            if (shouldCheckLegacyGraceAt(now, legacyGraceCheckedAt[contact.id], LEGACY_GRACE_RECHECK_MS)) {
+                received += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false)
+                // Čas zaznamenej JEN když get prošel (jinak zkus dřív - jako prev-epocha).
+                if (reachable) legacyGraceCheckedAt[contact.id] = now
+            }
             var target = ratchetStore.load(contact.id)?.recvEpoch ?: re
             if (target == re) {
                 // Sousední epocha nic nepřinesla → odesílatel mohl utéct dál (dlouhé
                 // offline). Beacon (ukazatel z neměnného M) řekne, na kterou epochu.
                 // Čte se JEN v tomhle případě, ať se za běžného provozu neplatí navíc.
+                // (Beacon se ZÁMĚRNĚ NEgatuje časem: je potřeba i na pollu hned po
+                // předchozím - obnova vzdálené epochy nesmí čekat na „mezeru".)
                 val beaconEpoch = readBeacon(baseUrl, key, dir)
                 if (beaconEpoch != null && beaconEpoch > re) target = beaconEpoch
             }
@@ -1393,6 +1425,14 @@ internal fun shouldCheckPrevEpochAt(
     if (lastCheckedAt == null) return true
     return now - lastCheckedAt >= recheckMs
 }
+
+/**
+ * Má se teď u ratchet kontaktu přečíst LEGACY grace schránka? Čistá funkce (bez
+ * sítě), ať jde otestovat. První poll ([lastCheckedAt] == null) VŽDY, pak už jen
+ * jednou za [recheckMs] - po startu se legacy dočte, dál je to řídká pojistka.
+ */
+internal fun shouldCheckLegacyGraceAt(now: Long, lastCheckedAt: Long?, recheckMs: Long): Boolean =
+    lastCheckedAt == null || now - lastCheckedAt >= recheckMs
 
 /**
  * Směr schránky, na který strana POSÍLÁ, podle role při párování ([Contact.initiator]).
