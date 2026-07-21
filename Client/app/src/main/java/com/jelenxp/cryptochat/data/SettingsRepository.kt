@@ -172,6 +172,21 @@ class SettingsRepository(context: Context) {
         prefs.edit().putBoolean(KEY_ONBOARDING_DONE, done).apply()
     }
 
+    // --- Jazyk aplikace ---
+    // BCP-47 tag zvoleného jazyka ("cs"/"en") nebo "" = jazyk systému. Jazyk se
+    // přepíná ZA BĚHU (viz AppLocale) bez recreate, proto ho držíme tady, ne v
+    // AppCompat úložišti. Notifikace (mimo Compose) si podle něj lokalizují Context.
+    fun getLanguageTag(): String = prefs.getString(KEY_LANGUAGE, "").orEmpty()
+    fun setLanguageTag(tag: String) {
+        prefs.edit().putString(KEY_LANGUAGE, tag).apply()
+    }
+
+    /** Proběhla už jednorázová migrace jazyka ze starého AppCompat úložiště? */
+    fun isLanguageMigrated(): Boolean = prefs.getBoolean(KEY_LANGUAGE_MIGRATED, false)
+    fun setLanguageMigrated(done: Boolean) {
+        prefs.edit().putBoolean(KEY_LANGUAGE_MIGRATED, done).apply()
+    }
+
     private inline fun <reified T : Enum<T>> readEnum(key: String, default: T): T {
         val name = prefs.getString(key, null) ?: return default
         return runCatching { enumValueOf<T>(name) }.getOrDefault(default)
@@ -204,6 +219,8 @@ class SettingsRepository(context: Context) {
         private const val KEY_RELAY_URL = "relay_url"
         private const val KEY_RELAY_CUSTOM = "relay_use_custom"
         private const val KEY_ONBOARDING_DONE = "onboarding_done"
+        private const val KEY_LANGUAGE = "app_language_tag"
+        private const val KEY_LANGUAGE_MIGRATED = "app_language_migrated"
 
         /**
          * Výchozí (zabudovaná) adresa oficiálního zero-knowledge relaye přes Tor.

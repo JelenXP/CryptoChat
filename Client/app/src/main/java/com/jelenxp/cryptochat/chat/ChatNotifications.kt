@@ -13,6 +13,8 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import com.jelenxp.cryptochat.MainActivity
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.ui.util.localizedContext
 
 /**
  * Notifikace chatu: trvalá (ongoing) pro běžící foreground service, který drží
@@ -28,26 +30,35 @@ object ChatNotifications {
     private const val MESSAGE_NOTIFICATION_BASE = 2000
     private const val UPDATE_NOTIFICATION_ID = 3001
 
+    /**
+     * Context s jazykem zvoleným uživatelem. Notifikace vznikají mimo Compose,
+     * takže se na ně neuplatní `LocalContext` z [com.jelenxp.cryptochat.ui.util.LocalizedApp]
+     * - musí si jazyk prosadit samy podle uloženého tagu.
+     */
+    private fun local(context: Context): Context =
+        localizedContext(context, SettingsRepository(context).getLanguageTag())
+
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val ctx = local(context)
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_SERVICE,
-                context.getString(R.string.notif_channel_service),
+                ctx.getString(R.string.notif_channel_service),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = context.getString(R.string.notif_channel_service_desc)
+                description = ctx.getString(R.string.notif_channel_service_desc)
                 setShowBadge(false)
             }
         )
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_MESSAGES,
-                context.getString(R.string.notif_channel_messages),
+                ctx.getString(R.string.notif_channel_messages),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = context.getString(R.string.notif_channel_messages_desc)
+                description = ctx.getString(R.string.notif_channel_messages_desc)
             }
         )
         // Aktualizace mají vlastní kanál, ať jdou vypnout zvlášť od zpráv.
@@ -58,16 +69,17 @@ object ChatNotifications {
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_UPDATES,
-                context.getString(R.string.notif_channel_updates),
+                ctx.getString(R.string.notif_channel_updates),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = context.getString(R.string.notif_channel_updates_desc)
+                description = ctx.getString(R.string.notif_channel_updates_desc)
             }
         )
     }
 
     /** Trvalá notifikace běžícího service (nízká priorita, sbalitelná). */
     fun buildServiceNotification(context: Context, text: String): Notification {
+        val ctx = local(context)
         val open = PendingIntent.getActivity(
             context, 0,
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -75,7 +87,7 @@ object ChatNotifications {
         )
         return NotificationCompat.Builder(context, CHANNEL_SERVICE)
             .setSmallIcon(R.drawable.ic_stat_relay)
-            .setContentTitle(context.getString(R.string.app_name))
+            .setContentTitle(ctx.getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
             .setShowWhen(false)
@@ -109,6 +121,7 @@ object ChatNotifications {
     ) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled() || unseen.isEmpty()) return
+        val ctx = local(context)
         val open = PendingIntent.getActivity(
             context, contactId.hashCode(),
             Intent(context, MainActivity::class.java)
@@ -120,11 +133,11 @@ object ChatNotifications {
         // MessagingStyle = konverzace: každá nepřečtená zpráva jako vlastní řádek.
         val them = Person.Builder().setName(contactName).build()
         val style = NotificationCompat.MessagingStyle(
-            Person.Builder().setName(context.getString(R.string.notif_you)).build()
+            Person.Builder().setName(ctx.getString(R.string.notif_you)).build()
         )
-        val photo = context.getString(R.string.notif_photo)
-        val file = context.getString(R.string.notif_file)
-        val fallback = context.getString(R.string.notif_new_message)
+        val photo = ctx.getString(R.string.notif_photo)
+        val file = ctx.getString(R.string.notif_file)
+        val fallback = ctx.getString(R.string.notif_new_message)
         unseen.forEach { m ->
             style.addMessage(ChatNotificationLogic.lineText(m, photo, file, fallback), m.timestamp, them)
         }
@@ -137,11 +150,11 @@ object ChatNotifications {
             // Obsah se na zamčené obrazovce skryje; po odemčení je vidět.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(open)
-            .addAction(replyAction(context, contactId))
+            .addAction(replyAction(ctx, contactId))
 
         // „To se mi líbí" jen když je na co reakci navěsit (poslední zpráva má wireRef).
         if (ChatNotificationLogic.likeTarget(unseen) != null) {
-            builder.addAction(likeAction(context, contactId))
+            builder.addAction(likeAction(ctx, contactId))
         }
 
         try {
@@ -223,13 +236,14 @@ object ChatNotifications {
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             pendingFlags()
         )
-        val title = context.getString(
+        val ctx = local(context)
+        val title = ctx.getString(
             if (important) R.string.notif_update_title_important else R.string.notif_update_title
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_UPDATES)
             .setSmallIcon(R.drawable.ic_stat_relay)
             .setContentTitle(title)
-            .setContentText(context.getString(R.string.notif_update_text, version))
+            .setContentText(ctx.getString(R.string.notif_update_text, version))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setPriority(NotificationCompat.PRIORITY_LOW)

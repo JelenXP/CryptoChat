@@ -13,6 +13,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -59,6 +61,8 @@ import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.data.UpdateStartupPolicy
 import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.onboarding.BackgroundOnboardingScreen
+import com.jelenxp.cryptochat.ui.util.AppLocale
+import com.jelenxp.cryptochat.ui.util.LocalizedApp
 import com.jelenxp.cryptochat.ui.screens.AcceptKeyScreen
 import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
@@ -110,6 +114,25 @@ class MainActivity : AppCompatActivity() {
         )
         sharedTextState.value = extractSharedText(intent)
         openChatIdState.value = intent?.getStringExtra(EXTRA_OPEN_CHAT)
+
+        // Jednorázová migrace jazyka ze STARÉHO AppCompat úložiště do našeho stavu
+        // (jazyk teď přepínáme in-place, viz AppLocale - bez recreate, bez poblikání
+        // a bez znovuvyžádání zámku). Kdo měl jazyk vynucený, přenese se; AppCompat
+        // se pak vyčistí, aby base context řídil dál JEN náš přepínač. To je jediný
+        // (jednorázový) recreate při první aktualizaci; další změny jazyka už ne.
+        run {
+            val settings = SettingsRepository(this)
+            if (!settings.isLanguageMigrated()) {
+                val existing = AppCompatDelegate.getApplicationLocales()
+                settings.setLanguageTag(if (existing.isEmpty) "" else existing[0]?.language.orEmpty())
+                settings.setLanguageMigrated(true)
+                if (!existing.isEmpty) {
+                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
+                }
+            }
+            AppLocale.tag = settings.getLanguageTag()
+        }
+
         setContent {
             val context = LocalContext.current
             val settingsRepository = remember { SettingsRepository(context) }
@@ -132,23 +155,26 @@ class MainActivity : AppCompatActivity() {
                                 onboarded = true
                             })
                         } else {
-                            AppLockGate {
-                                StartupGate {
-                                    CryptoChatApp(
-                                        design = design,
-                                        sharedText = sharedTextState.value,
-                                        onSharedTextConsumed = { sharedTextState.value = null },
-                                        openChatId = openChatIdState.value,
-                                        onOpenChatConsumed = {
-                                            openChatIdState.value = null
-                                            // Vymaž extra i z intentu Aktivity. Jinak by ho
-                                            // onCreate po recreate() (změna jazyka appky přes
-                                            // setApplicationLocales, rotace, obnova procesu)
-                                            // přečetl ZNOVU a po „zpět" by uživatele vrátil do
-                                            // konverzace, ze které odešel.
-                                            intent?.removeExtra(EXTRA_OPEN_CHAT)
-                                        }
-                                    )
+                            // LocalizedApp prosadí zvolený jazyk (AppLocale) obalením
+                            // Contextu - změna jazyka je pak jen rekompozice, žádný recreate.
+                            LocalizedApp {
+                                AppLockGate {
+                                    StartupGate {
+                                        CryptoChatApp(
+                                            design = design,
+                                            sharedText = sharedTextState.value,
+                                            onSharedTextConsumed = { sharedTextState.value = null },
+                                            openChatId = openChatIdState.value,
+                                            onOpenChatConsumed = {
+                                                openChatIdState.value = null
+                                                // Vymaž extra i z intentu Aktivity. Jinak by ho
+                                                // onCreate po recreate() (rotace, obnova procesu)
+                                                // přečetl ZNOVU a po „zpět" by uživatele vrátil do
+                                                // konverzace, ze které odešel.
+                                                intent?.removeExtra(EXTRA_OPEN_CHAT)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }

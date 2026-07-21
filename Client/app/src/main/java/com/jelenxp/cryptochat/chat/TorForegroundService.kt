@@ -17,6 +17,7 @@ import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.data.UpdateNotifyPolicy
 import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
+import com.jelenxp.cryptochat.ui.util.localizedContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -68,9 +69,10 @@ class TorForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Musí se zavolat hned (do 5 s), jinak ANR. Typ služby bere z manifestu.
+        val startCtx = localizedContext(this, SettingsRepository(this).getLanguageTag())
         startForeground(
             ChatNotifications.SERVICE_NOTIFICATION_ID,
-            ChatNotifications.buildServiceNotification(this, getString(R.string.notif_connecting))
+            ChatNotifications.buildServiceNotification(this, startCtx.getString(R.string.notif_connecting))
         )
         // Drž Tor naživu. ensureStarted dělá diskovou IO (getDir + stavba runtime),
         // a onStartCommand běží na HLAVNÍM vlákně - pustíme to proto mimo něj, ať
@@ -291,7 +293,8 @@ class TorForegroundService : Service() {
      * přepisování budí systémové UI (a tím i CPU) při každém tiku hlídače.
      */
     private fun updateNotification() {
-        val text = getString(
+        val ctx = localizedContext(this, SettingsRepository(this).getLanguageTag())
+        val text = ctx.getString(
             if (RelayStatus.state == RelayConn.CONNECTED) R.string.notif_connected
             else R.string.notif_connecting
         )

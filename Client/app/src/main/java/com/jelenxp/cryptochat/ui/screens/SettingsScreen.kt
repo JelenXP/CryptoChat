@@ -1,5 +1,6 @@
 package com.jelenxp.cryptochat.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -24,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.FeatureFlags
@@ -35,6 +34,8 @@ import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.lock.isDeviceSecureAuthAvailable
 import com.jelenxp.cryptochat.ui.lock.requestUnlock
+import com.jelenxp.cryptochat.ui.util.AppLocale
+import com.jelenxp.cryptochat.ui.util.LanguageMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,23 +57,17 @@ private sealed interface ManualCheckState {
     data class Done(val result: UpdateChecker.Result) : ManualCheckState
 }
 
-private fun currentLanguageChoice(): String {
-    val locales = AppCompatDelegate.getApplicationLocales()
-    if (locales.isEmpty) return LANG_SYSTEM
-    return when (locales[0]?.language) {
-        "cs" -> LANG_CZECH
-        "en" -> LANG_ENGLISH
-        else -> LANG_SYSTEM
-    }
-}
+private fun currentLanguageChoice(): String = LanguageMap.tagToChoice(AppLocale.tag)
 
-private fun applyLanguage(choice: String) {
-    val localeList = when (choice) {
-        LANG_CZECH -> LocaleListCompat.forLanguageTags("cs")
-        LANG_ENGLISH -> LocaleListCompat.forLanguageTags("en")
-        else -> LocaleListCompat.getEmptyLocaleList()
-    }
-    AppCompatDelegate.setApplicationLocales(localeList)
+/**
+ * Přepne jazyk ZA BĚHU (bez recreate): uloží volbu a nastaví [AppLocale.tag], což
+ * jen rekomponuje UI. Dřívější `setApplicationLocales` Activity recreatovalo -
+ * odtud poblikání a znovuvyžádání zámku.
+ */
+private fun applyLanguage(context: Context, choice: String) {
+    val tag = LanguageMap.choiceToTag(choice)
+    SettingsRepository(context).setLanguageTag(tag)
+    AppLocale.tag = tag
 }
 
 @Composable
@@ -168,14 +163,14 @@ fun SettingsScreen(navController: NavController) {
                                 .fillMaxWidth()
                                 .selectable(
                                     selected = selectedLanguage == code,
-                                    onClick = { selectedLanguage = code; applyLanguage(code) }
+                                    onClick = { selectedLanguage = code; applyLanguage(context, code) }
                                 )
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
                                 selected = selectedLanguage == code,
-                                onClick = { selectedLanguage = code; applyLanguage(code) }
+                                onClick = { selectedLanguage = code; applyLanguage(context, code) }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(label)
