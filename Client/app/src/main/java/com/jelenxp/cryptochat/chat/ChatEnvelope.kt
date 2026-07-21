@@ -5,6 +5,7 @@ import java.nio.ByteBuffer
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Obálka jedné chatové zprávy pro přenos přes relay. Obsah se zašifruje
@@ -102,6 +103,19 @@ object ChatEnvelope {
         msgId: ByteArray? = null,
         replyTo: ByteArray? = null
     ): ByteArray {
+        return encrypt(buildTextPayload(text, timestamp, msgId, replyTo), keyBase64, dir)
+    }
+
+    /**
+     * Vnitřní plaintext textové zprávy (bez šifrování) - sdílené legacy i ratchet
+     * obálkou. Ratchet mění jen vnější obálku a klíč, vnitřek je stejný.
+     */
+    internal fun buildTextPayload(
+        text: String,
+        timestamp: Long,
+        msgId: ByteArray?,
+        replyTo: ByteArray?
+    ): ByteArray {
         val data = text.toByteArray(Charsets.UTF_8)
         val trailer = trailerFor(msgId, replyTo)
         // Do koše se počítá i trailer - jinak by výplň skončila dřív, než trailer
@@ -110,7 +124,7 @@ object ChatEnvelope {
         writeHeader(padded, KIND_TEXT, timestamp, data.size)
         System.arraycopy(data, 0, padded, HEADER, data.size)
         System.arraycopy(trailer, 0, padded, HEADER + data.size, trailer.size)
-        return encrypt(padded, keyBase64, dir)
+        return padded
     }
 
     /** Zabalí a zašifruje fotku (JPEG bajty, bez paddingu). */
@@ -121,12 +135,17 @@ object ChatEnvelope {
         dir: Int,
         msgId: ByteArray? = null
     ): ByteArray {
+        return encrypt(buildImagePayload(jpeg, timestamp, msgId), keyBase64, dir)
+    }
+
+    /** Vnitřní plaintext fotky (bez šifrování). */
+    internal fun buildImagePayload(jpeg: ByteArray, timestamp: Long, msgId: ByteArray?): ByteArray {
         val trailer = trailerFor(msgId)
         val payload = ByteArray(HEADER + jpeg.size + trailer.size)
         writeHeader(payload, KIND_IMAGE, timestamp, jpeg.size)
         System.arraycopy(jpeg, 0, payload, HEADER, jpeg.size)
         System.arraycopy(trailer, 0, payload, HEADER + jpeg.size, trailer.size)
-        return encrypt(payload, keyBase64, dir)
+        return payload
     }
 
     /**
@@ -161,6 +180,16 @@ object ChatEnvelope {
         keyBase64: String,
         dir: Int
     ): ByteArray {
+        return encrypt(buildReactionPayload(target, emoji, remove, timestamp), keyBase64, dir)
+    }
+
+    /** Vnitřní plaintext reakce (řídicí zpráva: prázdné tělo, vše v traileru). */
+    internal fun buildReactionPayload(
+        target: ByteArray,
+        emoji: String,
+        remove: Boolean,
+        timestamp: Long
+    ): ByteArray {
         val control = byteArrayOf(
             ((WireExt.FEATURE_REACTION ushr 8) and 0xFF).toByte(),
             (WireExt.FEATURE_REACTION and 0xFF).toByte(),
@@ -177,7 +206,7 @@ object ChatEnvelope {
         val padded = ByteArray(bucketFor(HEADER + trailer.size))
         writeHeader(padded, KIND_TEXT, timestamp, 0)
         System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
-        return encrypt(padded, keyBase64, dir)
+        return padded
     }
 
     /**
@@ -194,13 +223,28 @@ object ChatEnvelope {
         keyBase64: String,
         dir: Int
     ): ByteArray {
+        return encrypt(
+            buildManifestPayload(fileId, totalChunks, totalSize, mimeType, fileName, timestamp),
+            keyBase64, dir
+        )
+    }
+
+    /** Vnitřní plaintext manifestu souboru (bez šifrování). */
+    internal fun buildManifestPayload(
+        fileId: ByteArray,
+        totalChunks: Int,
+        totalSize: Long,
+        mimeType: String,
+        fileName: String,
+        timestamp: Long
+    ): ByteArray {
         val mime = mimeType.toByteArray(Charsets.UTF_8)
         val name = fileName.toByteArray(Charsets.UTF_8)
         val data = ByteBuffer.allocate(FILE_ID_BYTES + 4 + 8 + 2 + mime.size + 2 + name.size)
         data.put(fileId).putInt(totalChunks).putLong(totalSize)
         data.putShort(mime.size.toShort()).put(mime)
         data.putShort(name.size.toShort()).put(name)
-        return sealRaw(KIND_FILE_MANIFEST, data.array(), timestamp, keyBase64, dir)
+        return buildRawPayload(KIND_FILE_MANIFEST, data.array(), timestamp)
     }
 
     /** Jeden kousek souboru. Data: `[16B fileId][4B index][bajty]`. */
@@ -212,22 +256,27 @@ object ChatEnvelope {
         keyBase64: String,
         dir: Int
     ): ByteArray {
-        val data = ByteBuffer.allocate(FILE_ID_BYTES + 4 + chunk.size)
-        data.put(fileId).putInt(index).put(chunk)
-        return sealRaw(KIND_FILE_CHUNK, data.array(), timestamp, keyBase64, dir)
+        return encrypt(buildChunkPayload(fileId, index, chunk, timestamp), keyBase64, dir)
     }
 
-    private fun sealRaw(
-        kind: Byte,
-        data: ByteArray,
-        timestamp: Long,
-        keyBase64: String,
-        dir: Int
+    /** Vnitřní plaintext kousku souboru (bez šifrování). */
+    internal fun buildChunkPayload(
+        fileId: ByteArray,
+        index: Int,
+        chunk: ByteArray,
+        timestamp: Long
     ): ByteArray {
+        val data = ByteBuffer.allocate(FILE_ID_BYTES + 4 + chunk.size)
+        data.put(fileId).putInt(index).put(chunk)
+        return buildRawPayload(KIND_FILE_CHUNK, data.array(), timestamp)
+    }
+
+    /** Vnitřní plaintext obecné zprávy typu [kind] s daty (bez šifrování). */
+    private fun buildRawPayload(kind: Byte, data: ByteArray, timestamp: Long): ByteArray {
         val payload = ByteArray(HEADER + data.size)
         writeHeader(payload, kind, timestamp, data.size)
         System.arraycopy(data, 0, payload, HEADER, data.size)
-        return encrypt(payload, keyBase64, dir)
+        return payload
     }
 
     /**
@@ -441,6 +490,100 @@ object ChatEnvelope {
      */
     private fun aad(dir: Int, wire: Int): ByteArray =
         "ccdir:$dir|w:$wire".toByteArray(Charsets.US_ASCII)
+
+    // --- Ratchet obálka (major 4) - viz RATCHET_WIRE.md ---
+
+    // Otevřená hlavička: major(1) + htype(1) + epoch(4 BE) + msgNo(4 BE).
+    private const val RATCHET_HEADER = 10
+    private const val RATCHET_HTYPE_PLAIN: Byte = 0
+
+    private fun ratchetHeaderBytes(epoch: Int, msgNo: Int): ByteArray {
+        val h = ByteArray(RATCHET_HEADER)
+        h[0] = WireCompat.WIRE_MAJOR_RATCHET.toByte()
+        h[1] = RATCHET_HTYPE_PLAIN
+        ByteBuffer.wrap(h, 2, 8).putInt(epoch).putInt(msgNo)
+        return h
+    }
+
+    /**
+     * AAD ratchet obálky: doménový štítek, směr a CELÁ čitelná hlavička (major,
+     * htype, epocha, pořadí - a ve Fázi 4 i KEM oddíl). Relay tak nemůže nic
+     * z toho přehodit ani podvrhnout (rozbil by GCM tag).
+     */
+    private fun ratchetAad(dir: Int, header: ByteArray): ByteArray =
+        "ccr|dir=$dir".toByteArray(Charsets.US_ASCII) + header
+
+    /** Rozparsovaná otevřená hlavička ratchet blobu (bez dešifrování). */
+    data class RatchetHeader(
+        val epoch: Int,
+        val msgNo: Int,
+        val htype: Int,
+        val ciphertextOffset: Int
+    )
+
+    /**
+     * Zašifruje připravený vnitřní [payload] (z build* funkcí) do RATCHET obálky
+     * (major 4). Klíč i IV pocházejí z [DoubleRatchet.SendStep]; IV se NEPŘENÁŠÍ,
+     * je odvozený z klíče zprávy, který je unikátní per (směr, msgNo).
+     */
+    internal fun encryptRatchet(
+        payload: ByteArray,
+        aesKey: ByteArray,
+        iv: ByteArray,
+        epoch: Int,
+        msgNo: Int,
+        dir: Int
+    ): ByteArray {
+        val header = ratchetHeaderBytes(epoch, msgNo)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(aesKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.updateAAD(ratchetAad(dir, header))
+        return header + cipher.doFinal(payload)
+    }
+
+    /**
+     * Přečte otevřenou hlavičku ratchet blobu (major 4) BEZ dešifrování - z ní
+     * volající vezme epochu a pořadí pro [DoubleRatchet.recvKey]. Vrací null, když
+     * blob na ratchet formát nevypadá, je useknutý, nese neznámý příznak hlavičky
+     * (např. KEM oddíl z Fáze 4, který tahle verze ještě neumí → karanténa) nebo
+     * má nesmyslná (záporná) pole.
+     */
+    fun readRatchetHeader(blob: ByteArray): RatchetHeader? {
+        if (blob.size < RATCHET_HEADER + GCM_TAG_BITS / 8) return null
+        if ((blob[0].toInt() and 0xFF) != WireCompat.WIRE_MAJOR_RATCHET) return null
+        val htype = blob[1].toInt() and 0xFF
+        // Zatím umíme jen prostou hlavičku. Neznámý příznak (KEM oddíl, Fáze 4) →
+        // null → karanténa, po aktualizaci se blob přečte.
+        if (htype != RATCHET_HTYPE_PLAIN.toInt()) return null
+        val buf = ByteBuffer.wrap(blob, 2, 8)
+        val epoch = buf.int
+        val msgNo = buf.int
+        if (epoch < 0 || msgNo < 0) return null
+        return RatchetHeader(epoch, msgNo, htype, RATCHET_HEADER)
+    }
+
+    /**
+     * Dešifruje a rozbalí RATCHET blob (major 4). Klíč+IV dodá volající
+     * z [DoubleRatchet.recvKey] (podle epochy a pořadí z [readRatchetHeader]).
+     * Vnitřek se parsuje stejným [parsePayload] jako legacy - `kind`, trailer,
+     * capability i reakce fungují identicky. Vrací tři stavy jako [open].
+     */
+    fun openRatchet(blob: ByteArray, aesKey: ByteArray, iv: ByteArray, dir: Int): Result {
+        val header = readRatchetHeader(blob) ?: return Result.Unreadable
+        val payload = try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.updateAAD(ratchetAad(dir, blob.copyOfRange(0, header.ciphertextOffset)))
+            cipher.doFinal(blob.copyOfRange(header.ciphertextOffset, blob.size))
+        } catch (e: Exception) {
+            return Result.Unreadable
+        }
+        return try {
+            parsePayload(payload)
+        } catch (e: Exception) {
+            Result.Unreadable
+        }
+    }
 
     /** Nejbližší koš >= potřebné velikosti; nad nejvyšší koš zaokrouhlí na jeho násobek. */
     // internal (ne private) kvůli přímému testu guardu proti přetečení - vstup,

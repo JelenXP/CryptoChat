@@ -26,6 +26,14 @@ object RelayCrypto {
     private const val INFO_INVITE_KEY = "CryptoChat/relay/invite-key/v1"
 
     /**
+     * Seed pro RATCHET schránky. Odvozuje se z neměnného hlavního klíče `M`
+     * kontaktu (viz `RATCHET_WIRE.md`, přijatý kompromis: adresy nejsou
+     * forward-secret vůči pozdější kompromitaci zařízení). Label je odlišný od
+     * [INFO_MAILBOX], takže ratchet a legacy schránky se nikdy nepotkají.
+     */
+    private const val INFO_RATCHET_MAILBOX = "CryptoChat/relay/ratchet-mailbox/v1"
+
+    /**
      * ID schránky pro daný sdílený klíč, směr (0 = iniciátor→odpovídající,
      * 1 = opačně) a epochu. Výstup je base64url bez výplně - neprůhledný řetězec.
      */
@@ -55,6 +63,27 @@ object RelayCrypto {
     fun inviteKeyBase64(inviteCode: String): String {
         val ikm = inviteCode.toByteArray(Charsets.UTF_8)
         return Base64Util.encode(hkdf(ikm, INFO_INVITE_KEY, 32))
+    }
+
+    /**
+     * ID RATCHET schránky pro daný sdílený klíč `M`, směr a **ratchet epochu**
+     * (u32 čítač, NE den). Dvoustupňové odvození: `seed = HKDF(M, …)`,
+     * `id = HKDF(seed, "dir=<dir>|epoch=<e>")`. Obě strany spočítají stejně
+     * (znají `M`), takže se najdou i s rozbitými hodinami (Návrh 2).
+     */
+    fun ratchetMailboxId(sharedKeyBase64: String, direction: Int, epoch: Int): String {
+        val seed = hkdf(Base64Util.decode(sharedKeyBase64), INFO_RATCHET_MAILBOX, 32)
+        return b64url(hkdf(seed, "dir=$direction|epoch=$epoch", MAILBOX_ID_BYTES))
+    }
+
+    /**
+     * ID beacon (rendezvous) schránky - stabilní záchytný bod z neměnného `M`,
+     * kam odesílatel při posunu epochy položí ukazatel aktuální epochy pro
+     * příjemce, který utekl za look-ahead okno (viz `RATCHET_WIRE.md`).
+     */
+    fun ratchetBeaconId(sharedKeyBase64: String, direction: Int): String {
+        val seed = hkdf(Base64Util.decode(sharedKeyBase64), INFO_RATCHET_MAILBOX, 32)
+        return b64url(hkdf(seed, "beacon|dir=$direction", MAILBOX_ID_BYTES))
     }
 
     // --- HKDF-SHA256 (RFC 5869) přes javax.crypto (bez závislostí navíc) ---

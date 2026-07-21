@@ -96,6 +96,18 @@ object WireCompat {
     const val WIRE_MAJOR: Int = 3
 
     /**
+     * Major RATCHET obálky (Double Ratchet, rotace klíčů). Vedle legacy majoru 3;
+     * má vlastní otevřenou hlavičku (epocha, pořadí, případně KEM materiál), aby
+     * šel vybrat klíč PŘED dešifrováním (viz `RATCHET_WIRE.md` a [ChatEnvelope]).
+     *
+     * Ve Fázi 2 je to zatím jen konstanta pro obálku a testy - ratchet se
+     * v živé rouře NEAKTIVUJE. Migrace (bump [MAX_READABLE_MAJOR] na 4,
+     * [acceptMajor] přijme {3,4}, dual-mode) přijde ve Fázi 3 s integrací do
+     * [RelaySync]. Do té doby zůstává [MAX_READABLE_MAJOR] == [WIRE_MAJOR].
+     */
+    const val WIRE_MAJOR_RATCHET: Int = 4
+
+    /**
      * **Zvyš, když přibude schopnost, ale zprávy chodí dál.** Starší strana
      * pořád všechno přečte, jen neumí novinku - uživateli se ukáže mírnější
      * hláška („některé funkce nemusí fungovat").
