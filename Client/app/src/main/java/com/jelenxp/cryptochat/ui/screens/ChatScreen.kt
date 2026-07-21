@@ -485,6 +485,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     ChatNotice(stringResource(R.string.chat_peer_minor_outdated))
                 WireCompat.Peer.MINOR_NEWER ->
                     ChatNotice(stringResource(R.string.chat_peer_minor_newer))
+                // Stejná generace, ale liší se schopnosti (nová funkce přes
+                // capability bit) - neutrální „verze se liší".
+                WireCompat.Peer.CAPS_DIFFER ->
+                    ChatNotice(stringResource(R.string.chat_peer_caps_differ))
                 WireCompat.Peer.OK -> {}
             }
 

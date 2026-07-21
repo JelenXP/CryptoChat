@@ -354,6 +354,7 @@
     <string name="chat_peer_major_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChatServer, aby si šlo zase psát.</string>
     <string name="chat_peer_minor_outdated">Protějšek má o něco starší verzi. Zprávy chodí, ale některé novější funkce nemusí fungovat.</string>
     <string name="chat_peer_minor_newer">Protějšek má novější verzi. Zprávy chodí, ale může používat funkce, které vaše aplikace zatím nezná.</string>
+    <string name="chat_peer_caps_differ">Vaše verze aplikace se liší. Zprávy chodí, ale některé funkce nemusí fungovat na obou stranách.</string>
     <string name="chat_preview_photo">📷 Fotka</string>
     <string name="content_desc_attach">Přidat fotku</string>
     <string name="content_desc_image">Fotka</string>

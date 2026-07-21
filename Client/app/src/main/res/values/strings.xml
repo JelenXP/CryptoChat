@@ -354,6 +354,7 @@
     <string name="chat_peer_major_newer">This contact is using a newer version of the app. Update CryptoChatServer to exchange messages again.</string>
     <string name="chat_peer_minor_outdated">This contact is using a slightly older version. Messages work, but some newer features may not.</string>
     <string name="chat_peer_minor_newer">This contact is using a newer version. Messages work, but they may use features your app doesn\'t know yet.</string>
+    <string name="chat_peer_caps_differ">Your app versions differ. Messages work, but some features may not work on both sides.</string>
     <string name="chat_preview_photo">📷 Photo</string>
     <string name="content_desc_attach">Attach photo</string>
     <string name="content_desc_image">Photo</string>

@@ -152,6 +152,15 @@ object WireCompat {
         /** Novější MINOR: protějšek umí něco navíc, co my ještě ne. */
         MINOR_NEWER,
 
+        /**
+         * Stejná generace (minor), ale liší se BITMAPA SCHOPNOSTÍ - jedna strana
+         * má funkci, kterou druhá ne (nové funkce už nezvyšují minor, viz
+         * capability systém). Neutrální „verze se liší": u odebrání funkce nemá
+         * směr (starší/novější) jednoznačný smysl, takže se jen řekne, že se
+         * verze rozcházejí a některé funkce nemusí fungovat na obou stranách.
+         */
+        CAPS_DIFFER,
+
         /** Starší MAJOR: zprávy si navzájem nepřečtete. Aktualizovat musí ON. */
         MAJOR_OUTDATED,
 
@@ -204,11 +213,31 @@ object WireCompat {
             v.major < WIRE_MAJOR -> Peer.MAJOR_OUTDATED
             v.major > WIRE_MAJOR -> Peer.MAJOR_NEWER
             v.minor == UNKNOWN -> Peer.OK
-            v.minor < WIRE_MINOR -> Peer.MINOR_OUTDATED
+            v.minor < WIRE_MINOR -> Peer.MINOR_OUTDATED  // předchází éře schopností
             v.minor > WIRE_MINOR -> Peer.MINOR_NEWER
+            // Stejná generace (minor): rozdíl ve FUNKCÍCH se pozná až podle
+            // bitmapy schopností - nové funkce už minor nezvyšují. Porovnává se,
+            // jen když protějšek schopnosti UŽ inzeroval (jinak by prázdná, zatím
+            // nezaznamenaná množina spustila falešný banner).
+            peerCapabilitiesKnown(context, contactId) &&
+                peerCapabilities(context, contactId) != WireExt.LOCAL_CAPABILITIES ->
+                Peer.CAPS_DIFFER
             else -> Peer.OK
         }
     }
+
+    /**
+     * Inzeroval už protějšek aspoň jednou bitmapu schopností? Přítomnost klíče
+     * znamená, že [notePeerCapabilities] dostalo neprázdné `caps != null`. Bez
+     * téhle pojistky by prázdná (zatím nezaznamenaná) množina vypadala jako
+     * „nemá žádné funkce" a spustila by falešný banner „verze se liší".
+     */
+    fun peerCapabilitiesKnown(context: Context, contactId: String): Boolean =
+        try {
+            prefs(context).contains(key(contactId, "caps"))
+        } catch (e: Exception) {
+            false
+        }
 
     /**
      * Umí protějšek schopnost, která vznikla v daném minoru? Používej při
@@ -340,7 +369,14 @@ object WireCompat {
      */
     fun notePeerCapabilities(context: Context, contactId: String, caps: Set<Int>?) {
         if (caps == null) return
-        if (peerCapabilities(context, contactId) == caps) return
+        // Přeskoč jen když UŽ MÁME zaznamenanou tutéž množinu. Když ještě nic
+        // zaznamenaného není, zapiš i PRÁZDNOU - jinak by se „protějšek inezeroval
+        // prázdné schopnosti" (empty) nedalo odlišit od „ještě neinzeroval"
+        // (taky empty default) a banner „verze se liší" by u takového protějšku
+        // nefungoval (viz peerCapabilitiesKnown).
+        if (peerCapabilitiesKnown(context, contactId) &&
+            peerCapabilities(context, contactId) == caps
+        ) return
         peerCaps[contactId] = caps
         try {
             prefs(context).edit()
