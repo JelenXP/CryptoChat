@@ -111,8 +111,35 @@ object ChatScreenLogic {
     fun filterMessages(messages: List<ChatMessage>, query: String): List<ChatMessage> {
         val q = query.trim()
         if (q.isEmpty()) return messages
-        val needle = q.lowercase()
-        return messages.filter { it.text.lowercase().contains(needle) }
+        // `filter` vrací každou zprávu nanejvýš jednou - i když v ní výraz je
+        // vícekrát, ve výsledcích se NEzdvojí (zvýrazní se pak oba výskyty).
+        // `ignoreCase` (ne lowercase()) drží stejnou logiku jako [highlightRanges].
+        return messages.filter { it.text.contains(q, ignoreCase = true) }
+    }
+
+    /**
+     * Rozsahy VŠECH výskytů [query] v [text] (bez ohledu na velikost písmen) -
+     * pro bílé podbarvení nalezené části v bublině při hledání. Vytaženo
+     * z composable schválně (pravidlo projektu): hledání všech výskytů je
+     * netriviální a musí jít otestovat.
+     *
+     * Rozsahy jsou nepřekrývající (po nálezu se posune za jeho konec) a indexy
+     * míří do PŮVODNÍHO textu - proto `indexOf(..., ignoreCase = true)`, ne
+     * `lowercase()` (to může u některých znaků změnit délku a rozhodit indexy).
+     * Prázdný dotaz nebo delší než text → prázdný seznam.
+     */
+    fun highlightRanges(text: String, query: String): List<IntRange> {
+        val q = query.trim()
+        if (q.isEmpty() || text.isEmpty()) return emptyList()
+        val ranges = ArrayList<IntRange>()
+        var from = 0
+        while (from <= text.length - q.length) {
+            val idx = text.indexOf(q, from, ignoreCase = true)
+            if (idx < 0) break
+            ranges.add(idx until idx + q.length)
+            from = idx + q.length
+        }
+        return ranges
     }
 
     /**

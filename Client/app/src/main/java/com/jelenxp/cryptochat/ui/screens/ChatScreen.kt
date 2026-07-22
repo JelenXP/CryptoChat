@@ -70,6 +70,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -593,6 +595,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             quoted = quote.message,
                             quotedMissing = quote.missing,
                             peerName = contact?.name.orEmpty(),
+                            // Při hledání podbarvit nalezenou část; jinak prázdné.
+                            highlightQuery = if (searchMode) searchQuery else "",
                             selected = m.id in selectedIds,
                             // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
                             showReactionPicker = selectedIds == setOf(m.id),
@@ -730,6 +734,7 @@ private fun MessageRow(
     quoted: ChatMessage?,
     quotedMissing: Boolean,
     peerName: String,
+    highlightQuery: String,
     selected: Boolean,
     showReactionPicker: Boolean,
     canReact: Boolean,
@@ -803,6 +808,7 @@ private fun MessageRow(
                 quoted = quoted,
                 quotedMissing = quotedMissing,
                 peerName = peerName,
+                highlightQuery = highlightQuery,
                 onRetry = onRetry,
                 onLongPress = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1102,6 +1108,7 @@ private fun MessageBubble(
     quoted: ChatMessage? = null,
     quotedMissing: Boolean = false,
     peerName: String = "",
+    highlightQuery: String = "",
     onRetry: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     onTap: (() -> Unit)? = null,
@@ -1155,7 +1162,11 @@ private fun MessageBubble(
             when (message.kind) {
                 ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
                 ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor)
-                else -> Text(message.text, color = textColor, style = MaterialTheme.typography.bodyLarge)
+                else -> HighlightedText(
+                    text = message.text,
+                    query = highlightQuery,
+                    color = textColor
+                )
             }
             Row(
                 modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
@@ -1184,6 +1195,30 @@ private fun MessageBubble(
     }
     ReactionChips(reactions = message.visibleReactions, outgoing = outgoing)
     }
+}
+
+/**
+ * Text bubliny s bílým podbarvením nalezené části při hledání. Když je [query]
+ * prázdný nebo se nic nenajde, kreslí se prostý text. Rozsahy VŠECH výskytů
+ * počítá čistá [ChatScreenLogic.highlightRanges] (otestovaná zvlášť) - takže
+ * jedna zpráva se ve výsledcích neopakuje, ale všechny výskyty v ní se podbarví.
+ *
+ * Podbarvení je bílé s tmavým písmem, aby bylo čitelné na JAKÉKOLI bublině
+ * (odchozí tyrkysová i příchozí šedá) i v tmavém motivu.
+ */
+@Composable
+private fun HighlightedText(text: String, query: String, color: Color) {
+    val ranges = if (query.isNotBlank()) ChatScreenLogic.highlightRanges(text, query) else emptyList()
+    if (ranges.isEmpty()) {
+        Text(text, color = color, style = MaterialTheme.typography.bodyLarge)
+        return
+    }
+    val annotated = buildAnnotatedString {
+        append(text)
+        val hl = SpanStyle(background = Color.White, color = Color.Black.copy(alpha = 0.87f))
+        ranges.forEach { r -> addStyle(hl, r.first, r.last + 1) }
+    }
+    Text(annotated, color = color, style = MaterialTheme.typography.bodyLarge)
 }
 
 /** Fotka v bublině - načte se ze souboru mimo hlavní vlákno a zobrazí dekódovaná. */
