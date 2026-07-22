@@ -174,13 +174,35 @@ class ChatRepository(
             else AppendResult.FAILED
         }
 
-    /** Nastaví stav existující zprávy (např. SENDING -> SENT/FAILED). */
+    /**
+     * Nastaví stav existující zprávy (např. SENDING -> SENT/FAILED).
+     *
+     * **DELIVERED se nedegraduje.** Je to terminální stav odchozí zprávy (druhá
+     * fajfka). Souběh je reálný: doručenku zpracuje poll smyčka služby
+     * ([RelaySync] na jednom vlákně) a `updateStatus(SENT/SENDING/FAILED)` volá
+     * `deliver`/`retry` z UI vlákna nad tímtéž kontaktem. Bez téhle ochrany by
+     * pozdější `updateStatus` mohl DELIVERED tiše přepsat na SENT - a to už by se
+     * nezhojilo, protože protějšek zprávu má a novou doručenku nepošle. Stejná
+     * „upgrade-only" logika jako v [markDelivered].
+     */
     fun updateStatus(contactId: String, messageId: String, status: ChatMessage.Status): Boolean =
         synchronized(lock) {
             val current = loadForWriteLocked(contactId) ?: return false
-            val updated = current.map { if (it.id == messageId) it.copy(status = status) else it }
+            val updated = current.map {
+                when {
+                    it.id != messageId -> it
+                    it.status == ChatMessage.Status.DELIVERED && isOutgoingDowngrade(status) -> it
+                    else -> it.copy(status = status)
+                }
+            }
             saveLocked(contactId, updated)
         }
+
+    /** Je [status] „horší" odchozí stav než DELIVERED (nesmí ho přebít)? */
+    private fun isOutgoingDowngrade(status: ChatMessage.Status): Boolean =
+        status == ChatMessage.Status.SENDING ||
+            status == ChatMessage.Status.SENT ||
+            status == ChatMessage.Status.FAILED
 
     /**
      * Označí NAŠI odchozí zprávu za doručenou na zařízení protějšku (druhá

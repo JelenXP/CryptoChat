@@ -207,6 +207,16 @@ object RelaySync {
         if (key.isNullOrBlank() || baseUrl.isBlank() || target == null) {
             return ReactionSend.FAILED
         }
+        // Validuj emoji DŘÍV, než ho uložíme lokálně. Sealovací cesta
+        // (`WireExt.buildReaction`) má `require(isValidEmoji)`, ale to hodí výjimku
+        // až po lokálním uložení - reakce by pak svítila u mě a protějšku nikdy
+        // nedorazila (žádná fronta ji nedošle = trvalý desync, třída nálezu
+        // v1.2-15). Fail-fast bez lokálního zápisu. (Zrušení `emoji==null`
+        // validaci nepotřebuje.)
+        if (emoji != null && !WireExt.isValidEmoji(emoji)) {
+            DiagnosticsLog.warn(TAG, "neplatné emoji reakce, neposílám")
+            return ReactionSend.FAILED
+        }
         val now = System.currentTimeMillis()
         val repo = repoFor(context)
         val stored = repo.setReaction(contact.id, wireRef, ChatMessage.REACTOR_ME, emoji, now)
@@ -1049,7 +1059,14 @@ object RelaySync {
                 // viz DoubleRatchet.recvKey). Drží se tu a commituje se níž (u
                 // Unsupported i v úspěšné větvi).
                 var pendingRatchetState: RatchetState? = null
-                val result: ChatEnvelope.Result = if (ratchet) {
+                // Dekóduj podle VLASTNÍHO majoru blobu, ne podle flagu fetche.
+                // Karanténa se přimíchává jen do PRVNÍHO fetche pollu, a ten je u
+                // ratchet kontaktu vždy ratchet=true; kdyby se řídilo flagem,
+                // LEGACY blob (major 3) odložený do karantény ještě před přechodem
+                // na ratchet by se navždy zkoušel jako ratchet (readRatchetHeader →
+                // null → Unreadable → zpátky do karantény) a po 30 dnech se ztratil.
+                val blobIsRatchet = WireCompat.readMajor(blob) == WireCompat.WIRE_MAJOR_RATCHET
+                val result: ChatEnvelope.Result = if (blobIsRatchet) {
                     val header = ChatEnvelope.readRatchetHeader(blob)
                     val st = if (header != null) ratchetStore.load(contact.id) else null
                     if (header == null || st == null) {

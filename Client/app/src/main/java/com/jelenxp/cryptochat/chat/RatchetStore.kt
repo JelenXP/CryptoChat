@@ -72,6 +72,17 @@ class RatchetStore(
     /**
      * Uloží stav. Vrací `false`, když šifrování/zápis selhal - viz invariant
      * „save před ACK" v docstringu třídy. Při selhání se cache ani disk nemění.
+     *
+     * **`commit()`, NE `apply()`** (jako [ChatRepository.saveLocked]): odesílací
+     * cesta posune `sendMsgNo` a hned pak odešle (advance-immediately). `apply()`
+     * je asynchronní - kdyby systém zabil proces (u FGS běžné, START_STICKY,
+     * OOM-kill) mezi úspěšným odesláním a doflushnutím, `sendMsgNo` by po restartu
+     * REGREDOVAL, a protože odeslaná zpráva už je durabilně SENT (commit v
+     * historii), `flushOutbox` ji nezopakuje → příští odeslání znovu použije týž
+     * `msgNo` → týž pár (AES-GCM klíč, IV) na JINÝ obsah = katastrofa nonce reuse.
+     * Ratchet leží ve VLASTNÍM prefs souboru, takže commit historie tenhle zápis
+     * neflushne - durabilní musí být sám. Běží na IO vlákně, takže synchronní
+     * zápis nikoho neblokuje.
      */
     fun save(contactId: String, state: RatchetState): Boolean = synchronized(lock) {
         val encrypted = try {
@@ -80,7 +91,15 @@ class RatchetStore(
             Log.e(TAG, "Uložení ratchet stavu selhalo (${e.javaClass.simpleName})")
             return false
         }
-        prefs.edit().putString(key(contactId), encrypted).apply()
+        val ok = try {
+            prefs.edit().putString(key(contactId), encrypted).commit()
+        } catch (e: Exception) {
+            Log.e(TAG, "Durabilní zápis ratchet stavu selhal (${e.javaClass.simpleName})")
+            false
+        }
+        // Cache měň JEN po úspěšném durabilním zápisu - jinak by v paměti zůstal
+        // stav, který na disku není, a po restartu by se řetěz rozešel.
+        if (!ok) return false
         cache[contactId] = state
         return true
     }
@@ -134,11 +153,11 @@ class RatchetStore(
             save(contactId, next)
         }
 
-    /** Zapomene stav kontaktu (při jeho smazání). */
+    /** Zapomene stav kontaktu (při jeho smazání). `commit()` jako [save]. */
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)
         try {
-            prefs.edit().remove(key(contactId)).apply()
+            prefs.edit().remove(key(contactId)).commit()
         } catch (e: Exception) {
             Log.w(TAG, "Úklid ratchet stavu selhal", e)
         }

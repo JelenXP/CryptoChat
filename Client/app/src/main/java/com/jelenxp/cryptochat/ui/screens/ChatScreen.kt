@@ -153,6 +153,20 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     LaunchedEffect(id) {
         mutedUntil = withContext(Dispatchers.IO) { MuteStore.mutedUntil(context, id) }
     }
+    // Časované ztlumení: `muted` se počítá z `mutedUntil` v kompozici, takže by se
+    // po vypršení samo nepřekreslilo (indikátor by dál svítil, i když notifikace
+    // už zase chodí - gate čte čas čerstvě). Naplánuj srovnání na okamžik vypršení.
+    // INDEFINITE ani null nic neplánují.
+    LaunchedEffect(mutedUntil) {
+        val until = mutedUntil ?: return@LaunchedEffect
+        if (until == MuteStore.INDEFINITE) return@LaunchedEffect
+        val remaining = until - System.currentTimeMillis()
+        if (remaining > 0) {
+            delay(remaining)
+            withContext(Dispatchers.IO) { MuteStore.unmute(context, id) }
+            mutedUntil = null
+        }
+    }
     val muted = isMutedAt(mutedUntil, System.currentTimeMillis())
     // Seznam k ZOBRAZENÍ: v hledání filtrovaný, jinak celá historie. Zdroj dat
     // (`messages`) i index citací zůstávají nad plnou historií - jen se jinak kreslí.
@@ -285,11 +299,19 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // klávesnice / náhledu odpovědi / víc řádků vstupu), přirolujeme na skutečné dno.
     // Když uživatel odscrolloval do historie (stickToBottom == false), NEVYSKAKUJEME
     // na konec - to byl přesně ten otravný skok při psaní odscrollované zprávy.
+    // `visibleMessages` je obyčejný `remember` (ne State delegát), takže by ho
+    // dlouhožijící korutina zachytila hodnotou z PRVNÍ kompozice - a to je prázdný
+    // seznam (historie se načítá až async). Efekt klíčovaný na stabilní `listState`
+    // se nerestartuje, takže by guard `isNotEmpty()` zůstal navždy false a
+    // přerolování dolů by se nikdy nespustilo. `rememberUpdatedState` drží stabilní
+    // referenci, jejíž `.value` se aktualizuje každou kompozicí (čte se živě).
+    val liveVisible by rememberUpdatedState(visibleMessages)
     LaunchedEffect(listState) {
         snapshotFlow { Triple(stickToBottom, atBottom, listState.isScrollInProgress) }
             .collect { (stick, bottom, scrolling) ->
-                if (stick && !bottom && !scrolling && visibleMessages.isNotEmpty()) {
-                    listState.scrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                val vm = liveVisible
+                if (stick && !bottom && !scrolling && vm.isNotEmpty()) {
+                    listState.scrollToItem(vm.lastIndex, SCROLL_BOTTOM_OFFSET)
                 }
             }
     }
@@ -467,7 +489,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     actions = {
                         // Odpověď a reakce dávají smysl jen u JEDNÉ zprávy.
                         if (single != null && canChat && single.wireRef != null) {
-                            IconButton(onClick = { replyTo = single; selectedIds = emptySet() }) {
+                            IconButton(onClick = {
+                                replyTo = single; selectedIds = emptySet()
+                                // Odpověď potřebuje vstupní řádek, který je při hledání
+                                // skrytý - tak hledání zavři, ať se náhled i pole ukážou.
+                                searchMode = false; searchQuery = ""
+                            }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.Reply,
                                     contentDescription = stringResource(R.string.chat_action_reply)
@@ -1254,7 +1281,7 @@ private fun MessageBubble(
             )
             when (message.kind) {
                 ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
-                ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor)
+                ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor, highlightQuery = highlightQuery)
                 else -> HighlightedText(
                     text = message.text,
                     query = highlightQuery,
@@ -1300,10 +1327,17 @@ private fun MessageBubble(
  * (odchozí tyrkysová i příchozí šedá) i v tmavém motivu.
  */
 @Composable
-private fun HighlightedText(text: String, query: String, color: Color) {
+private fun HighlightedText(
+    text: String,
+    query: String,
+    color: Color,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip
+) {
     val ranges = if (query.isNotBlank()) ChatScreenLogic.highlightRanges(text, query) else emptyList()
     if (ranges.isEmpty()) {
-        Text(text, color = color, style = MaterialTheme.typography.bodyLarge)
+        Text(text, color = color, style = style, maxLines = maxLines, overflow = overflow)
         return
     }
     val annotated = buildAnnotatedString {
@@ -1311,7 +1345,7 @@ private fun HighlightedText(text: String, query: String, color: Color) {
         val hl = SpanStyle(background = Color.White, color = Color.Black.copy(alpha = 0.87f))
         ranges.forEach { r -> addStyle(hl, r.first, r.last + 1) }
     }
-    Text(annotated, color = color, style = MaterialTheme.typography.bodyLarge)
+    Text(annotated, color = color, style = style, maxLines = maxLines, overflow = overflow)
 }
 
 /** Fotka v bublině - načte se ze souboru mimo hlavní vlákno a zobrazí dekódovaná. */
@@ -1378,7 +1412,7 @@ private fun ChatImage(path: String?) {
  * přenosu. Když je soubor kompletní, klepnutím se otevře v systémové aplikaci.
  */
 @Composable
-private fun FileBubble(message: ChatMessage, textColor: Color) {
+private fun FileBubble(message: ChatMessage, textColor: Color, highlightQuery: String = "") {
     val context = LocalContext.current
     val progress = MediaTransfers.progress[message.id]
     val path = message.mediaPath
@@ -1402,8 +1436,11 @@ private fun FileBubble(message: ChatMessage, textColor: Color) {
             modifier = Modifier.size(30.dp)
         )
         Column {
-            Text(
+            // Při hledání podbarvit i nalezenou část v NÁZVU souboru (filtr
+            // matchuje i názvy) - ať sedí „co se najde" s „co se zvýrazní".
+            HighlightedText(
                 text = message.text,
+                query = highlightQuery,
                 color = textColor,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2,

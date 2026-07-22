@@ -67,12 +67,12 @@ fun EmojiPickerSheet(onPick: (String) -> Unit, onDismiss: () -> Unit) {
 private fun EmojiPickerContent(onPick: (String) -> Unit) {
     val categories = EmojiData.CATEGORIES
     val items = remember(categories) { flatten(categories) }
-    val headerIndices = remember(categories) { headerIndices(categories) }
+    val headerIndices = remember(categories) { emojiHeaderIndices(categories) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     // Aktivní kategorie podle prvního viditelného prvku (pro zvýraznění v liště).
     val active by remember {
-        derivedStateOf { categoryForIndex(gridState.firstVisibleItemIndex, headerIndices) }
+        derivedStateOf { emojiCategoryForIndex(gridState.firstVisibleItemIndex, headerIndices) }
     }
 
     Column(
@@ -149,16 +149,22 @@ private fun flatten(cats: List<EmojiData.Category>): List<EmojiItem> = buildList
     }
 }
 
-/** Index hlavičky každé kategorie v ploché listině z [flatten]. */
-private fun headerIndices(cats: List<EmojiData.Category>): List<Int> {
+/**
+ * Index hlavičky každé kategorie v ploché listině z [flatten]. `internal` kvůli
+ * testu (netriviální aritmetika nad indexy - pravidlo 2).
+ */
+internal fun emojiHeaderIndices(cats: List<EmojiData.Category>): List<Int> {
     val res = ArrayList<Int>(cats.size)
     var idx = 0
     cats.forEach { c -> res.add(idx); idx += 1 + c.emojis.size }
     return res
 }
 
-/** Poslední kategorie, jejíž hlavička je ještě nad [firstVisible] prvkem. */
-private fun categoryForIndex(firstVisible: Int, headerIndices: List<Int>): Int {
+/**
+ * Poslední kategorie, jejíž hlavička je ještě nad [firstVisible] prvkem (pro
+ * zvýraznění aktivní v liště). `internal` kvůli testu na off-by-one/hranice.
+ */
+internal fun emojiCategoryForIndex(firstVisible: Int, headerIndices: List<Int>): Int {
     var cat = 0
     for (i in headerIndices.indices) if (headerIndices[i] <= firstVisible) cat = i
     return cat

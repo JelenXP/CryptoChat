@@ -66,6 +66,15 @@ object MuteStore {
 
     /** Úklid při smazání kontaktu. */
     fun clear(context: Context, contactId: String) = unmute(context, contactId)
+
+    /**
+     * Čas (epoch ms), do kterého ztlumit: `durationMs == null` → [INDEFINITE],
+     * jinak `now + durationMs`. Čistá funkce - test ověří invariant „každá volba
+     * dá `now < until <= INDEFINITE`" (guard proti budoucí extrémní volbě, která
+     * by přetekla do záporna = trvale neztlumeno, nebo omylem trefila INDEFINITE).
+     */
+    fun untilFor(now: Long, durationMs: Long?): Long =
+        if (durationMs == null) INDEFINITE else now + durationMs
 }
 
 /**

@@ -24,6 +24,17 @@ object MediaTransfers {
     private const val OUT_DIR = "chat_media"
     private const val META = "meta.json"
 
+    /**
+     * Tvrdý strop počtu kousků jednoho přenosu. Reálný soubor má nejvýš
+     * `ceil(ChatMediaStore.MAX_FILE_BYTES / RelaySync.CHUNK_SIZE)` ≈ 15 kousků
+     * (25 MB / 1,8 MB), takže 64 je pohodlná rezerva. Slouží jako strop i BEZ
+     * manifestu: bez něj by nepřátelský protějšek (zná `fileId`) mohl
+     * předmanifestovými kousky s obřím indexem nafouknout `receivedCount` a
+     * vyrobit spoustu souborů. `ChatMediaStoreLimitTest` hlídá, že strop skutečnou
+     * mez pokrývá. `internal` kvůli testu.
+     */
+    internal const val MAX_CHUNKS = 64
+
     private val _progress = mutableStateMapOf<String, Float>()
     val progress: Map<String, Float> get() = _progress
 
@@ -93,6 +104,12 @@ object MediaTransfers {
             // počet přijatých a spustil předčasné „hotovo" - přenos by pak
             // navždy uvázl ve stavu FAILED. Zahodit ho je v pořádku (je vadný),
             // proto `written = true` - není co odkládat.
+            //
+            // Tvrdý strop [MAX_CHUNKS] platí i BEZ manifestu (`total <= 0`): kdyby
+            // kousky dorazily před manifestem, guard `index >= total` by neplatil
+            // (total je -1), takže bez tohohle by šlo předmanifestovými kousky
+            // s obřím indexem nafouknout receivedCount a vyrobit spoustu souborů.
+            if (index < 0 || index >= MAX_CHUNKS) return ChunkResult(written = true, complete = false)
             if (total > 0 && index >= total) return ChunkResult(written = true, complete = false)
             File(d, index.toString()).writeBytes(bytes)
             ChunkResult(

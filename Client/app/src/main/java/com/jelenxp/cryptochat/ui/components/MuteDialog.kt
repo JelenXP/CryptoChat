@@ -21,7 +21,7 @@ private const val HOUR_MS = 3_600_000L
  * Volby délky ztlumení. `durationMs == null` znamená [MuteStore.INDEFINITE]
  * („dokud to sám nezruším"). Sdílené mezi konverzací a detailem kontaktu.
  */
-private val MUTE_OPTIONS: List<Pair<Int, Long?>> = listOf(
+internal val MUTE_OPTIONS: List<Pair<Int, Long?>> = listOf(
     R.string.mute_1h to HOUR_MS,
     R.string.mute_8h to 8 * HOUR_MS,
     R.string.mute_24h to 24 * HOUR_MS,
@@ -48,9 +48,7 @@ fun MuteDurationDialog(onPick: (Long) -> Unit, onDismiss: () -> Unit) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                val until = if (durationMs == null) MuteStore.INDEFINITE
-                                else System.currentTimeMillis() + durationMs
-                                onPick(until)
+                                onPick(MuteStore.untilFor(System.currentTimeMillis(), durationMs))
                             }
                             .padding(vertical = 14.dp)
                     )
