@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Save
@@ -67,14 +69,17 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.DoubleRatchet
+import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RatchetState
 import com.jelenxp.cryptochat.chat.RatchetStore
+import com.jelenxp.cryptochat.chat.isMutedAt
 import com.jelenxp.cryptochat.crypto.CryptoManager
 import com.jelenxp.cryptochat.crypto.FileStreamCipher
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
+import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.ui.components.SegmentedControl
 import com.jelenxp.cryptochat.ui.theme.MonoStyle
 import com.jelenxp.cryptochat.ui.util.AvatarStore
@@ -136,6 +141,11 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
     // --- Stav dialogů / menu ---
     var menuOpen by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showMuteDialog by remember { mutableStateOf(false) }
+    // Ztlumení oznámení kontaktu (čte se mimo kompozici).
+    var mutedUntil by remember(id) { mutableStateOf<Long?>(null) }
+    LaunchedEffect(id) { mutedUntil = withContext(Dispatchers.IO) { MuteStore.mutedUntil(context, id) } }
+    val muted = isMutedAt(mutedUntil, System.currentTimeMillis())
     var showEditDialog by remember { mutableStateOf(false) }
     var showAvatarSheet by remember { mutableStateOf(false) }
     var editedName by remember(contact?.name) { mutableStateOf(contact?.name ?: "") }
@@ -306,6 +316,28 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                             text = { Text(stringResource(R.string.menu_edit_profile)) },
                             leadingIcon = { Icon(Icons.Default.Edit, null) },
                             onClick = { menuOpen = false; editedName = contact.name; showEditDialog = true }
+                        )
+                        // Ztlumení oznámení - položka se přepne na „Zrušit ztlumení",
+                        // když je kontakt ztlumený, a klepnutí ho rovnou odztlumí.
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (muted) R.string.menu_unmute else R.string.menu_mute)) },
+                            leadingIcon = {
+                                Icon(
+                                    if (muted) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                                    null
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                if (muted) {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { MuteStore.unmute(context, id) }
+                                        mutedUntil = null
+                                    }
+                                } else {
+                                    showMuteDialog = true
+                                }
+                            }
                         )
                         if (contact.keyBase64 != null) {
                             DropdownMenuItem(
@@ -597,6 +629,19 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                 }) { Text(stringResource(R.string.btn_delete_confirm), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text(stringResource(R.string.btn_cancel)) } }
+        )
+    }
+
+    if (showMuteDialog) {
+        MuteDurationDialog(
+            onPick = { until ->
+                showMuteDialog = false
+                scope.launch {
+                    withContext(Dispatchers.IO) { MuteStore.mute(context, id, until) }
+                    mutedUntil = until
+                }
+            },
+            onDismiss = { showMuteDialog = false }
         )
     }
 }

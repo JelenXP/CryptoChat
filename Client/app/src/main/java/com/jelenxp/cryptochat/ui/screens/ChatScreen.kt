@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -36,6 +37,8 @@ import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Schedule
@@ -91,12 +94,16 @@ import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.MediaTransfers
+import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RelaySync
+import com.jelenxp.cryptochat.chat.isMutedAt
+import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.TorController
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
+import com.jelenxp.cryptochat.ui.emoji.EmojiPickerSheet
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -138,6 +145,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // ukazuje jen shodné zprávy. Filtr je čistá funkce v ChatScreenLogic.
     var searchMode by remember(id) { mutableStateOf(false) }
     var searchQuery by remember(id) { mutableStateOf("") }
+
+    // Ztlumení oznámení tohoto kontaktu. `mutedUntil` čti mimo kompozici
+    // (SharedPreferences); aktualizuje se lokálně při (od)ztlumení.
+    var mutedUntil by remember(id) { mutableStateOf<Long?>(null) }
+    var showMuteDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        mutedUntil = withContext(Dispatchers.IO) { MuteStore.mutedUntil(context, id) }
+    }
+    val muted = isMutedAt(mutedUntil, System.currentTimeMillis())
     // Seznam k ZOBRAZENÍ: v hledání filtrovaný, jinak celá historie. Zdroj dat
     // (`messages`) i index citací zůstávají nad plnou historií - jen se jinak kreslí.
     val visibleMessages = remember(messages, searchMode, searchQuery) {
@@ -150,6 +166,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var selectedIds by remember(id) { mutableStateOf<Set<String>>(emptySet()) }
     var replyTo by remember(id) { mutableStateOf<ChatMessage?>(null) }
     var pendingDelete by remember(id) { mutableStateOf<List<ChatMessage>>(emptyList()) }
+    // Zpráva, pro kterou je otevřený plný emoji picker (z „+" v paletě reakcí).
+    var emojiPickerFor by remember(id) { mutableStateOf<ChatMessage?>(null) }
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
@@ -512,6 +530,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             ContactAvatar(name = contact.name, avatarPath = contact.avatarPath, size = 32.dp)
                         }
                         Text(contact?.name ?: stringResource(R.string.chat_title_fallback), maxLines = 1)
+                        // Malý indikátor ztlumení vedle jména.
+                        if (muted) {
+                            Icon(
+                                Icons.Default.NotificationsOff,
+                                contentDescription = stringResource(R.string.muted_content_desc),
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
@@ -530,6 +557,28 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             text = { Text(stringResource(R.string.chat_menu_search)) },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                             onClick = { menuOpen = false; searchQuery = ""; searchMode = true }
+                        )
+                        // Ztlumení oznámení - uprostřed. Když je ztlumeno, položka
+                        // se přepne na „Zrušit ztlumení" a klepnutí rovnou odztlumí.
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (muted) R.string.menu_unmute else R.string.menu_mute)) },
+                            leadingIcon = {
+                                Icon(
+                                    if (muted) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                if (muted) {
+                                    scope.launch {
+                                        withContext(Dispatchers.IO) { MuteStore.unmute(context, id) }
+                                        mutedUntil = null
+                                    }
+                                } else {
+                                    showMuteDialog = true
+                                }
+                            }
                         )
                         // Profil kontaktu (detail + klíč) - dole, s ikonou ozubeného kola.
                         DropdownMenuItem(
@@ -605,6 +654,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             onSelect = { selectedIds = selectedIds + m.id },
                             onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
                             onReact = { emoji -> react(m, emoji) },
+                            onMore = { emojiPickerFor = m; selectedIds = emptySet() },
                             onDoubleTapReact = { doubleTapReact(m) },
                             onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
                             onRetry = { retry(m) }
@@ -684,6 +734,28 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         }
     }
 
+    // Plný emoji picker pro reakci (otevřený z „+" v paletě).
+    emojiPickerFor?.let { target ->
+        EmojiPickerSheet(
+            onPick = { emoji -> applyReaction(target, emoji); emojiPickerFor = null },
+            onDismiss = { emojiPickerFor = null }
+        )
+    }
+
+    // Výběr délky ztlumení.
+    if (showMuteDialog) {
+        MuteDurationDialog(
+            onPick = { until ->
+                showMuteDialog = false
+                scope.launch {
+                    withContext(Dispatchers.IO) { MuteStore.mute(context, id, until) }
+                    mutedUntil = until
+                }
+            },
+            onDismiss = { showMuteDialog = false }
+        )
+    }
+
     // Mazání se potvrzuje: je nevratné a u přijaté zprávy ji relay už smazal,
     // takže se nedá získat zpátky.
     if (pendingDelete.isNotEmpty()) {
@@ -742,6 +814,7 @@ private fun MessageRow(
     onSelect: () -> Unit,
     onTapInSelection: () -> Unit,
     onReact: (String) -> Unit,
+    onMore: () -> Unit,
     onDoubleTapReact: () -> Unit,
     onReplySwipe: () -> Unit,
     onRetry: () -> Unit
@@ -850,7 +923,8 @@ private fun MessageRow(
                     ) {
                         ReactionPicker(
                             mine = message.reactionOf(ChatMessage.REACTOR_ME),
-                            onPick = onReact
+                            onPick = onReact,
+                            onMore = onMore
                         )
                     }
                 }
@@ -874,9 +948,12 @@ private class AboveAnchorPosition(private val alignEnd: Boolean) : PopupPosition
     }
 }
 
-/** Vodorovný pruh rychlých reakcí. Vybraná je zvýrazněná. */
+/**
+ * Vodorovný pruh rychlých reakcí. Vybraná je zvýrazněná; na konci „+" otevře
+ * plný emoji picker ([onMore]).
+ */
 @Composable
-private fun ReactionPicker(mine: String?, onPick: (String) -> Unit) {
+private fun ReactionPicker(mine: String?, onPick: (String) -> Unit, onMore: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(24.dp),
         tonalElevation = 3.dp,
@@ -903,6 +980,22 @@ private fun ReactionPicker(mine: String?, onPick: (String) -> Unit) {
                 ) {
                     Text(emoji, style = MaterialTheme.typography.titleLarge)
                 }
+            }
+            // „+" na konec pruhu - otevře plný emoji picker.
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onMore() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = stringResource(R.string.reaction_more),
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

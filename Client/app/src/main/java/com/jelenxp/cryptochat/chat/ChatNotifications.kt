@@ -130,6 +130,9 @@ object ChatNotifications {
     ) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled() || unseen.isEmpty()) return
+        // Ztlumený kontakt: zprávu jsme přijali a započítali jako nepřečtenou,
+        // jen se pro ni nezobrazí notifikace (dokud ztlumení trvá).
+        if (MuteStore.isMuted(context, contactId)) return
         val ctx = local(context)
         val open = PendingIntent.getActivity(
             context, contactId.hashCode(),
