@@ -141,6 +141,22 @@ class RatchetStore(
     }
 
     /**
+     * Posune JEN [RatchetState.backfillFloor] (podlaha backfillu, nález v2.0-27
+     * reziduum). Sahá pouze na tohle jedno pole - `copy` zachová obě půlky stavu,
+     * takže souběžný posun odesílání/příjmu nepřepíše. **Monotónní**: nikdy
+     * neregreduje (podlaha se smí jen zvedat, nebo poprvé inicializovat z `-1`).
+     * `commit()` jako [save] - musí přežít restart, jinak by se ztratil interval
+     * přeskočených epoch. Best-effort (false = zápis selhal, zkusí se příště).
+     */
+    fun updateBackfillFloor(contactId: String, floor: Int): Boolean = synchronized(lock) {
+        val cur = load(contactId) ?: return false
+        // Inicializovaná (>=0) a stejně vysoko/výš → no-op (nikdy neregreduj).
+        // Neinicializovaná (-1) se nastaví vždy (i na 0).
+        if (cur.backfillFloor >= 0 && cur.backfillFloor >= floor) return true
+        save(contactId, cur.copy(backfillFloor = floor))
+    }
+
+    /**
      * Atomický read-modify-write pod companion zámkem: načte stav, [transform] ho
      * změní, uloží. Pro operace, které se dotýkají OBOU půlek naráz (KEM re-key,
      * handshake stav) - slučovací saveSend/saveRecv by nestačily. Vrací false, když

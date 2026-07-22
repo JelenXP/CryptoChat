@@ -107,7 +107,25 @@ data class RatchetState(
      * ho na nové generaci resetuje na 0. Není v [withSendFrom]/[withRecvFrom] -
      * mění ho jen re-key přes plný zámek, takže ho slučovací uložení nepřepíše.
      */
-    val rekeyMarker: Int = 0
+    val rekeyMarker: Int = 0,
+    /**
+     * **Podlaha backfillu** (nález v2.0-27 reziduum): nejnižší RATCHET přijímací
+     * epocha, jejíž schránka JEŠTĚ NENÍ prokazatelně vyprázdněná. Vše pod ní je
+     * dočtené; interval `[backfillFloor, recvEpoch)` musí příjem v každém pollu
+     * dočíst, dokud se schránky nevyprázdní. Je DURABILNÍ a NEZÁVISLÁ na
+     * [recvEpoch]: `recvEpoch` posune už samo dešifrování zprávy z vyšší epochy
+     * (přeskočí nižší), ale podlaha se posune AŽ když se schránka nižší epochy
+     * fakt vyzvedne a odACKuje. Bez toho by jediný přechodný neúspěch backfill
+     * GETu (rozpadlý Tor okruh) nižší epochu natrvalo ztratil - `recvEpoch` už
+     * je posunutý a žádný budoucí poll by tu schránku nedočetl.
+     *
+     * `-1` = neinicializováno (stavy z doby před tímto polem). Za běhu se pak
+     * bere jako `recvEpoch` (= „vše až po recvEpoch považuj za dočtené") a při
+     * prvním pollu se durabilně připne, viz [DoubleRatchet]/`RelaySync.poll`.
+     * Není ve [withSendFrom]/[withRecvFrom] - obě půlky ho přes `copy` zachovají,
+     * mění ho jen cílený `RatchetStore.updateBackfillFloor` pod plným zámkem.
+     */
+    val backfillFloor: Int = -1
 ) {
 
     /** Fáze re-key handshake ([rekeyStage]). */
@@ -192,6 +210,8 @@ data class RatchetState(
         if (rekeyStage != 0) put("rkst", rekeyStage)
         if (rekeyMarker != 0) put("rkm", rekeyMarker)
         rekeyConfirmB64?.let { put("rkcf", it) }
+        // Jen když je inicializovaná - starým stavům (bf<0) se nic nepřidá.
+        if (backfillFloor >= 0) put("bf", backfillFloor)
     }
 
     companion object {
@@ -246,7 +266,9 @@ data class RatchetState(
                 rekeySsB64 = o.optStringOrNull("rkss"),
                 rekeyStage = o.optInt("rkst", 0),
                 rekeyMarker = o.optInt("rkm", 0),
-                rekeyConfirmB64 = o.optStringOrNull("rkcf")
+                rekeyConfirmB64 = o.optStringOrNull("rkcf"),
+                // Chybí (starý stav) → -1 = neinicializováno (za běhu = recvEpoch).
+                backfillFloor = o.optInt("bf", -1)
             )
         }
     }

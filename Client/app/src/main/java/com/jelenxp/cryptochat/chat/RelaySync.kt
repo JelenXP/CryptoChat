@@ -923,6 +923,11 @@ object RelaySync {
         var failed = false
         // Server aspoň jednou odpověděl (get prošel) - pro indikátor dostupnosti.
         var reachable = false
+        // Vztahuje se k POSLEDNÍMU [fetch]: schránka byla prokazatelně vyprázdněná
+        // (GET prošel a celá dávka bezpečně uložená/odACKovaná, nebo prázdná).
+        // Jen tehdy smí backfill posunout podlahu přes danou epochu. Reset uvnitř
+        // [fetch] na začátku, aby jeden neúspěch nezůstal viset do dalšího čtení.
+        var lastFetchDrained = false
         // Karanténu procházej jen jednou za poll (ne v každém fetchi zvlášť).
         var retryQuarantine = true
         // ID zpráv (wireRef), které jsme v tomhle pollu vyzvedli a uložili -
@@ -947,6 +952,7 @@ object RelaySync {
             // ní). Reset na začátku, ať prev-epoch get, který uspěl, nemaskuje
             // následné síťové selhání aktuální epochy.
             reachable = false
+            lastFetchDrained = false
             val fetched = try {
                 transport.get(baseUrl, mailbox, waitSeconds)
             } catch (ex: Exception) {
@@ -1410,11 +1416,17 @@ object RelaySync {
             // Potvrzení POSÍLÁME JEN když je celá dávka bezpečně uložená nebo
             // odložená v karanténě - teprve tehdy ji server smí zahodit. Jinak
             // ať dorazí znovu; duplicitu odfiltruje ReplayGuard.
+            // `lastFetchDrained` = schránka je vyprázdněná (relay ji smaže) →
+            // backfill smí posunout podlahu přes tuhle epochu.
             if (fetched.ackSeq >= 0 && allSafe) {
-                if (!transport.ack(baseUrl, mailbox, fetched.ackSeq)) failed = true
+                if (transport.ack(baseUrl, mailbox, fetched.ackSeq)) lastFetchDrained = true
+                else failed = true
             } else if (!allSafe) {
                 DiagnosticsLog.warn(TAG, "dávka není celá uložená, potvrzení se neposílá")
                 failed = true
+            } else {
+                // allSafe && ackSeq < 0 → nic k potvrzení, schránka byla prázdná.
+                lastFetchDrained = true
             }
             if (n > 0) DiagnosticsLog.log(TAG, "přijato $n nových zpráv")
             return n
@@ -1427,25 +1439,50 @@ object RelaySync {
             var received = 0
             val re = ratchetState.recvEpoch
             val now = System.currentTimeMillis()
+            // Migrace stavů z doby před polem `backfillFloor` (bf<0): připni podlahu
+            // na aktuální recvEpoch DURABILNĚ, JEŠTĚ než sousední fetch recvEpoch
+            // posune - jinak by restart mezi posunem a backfillem podlahu (a s ní
+            // celý interval přeskočených epoch) ztratil. Nové stavy mají bf>=0
+            // (bootstrap = 0), takže tenhle zápis proběhne max jednou za život stavu.
+            if (ratchetState.backfillFloor < 0) {
+                ratchetStore.updateBackfillFloor(contact.id, re)
+            }
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
             // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, re + 1), 0, ratchet = true)
-            // Sousední epocha re+1 mohla posunout recvEpoch PŘES epochu re, kterou
-            // jsme ještě nestihli vyzvednout (protějšek přešel hranici epochy, zatímco
-            // příjemce byl pozadu). `recvKey` uložil skipped klíče pro přeskočené msgNo,
-            // ale BLOBY nižších epoch pořád leží na relayi - a protože recvEpoch
-            // monotónně roste, schránka re by se už nikdy nevyzvedla → po TTL relaye
-            // ztráta až celé epochy (do 32) zpráv, na které máme klíče (nález v2.0-27,
-            // porušení RATCHET_WIRE.md §6 „pollni okno e_recv..e_recv+W"). Dočti
-            // přeskočené epochy re..recvEpoch - jejich bloby se rozšifrují z uložených
-            // skipped klíčů. Zastropováno LOOKAHEAD proti podvržené vzdálené epoše.
+            // BACKFILL přeskočených epoch (nález v2.0-27 + jeho reziduum). Sousední
+            // fetch re+1 mohl posunout recvEpoch PŘES epochu re, jejíž BLOBY (na které
+            // máme skipped klíče) pořád leží na relayi. `recvKey` posune recvEpoch už
+            // samotným dešifrováním vyšší epochy, ale schránky nižších epoch se musí
+            // teprve dočíst - jinak se po TTL relaye (24 h) ztratí až celá epocha (do
+            // 32) zpráv (porušení RATCHET_WIRE.md §6 „pollni okno e_recv..e_recv+W").
+            //
+            // Podlaha `backfillFloor` je DURABILNÍ a NEZÁVISLÁ na recvEpoch: posune se
+            // teprve, když se schránka epochy prokazatelně vyprázdní (GET prošel a celá
+            // dávka odACKovaná, `lastFetchDrained`). Když backfill GET přechodně selže
+            // (rozpadlý Tor okruh), podlaha zůstane a příští poll (i po restartu) to
+            // zkusí znovu → reziduum v2.0-27: jediný neúspěšný pokus epochu neztratí.
+            // Zastropováno LOOKAHEAD (dočte se max tolik epoch za poll; skipped klíče
+            // sahají 1000 msgNo >> LOOKAHEAD*EPOCH_MSGS, takže bloby jdou dešifrovat).
             run {
-                val advancedTo = ratchetStore.load(contact.id)?.recvEpoch ?: re
-                val end = minOf(advancedTo, re + DoubleRatchet.LOOKAHEAD)
-                var e = re
-                while (e < end) {
-                    received += fetch(RelayCrypto.ratchetMailboxId(key, dir, e), 0, ratchet = true)
-                    e++
+                val cur = ratchetStore.load(contact.id) ?: ratchetState
+                val recvNow = cur.recvEpoch
+                // bf<0 (migrace ještě nezapsala / selhala) → ber re jako podlahu.
+                val floor = cur.backfillFloor.let { if (it < 0) re else minOf(it, recvNow) }
+                if (floor < recvNow) {
+                    val end = minOf(recvNow, floor + DoubleRatchet.LOOKAHEAD)
+                    var newFloor = floor
+                    var contiguous = true
+                    var e = floor
+                    while (e < end) {
+                        received += fetch(RelayCrypto.ratchetMailboxId(key, dir, e), 0, ratchet = true)
+                        // Podlahu posuň jen přes SOUVISLE vyprázdněné epochy odspodu:
+                        // první nevyprázdněná (GET/uložení selhalo) ji zastaví, ať se
+                        // výš ležící díra příště dočte znovu.
+                        if (contiguous && lastFetchDrained) newFloor = e + 1 else contiguous = false
+                        e++
+                    }
+                    if (newFloor > floor) ratchetStore.updateBackfillFloor(contact.id, newFloor)
                 }
             }
             // Legacy grace (zprávy odeslané ještě PŘED přepnutím protějšku na ratchet):

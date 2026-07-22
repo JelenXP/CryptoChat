@@ -63,7 +63,9 @@ object DoubleRatchet {
             peerKemPublicB64 = null,
             skipped = emptyList(),
             inboundMarker = 0, pointerMarker = 0,
-            mode = RatchetState.Mode.DUAL
+            mode = RatchetState.Mode.DUAL,
+            // Čerstvý stav: recvEpoch=0, nic přeskočeného → podlaha = 0.
+            backfillFloor = 0
         )
     }
 
