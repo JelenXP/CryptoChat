@@ -736,7 +736,18 @@ object RelaySync {
         if (baseUrl.isBlank()) return
         val targets = refs.mapNotNull { WireExt.fromHex(it) }
         if (targets.isEmpty()) return
-        val ratchet = shouldSendRatchet(context, contact)
+        // Doručenky posílej LEGACY, dokud protějšek PROKAZATELNĚ nečte ratchet (od
+        // něj dorazil ratchet blob → recvMsgNo/recvEpoch/generation > 0). Protějšek se
+        // bootstrapne teprve když se z NAŠÍ zprávy dozví náš maxMajor≥4; doručenky
+        // jsou časté a malé, takže spolehlivě donesou maxMajor ještě nebootstrapnutému
+        // protějšku - i kdyby jedna při přechodu selhala (nález v2.0-28). Bez toho by se
+        // u „čistého příjemce" po jediné selhané přechodové doručence přepnulo na
+        // ratchet-only a příjem protějška by se jednosměrně rozpadl. Jakmile od protějška
+        // dorazí ratchet blob (prokázal, že čte ratchet), přepni doručenky na ratchet.
+        val peerReadsRatchet = RatchetStore(context, storageCrypto).load(contact.id)?.let {
+            it.recvMsgNo > 0 || it.recvEpoch > 0 || it.generation > 0
+        } ?: false
+        val ratchet = shouldSendRatchet(context, contact) && peerReadsRatchet
         for (chunk in targets.chunked(WireExt.MAX_DELIVERY_TARGETS)) {
             val now = System.currentTimeMillis()
             val delivered = try {
@@ -1419,6 +1430,24 @@ object RelaySync {
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
             // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, re + 1), 0, ratchet = true)
+            // Sousední epocha re+1 mohla posunout recvEpoch PŘES epochu re, kterou
+            // jsme ještě nestihli vyzvednout (protějšek přešel hranici epochy, zatímco
+            // příjemce byl pozadu). `recvKey` uložil skipped klíče pro přeskočené msgNo,
+            // ale BLOBY nižších epoch pořád leží na relayi - a protože recvEpoch
+            // monotónně roste, schránka re by se už nikdy nevyzvedla → po TTL relaye
+            // ztráta až celé epochy (do 32) zpráv, na které máme klíče (nález v2.0-27,
+            // porušení RATCHET_WIRE.md §6 „pollni okno e_recv..e_recv+W"). Dočti
+            // přeskočené epochy re..recvEpoch - jejich bloby se rozšifrují z uložených
+            // skipped klíčů. Zastropováno LOOKAHEAD proti podvržené vzdálené epoše.
+            run {
+                val advancedTo = ratchetStore.load(contact.id)?.recvEpoch ?: re
+                val end = minOf(advancedTo, re + DoubleRatchet.LOOKAHEAD)
+                var e = re
+                while (e < end) {
+                    received += fetch(RelayCrypto.ratchetMailboxId(key, dir, e), 0, ratchet = true)
+                    e++
+                }
+            }
             // Legacy grace (zprávy odeslané ještě PŘED přepnutím protějšku na ratchet):
             // po startu a pak už jen ŘÍDCE (ne každý cyklus). Po přepnutí je legacy
             // schránka trvale prázdná, tak zbytečně neplatíme onion GET každých 60 s -

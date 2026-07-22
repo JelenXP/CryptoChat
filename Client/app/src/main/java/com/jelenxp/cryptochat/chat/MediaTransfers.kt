@@ -30,8 +30,8 @@ object MediaTransfers {
      * (25 MB / 1,8 MB), takže 64 je pohodlná rezerva. Slouží jako strop i BEZ
      * manifestu: bez něj by nepřátelský protějšek (zná `fileId`) mohl
      * předmanifestovými kousky s obřím indexem nafouknout `receivedCount` a
-     * vyrobit spoustu souborů. `ChatMediaStoreLimitTest` hlídá, že strop skutečnou
-     * mez pokrývá. `internal` kvůli testu.
+     * vyrobit spoustu souborů. `MediaTransfersTest.strop_pokryvaSkutecnouMez` hlídá,
+     * že strop skutečnou mez (`MAX_FILE_BYTES/CHUNK_SIZE`) pokrývá. `internal` kvůli testu.
      */
     internal const val MAX_CHUNKS = 64
 
