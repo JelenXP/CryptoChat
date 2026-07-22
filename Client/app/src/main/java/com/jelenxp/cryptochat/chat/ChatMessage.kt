@@ -47,8 +47,13 @@ data class ChatMessage(
      */
     val reactions: Map<String, Reaction> = emptyMap()
 ) {
-    /** RECEIVING = přijímá se po kouscích (velký soubor), ještě není kompletní. */
-    enum class Status { SENDING, SENT, FAILED, RECEIVED, RECEIVING }
+    /**
+     * Stavy odchozí zprávy: SENDING → SENT (doručeno na relay = jedna fajfka) →
+     * DELIVERED (protějšek vyzvedl na zařízení = dvě fajfky); FAILED při selhání.
+     * RECEIVED = přijatá zpráva. RECEIVING = přijímá se po kouscích (velký soubor),
+     * ještě není kompletní.
+     */
+    enum class Status { SENDING, SENT, DELIVERED, FAILED, RECEIVED, RECEIVING }
     enum class Kind { TEXT, IMAGE, FILE }
 
     /**

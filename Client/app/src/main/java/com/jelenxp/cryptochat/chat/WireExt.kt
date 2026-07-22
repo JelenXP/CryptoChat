@@ -52,6 +52,8 @@ import java.security.SecureRandom
  * |     |           |           | PŘEČÍST - pojistka pro budoucí major migraci |
  * | 6   | CAPS      | -         | bitmapa schopností (feature flags), aby nové |
  * |     |           |           | funkce nemusely zvyšovat WIRE_MINOR          |
+ * | 7   | REKEY     | -         | KEM re-key metadata (PCS), tělo nese materiál |
+ * | 8   | DELIVERY  | -         | potvrzení doručení: seznam ID doručených zpráv |
  */
 object WireExt {
 
@@ -81,6 +83,15 @@ object WireExt {
      */
     const val TYPE_REKEY = 7
 
+    /**
+     * Potvrzení doručení (delivery receipt, [FEATURE_DELIVERY]). Hodnota TLV:
+     * zřetězené 16bajtové [MSG_ID_BYTES] cílových zpráv, které příjemce
+     * autentizovaně vyzvedl a uložil - odesílatel je pak označí jako doručené na
+     * zařízení (druhá fajfka). Jede jako [TYPE_CONTROL] s prázdným tělem, takže
+     * verze bez schopnosti [CAP_RECEIPTS] ho bezpečně zahodí.
+     */
+    const val TYPE_DELIVERY = 8
+
     /** Fáze re-key handshake (subtype v [TYPE_REKEY]). Čísla se nerecyklují. */
     const val REKEY_OFFER = 0
     const val REKEY_ACCEPT = 1
@@ -108,11 +119,13 @@ object WireExt {
     // |-----|-----------|---------------------------------|
     // | 0   | REACTIONS | umí zobrazit reakce emoji       |
     // | 1   | REKEY     | umí KEM re-key (PCS, Fáze 4)    |
+    // | 2   | RECEIPTS  | umí potvrzení doručení (2 fajfky) |
     const val CAP_REACTIONS = 0
     const val CAP_REKEY = 1
+    const val CAP_RECEIPTS = 2
 
     /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
-    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY)
+    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS)
 
     /**
      * Zabalí množinu bitů do bitmapy (LSB-first): bit `i` leží v bajtu `i/8`,
@@ -156,11 +169,19 @@ object WireExt {
      * | id | jméno    | od minoru |
      * |----|----------|-----------|
      * | 1  | REACTION | 3         |
+     * | 2  | DELIVERY | - (bit CAP_RECEIPTS) |
      */
     const val FEATURE_REACTION = 1
 
+    /**
+     * Potvrzení doručení (delivery receipt). Řídicí zpráva s prázdným tělem;
+     * seznam doručených zpráv jede v [TYPE_DELIVERY]. Gatuje se schopností
+     * [CAP_RECEIPTS], ne minorem (viz [WireCompat]).
+     */
+    const val FEATURE_DELIVERY = 2
+
     /** Funkce, které TAHLE verze umí zpracovat jako řídicí zprávu. */
-    private val KNOWN_FEATURES = setOf(FEATURE_REACTION)
+    private val KNOWN_FEATURES = setOf(FEATURE_REACTION, FEATURE_DELIVERY)
 
     /** Umí tahle verze danou řídicí funkci? */
     fun isKnownFeature(featureId: Int): Boolean = featureId in KNOWN_FEATURES
@@ -175,6 +196,28 @@ object WireExt {
 
     /** Reakce vytažená z traileru. */
     data class ReactionData(val targetHex: String, val emoji: String, val remove: Boolean)
+
+    /**
+     * Nejvíc cílů v jednom potvrzení doručení. Hodnota TLV má strop
+     * [MAX_TLV_VALUE_BYTES]; 64 × 16 B se do něj přesně vejde. Víc doručených
+     * zpráv v jednom pollu se rozdělí do víc potvrzení (viz `RelaySync`).
+     */
+    const val MAX_DELIVERY_TARGETS = MAX_TLV_VALUE_BYTES / MSG_ID_BYTES
+
+    /**
+     * Hodnota TLV potvrzení doručení: zřetězené 16bajtové ID doručených zpráv.
+     * Plníme MY, takže porušení stropu je chyba v kódu (spadne v testu, ne na drátě).
+     */
+    fun buildDelivery(targets: List<ByteArray>): ByteArray {
+        require(targets.isNotEmpty()) { "Potvrzení doručení bez cílů" }
+        require(targets.size <= MAX_DELIVERY_TARGETS) { "Příliš mnoho cílů: ${targets.size}" }
+        val out = ByteArray(targets.size * MSG_ID_BYTES)
+        targets.forEachIndexed { i, t ->
+            require(t.size == MSG_ID_BYTES) { "Cíl doručení musí mít $MSG_ID_BYTES B" }
+            System.arraycopy(t, 0, out, i * MSG_ID_BYTES, MSG_ID_BYTES)
+        }
+        return out
+    }
 
     /** Metadata KEM re-key vytažená z traileru (fáze + id); materiál je v těle zprávy. */
     data class RekeyData(val subtype: Int, val rekeyIdHex: String)
@@ -336,6 +379,22 @@ object WireExt {
                 if (remove) return ReactionData(target, "", true)
                 if (!isValidEmoji(emoji)) return null
                 return ReactionData(target, emoji, false)
+            }
+
+        /**
+         * ID doručených zpráv z potvrzení doručení, nebo null když ho trailer
+         * nenese nebo je vadné. Délka musí být násobek [MSG_ID_BYTES] a počet
+         * v mezích [MAX_DELIVERY_TARGETS] - pochází od protějšku, takže se ověří.
+         */
+        val deliveryTargets: List<String>?
+            get() {
+                val v = first(TYPE_DELIVERY) ?: return null
+                if (v.isEmpty() || v.size % MSG_ID_BYTES != 0) return null
+                val count = v.size / MSG_ID_BYTES
+                if (count > MAX_DELIVERY_TARGETS) return null
+                return (0 until count).map {
+                    toHex(v.copyOfRange(it * MSG_ID_BYTES, (it + 1) * MSG_ID_BYTES))
+                }
             }
 
         /** Řídicí pokyn, nebo null když zpráva žádný nenese. */

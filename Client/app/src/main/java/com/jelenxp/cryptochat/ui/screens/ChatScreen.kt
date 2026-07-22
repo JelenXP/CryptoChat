@@ -39,14 +39,16 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
@@ -129,6 +131,16 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+
+    // Hledání v konverzaci: horní lišta se přepne na vyhledávací pole a seznam
+    // ukazuje jen shodné zprávy. Filtr je čistá funkce v ChatScreenLogic.
+    var searchMode by remember(id) { mutableStateOf(false) }
+    var searchQuery by remember(id) { mutableStateOf("") }
+    // Seznam k ZOBRAZENÍ: v hledání filtrovaný, jinak celá historie. Zdroj dat
+    // (`messages`) i index citací zůstávají nad plnou historií - jen se jinak kreslí.
+    val visibleMessages = remember(messages, searchMode, searchQuery) {
+        if (searchMode) ChatScreenLogic.filterMessages(messages, searchQuery) else messages
+    }
 
     // Vybrané zprávy (dlouhý stisk vybere, klepnutí ve výběru přepíná) a zpráva,
     // na kterou se odpovídá. Drží se podle `id`, ne podle indexu - LazyColumn
@@ -233,13 +245,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // zprávy pak plynule animovaně. Offset SCROLL_BOTTOM_OFFSET tlačí na SKUTEČNÉ
     // dno - bez něj by se u vysoké poslední zprávy skončilo „skoro na konci".
     var initialScrollDone by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
+    LaunchedEffect(visibleMessages.size) {
+        if (visibleMessages.isNotEmpty()) {
             if (!initialScrollDone) {
-                listState.scrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                listState.scrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
                 initialScrollDone = true
             } else {
-                listState.animateScrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                listState.animateScrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
             }
             // Nový příspěvek (odeslaný i přijatý) = jdeme k dnu a chceme tam zůstat.
             // Zachovává dosavadní chování „po odeslání to odscrolluje dopředu, i když
@@ -256,8 +268,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     LaunchedEffect(listState) {
         snapshotFlow { Triple(stickToBottom, atBottom, listState.isScrollInProgress) }
             .collect { (stick, bottom, scrolling) ->
-                if (stick && !bottom && !scrolling && messages.isNotEmpty()) {
-                    listState.scrollToItem(messages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                if (stick && !bottom && !scrolling && visibleMessages.isNotEmpty()) {
+                    listState.scrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
                 }
             }
     }
@@ -408,10 +420,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         replyTo = ChatScreenLogic.survivingReply(messages, replyTo)
     }
 
-    // Systémové zpět nejdřív zavře výběr / rozepsanou odpověď, teprve pak
-    // opustí konverzaci - jinak by uživatel omylem vyskočil z chatu.
+    // Systémové zpět nejdřív zavře výběr / hledání / rozepsanou odpověď, teprve
+    // pak opustí konverzaci - jinak by uživatel omylem vyskočil z chatu.
     BackHandler(enabled = selectedIds.isNotEmpty()) { selectedIds = emptySet() }
-    BackHandler(enabled = selectedIds.isEmpty() && replyTo != null) { replyTo = null }
+    BackHandler(enabled = selectedIds.isEmpty() && searchMode) {
+        searchMode = false; searchQuery = ""
+    }
+    BackHandler(enabled = selectedIds.isEmpty() && !searchMode && replyTo != null) { replyTo = null }
 
     Scaffold(
         topBar = {
@@ -469,6 +484,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 )
+            } else if (searchMode) {
+                // Hledání: lišta se přepne na vyhledávací pole. Šipka vlevo (jako
+                // ve výchozí liště) hledání zruší; klávesnice se otevře sama.
+                SearchTopBar(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    onClose = { searchMode = false; searchQuery = "" }
+                )
             } else {
             TopAppBar(
                 title = {
@@ -499,15 +522,18 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.menu_more))
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        // Hledání v konverzaci - nahoře. Otevře vyhledávací lištu
+                        // (a s ní rovnou klávesnici).
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_menu_detail)) },
-                            leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
-                            onClick = { menuOpen = false; navController.navigate("user_detail/$id") }
+                            text = { Text(stringResource(R.string.chat_menu_search)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            onClick = { menuOpen = false; searchQuery = ""; searchMode = true }
                         )
+                        // Profil kontaktu (detail + klíč) - dole, s ikonou ozubeného kola.
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.chat_menu_server)) },
+                            text = { Text(stringResource(R.string.chat_menu_view_contact)) },
                             leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                            onClick = { menuOpen = false; navController.navigate("relay_settings") }
+                            onClick = { menuOpen = false; navController.navigate("user_detail/$id") }
                         )
                     }
                 }
@@ -539,10 +565,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 WireCompat.Peer.OK -> {}
             }
 
-            if (messages.isEmpty()) {
+            if (visibleMessages.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        stringResource(R.string.chat_empty),
+                        // V hledání „nic nenalezeno", jinak „zatím prázdno".
+                        stringResource(if (searchMode) R.string.chat_search_no_results else R.string.chat_empty),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -555,7 +582,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(messages, key = { it.id }) { m ->
+                    items(visibleMessages, key = { it.id }) { m ->
                         // Citovaná zpráva se hledá v UŽ NAČTENÉM seznamu - do
                         // kompozice nesmí žádné čtení historie (Keystore = ANR).
                         // Přes mapu, ne lineárním hledáním: u dlouhé konverzace
@@ -582,6 +609,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 }
             }
 
+            // Při hledání se dolní část (náhled odpovědi + psaní) skryje - lišta
+            // teď hledá, ne píše, a seznam tak sedí celý nad klávesnicí.
+            if (!searchMode) {
             // Náhled zprávy, na kterou se odpovídá.
             replyTo?.let { target ->
                 ReplyComposerPreview(
@@ -646,6 +676,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     }
                 }
             }
+            } // konec if (!searchMode) - skrytí spodní části při hledání
         }
     }
 
@@ -1016,6 +1047,52 @@ private fun ChatNotice(text: String) {
     }
 }
 
+/**
+ * Horní lišta v režimu hledání: šipka zpět (zruší hledání, jako ve výchozí
+ * liště), uprostřed textové pole s šedým placeholderem „Hledat". Klávesnice se
+ * otevře sama, jakmile se lišta objeví ([FocusRequester]).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchTopBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    // Klik na „Hledat" v menu rovnou otevře klávesnici na tomhle poli.
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onClose) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.content_desc_back)
+                )
+            }
+        },
+        title = {
+            TextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.chat_search_hint)) },
+                // Splyne s lištou - žádné vlastní pozadí ani podtržení.
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+            )
+        }
+    )
+}
+
 private val TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -1235,7 +1312,18 @@ private fun StatusGlyph(status: ChatMessage.Status, tint: Color) {
             Icons.Default.Schedule, contentDescription = stringResource(R.string.content_desc_sending),
             modifier = Modifier.size(14.dp), tint = tint.copy(alpha = 0.7f)
         )
-        ChatMessage.Status.SENT -> Text("✓", style = MaterialTheme.typography.labelSmall, color = tint.copy(alpha = 0.7f))
+        // Jedna fajfka = doručeno na relay server.
+        ChatMessage.Status.SENT -> Text(
+            "✓",
+            style = MaterialTheme.typography.labelSmall,
+            color = tint.copy(alpha = 0.7f)
+        )
+        // Dvě fajfky = protějšek si zprávu vyzvedl na zařízení a potvrdil to.
+        ChatMessage.Status.DELIVERED -> Text(
+            "✓✓",
+            style = MaterialTheme.typography.labelSmall,
+            color = tint.copy(alpha = 0.7f)
+        )
         ChatMessage.Status.FAILED -> Icon(
             Icons.Default.ErrorOutline, contentDescription = stringResource(R.string.content_desc_not_delivered),
             modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error

@@ -100,6 +100,22 @@ object ChatScreenLogic {
         if (mine != null) null else DEFAULT_REACTION
 
     /**
+     * Zprávy konverzace odpovídající hledanému výrazu [query]. Vytaženo z
+     * composable schválně (pravidlo projektu) - filtr je čistá funkce, takže jde
+     * otestovat bez Androidu.
+     *
+     * Prázdný (nebo jen mezery) dotaz vrátí VŠECHNY zprávy - hledání otevřené,
+     * ale ještě nic nenapsáno. Hledá se v textu zprávy (u souboru je to název);
+     * fotky bez textu se nikdy neshodují. Bez rozlišení velikosti písmen.
+     */
+    fun filterMessages(messages: List<ChatMessage>, query: String): List<ChatMessage> {
+        val q = query.trim()
+        if (q.isEmpty()) return messages
+        val needle = q.lowercase()
+        return messages.filter { it.text.lowercase().contains(needle) }
+    }
+
+    /**
      * Je seznam konverzace „u dna"? Rozhoduje, jestli se má při změně obsahu nebo
      * výšky viewportu (dekódování fotky, přidání reakce, otevření klávesnice)
      * ZNOVU přirolovat dolů, nebo ne.

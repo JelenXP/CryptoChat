@@ -705,6 +705,52 @@ object RelaySync {
     }
 
     /**
+     * Pošle protějšku potvrzení doručení za zprávy vyzvednuté v tomhle pollu
+     * (jejich ID jsou v [refs]) - u něj se pak NAŠE... totiž JEHO odchozí zprávy
+     * přepnou na druhou fajfku. Volá se na konci [poll] (přes `finishPoll`).
+     *
+     * **Gate:** posílá se JEN protějšku, který inzeruje [WireExt.CAP_RECEIPTS]
+     * (strategie SUPPRESS) - starší verze by potvrzení stejně jen zahodila a byl
+     * by to onion request navíc při KAŽDÉM příjmu (baterie). Schopnost je čerstvě
+     * známá: právě jsme od protějšku dostali zprávu, jejíž trailer ji inzeruje.
+     *
+     * Řídicí zpráva jde stejnou cestou jako reakce (legacy seal / ratchet). Je
+     * best-effort: když se nepošle, protějšek prostě zůstane na jedné fajfce.
+     * Víc než [WireExt.MAX_DELIVERY_TARGETS] cílů se rozdělí do víc potvrzení.
+     */
+    private fun flushDeliveryReceipts(context: Context, contact: Contact, refs: Set<String>) {
+        if (refs.isEmpty()) return
+        if (!WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_RECEIPTS)) return
+        val key = contact.keyBase64 ?: return
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank()) return
+        val targets = refs.mapNotNull { WireExt.fromHex(it) }
+        if (targets.isEmpty()) return
+        val ratchet = shouldSendRatchet(context, contact)
+        for (chunk in targets.chunked(WireExt.MAX_DELIVERY_TARGETS)) {
+            val now = System.currentTimeMillis()
+            val delivered = try {
+                if (ratchet) {
+                    sendOneRatchet(context, contact, baseUrl) {
+                        ChatEnvelope.buildDeliveryPayload(chunk, now)
+                    }
+                } else {
+                    val dir = sendDir(contact)
+                    val blob = ChatEnvelope.sealDelivery(chunk, now, key, dir)
+                    transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+                }
+            } catch (e: Exception) {
+                DiagnosticsLog.warn(TAG, "odeslání potvrzení doručení selhalo (${e.javaClass.simpleName})")
+                false
+            }
+            // Best-effort: neúspěch neblokuje potvrzení dávky (zpráva je bezpečně
+            // uložená; potvrzení je jen ozdoba navíc). Když se nepošle, přerušíme -
+            // relay je nejspíš nedostupný, další chunk by taky selhal.
+            if (!delivered) break
+        }
+    }
+
+    /**
      * Zašifruje a odešle už zařazenou zprávu (text, fotku nebo soubor) do schránky
      * a aktualizuje její stav (SENT/FAILED). Vrací, zda se doručila.
      */
@@ -858,6 +904,19 @@ object RelaySync {
         var reachable = false
         // Karanténu procházej jen jednou za poll (ne v každém fetchi zvlášť).
         var retryQuarantine = true
+        // ID zpráv (wireRef), které jsme v tomhle pollu vyzvedli a uložili -
+        // po dokončení pollu se za ně pošle JEDNO potvrzení doručení (druhá
+        // fajfka u protějšku). LinkedHashSet: bez duplicit, v pořadí příchodu.
+        val deliveredRefs = LinkedHashSet<String>()
+
+        // Dokončí poll: pošle nasbíraná potvrzení doručení (gate + best-effort,
+        // viz [flushDeliveryReceipts]) a vrátí výsledek. Jediné místo, kudy se
+        // z pollu vrací - ať se receipt pošle bez ohledu na to, kterou větví
+        // (ratchet / prev-epocha / aktuální) poll skončil.
+        fun finishPoll(n: Int): PollResult {
+            flushDeliveryReceipts(context, contact, deliveredRefs)
+            return PollResult(n, failed, reachable)
+        }
 
         // Vyzvedne jednu schránku (dané epochy), otevře bloby a uloží je. Vrací
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
@@ -930,6 +989,15 @@ object RelaySync {
                                 ChatRepository.ReactionResult.APPLIED
                         }
                     }
+                }
+                // Potvrzení doručení pošli i za DUPLICATE: protějšek zprávu
+                // možná poslal znovu právě proto, že mu naše první potvrzení
+                // nedorazilo - ať se ke druhé fajfce nakonec dostane.
+                if (message.wireId != null &&
+                    (result == ChatRepository.AppendResult.ADDED ||
+                        result == ChatRepository.AppendResult.DUPLICATE)
+                ) {
+                    deliveredRefs.add(message.wireId)
                 }
             }
 
@@ -1128,6 +1196,23 @@ object RelaySync {
                         }
                     }
 
+                    // Potvrzení doručení: NAŠE odchozí zprávy s těmito ID protějšek
+                    // vyzvedl → označ je za doručené na zařízení (druhá fajfka).
+                    // Není to zpráva do historie - schválně NEjde přes arrived()
+                    // (nezvyšuje nepřečtené ani nenotifikuje).
+                    is ChatEnvelope.Opened.Delivery -> {
+                        for (ref in opened.targetHexes) {
+                            when (repo.markDelivered(contact.id, ref)) {
+                                // Zápis selhal - dávku nepotvrzuj, ať dorazí znovu.
+                                ChatRepository.DeliveryResult.FAILED -> allSafe = false
+                                // Označeno, nebo cíl v historii není - obojí se smí
+                                // potvrdit (u chybějícího cíle není co dělat).
+                                ChatRepository.DeliveryResult.UPDATED,
+                                ChatRepository.DeliveryResult.TARGET_MISSING -> Unit
+                            }
+                        }
+                    }
+
                     is ChatEnvelope.Opened.Image -> {
                         val path = ChatMediaStore.save(context, opened.bytes)
                         if (path == null) {
@@ -1212,7 +1297,7 @@ object RelaySync {
                         // Kousky mohly dorazit dřív než manifest (zaparkované) -
                         // pak je soubor hotový už teď a nikdo by ho nesložil.
                         if (MediaTransfers.receivedCount(context, idHex) >= opened.totalChunks) {
-                            if (!finishFile(context, repo, contact.id, idHex)) allSafe = false
+                            if (!finishFile(context, repo, contact.id, idHex, deliveredRefs)) allSafe = false
                         }
                     }
 
@@ -1237,7 +1322,7 @@ object RelaySync {
                             )
                         }
                         if (complete) {
-                            if (!finishFile(context, repo, contact.id, idHex)) allSafe = false
+                            if (!finishFile(context, repo, contact.id, idHex, deliveredRefs)) allSafe = false
                         }
                     }
 
@@ -1341,7 +1426,7 @@ object RelaySync {
             // Auto-politika PCS re-key (Fáze 4c): teď víme, jestli protějšek právě
             // psal (received) - zváž zahájení/zopakování re-key.
             maybeAutoRekey(context, contact, ratchetStore, received)
-            return PollResult(received, failed, reachable)
+            return finishPoll(received)
         }
 
         // Kolem přelomu dne nejdřív rychlá (neblokující) kontrola předchozí epochy;
@@ -1357,11 +1442,11 @@ object RelaySync {
                 prevEpochChecked[contact.id] = epoch
                 prevEpochCheckedAt[contact.id] = System.currentTimeMillis()
             }
-            if (prev > 0) return PollResult(prev, failed, reachable)
+            if (prev > 0) return finishPoll(prev)
         }
         // Long-poll aktuální epochy - server podrží spojení, dokud nedorazí zpráva,
         // takže chodí skoro okamžitě a mezitím se nic nebudí.
-        return PollResult(fetch(RelayCrypto.mailboxId(key, dir, epoch), LONGPOLL_SECONDS, ratchet = false), failed, reachable)
+        return finishPoll(fetch(RelayCrypto.mailboxId(key, dir, epoch), LONGPOLL_SECONDS, ratchet = false))
     }
 
     /**
@@ -1379,12 +1464,16 @@ object RelaySync {
         context: Context,
         repo: ChatRepository,
         contactId: String,
-        idHex: String
+        idHex: String,
+        deliveredRefs: MutableSet<String>? = null
     ): Boolean = when (val r = MediaTransfers.assemble(context, idHex)) {
         is MediaTransfers.AssembleResult.Done -> {
             if (repo.updateMedia(contactId, idHex, r.path, ChatMessage.Status.RECEIVED)) {
                 MediaTransfers.cleanup(context, idHex)
                 MediaTransfers.clearProgress(idHex)
+                // Soubor je celý u nás → potvrď doručení (wireRef souboru = hex
+                // fileId = idHex). Až po úspěšném zápisu, ať se nepotvrzuje předčasně.
+                deliveredRefs?.add(idHex)
                 true
             } else {
                 DiagnosticsLog.error(TAG, "zápis stavu souboru selhal")

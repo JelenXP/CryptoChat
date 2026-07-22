@@ -182,6 +182,53 @@ class ChatRepository(
             saveLocked(contactId, updated)
         }
 
+    /**
+     * Označí NAŠI odchozí zprávu za doručenou na zařízení protějšku (druhá
+     * fajfka), podle jejího [ChatMessage.wireRef]. Volá se, když dorazí potvrzení
+     * doručení ([ChatEnvelope.Opened.Delivery]).
+     *
+     * Přepíná jen odchozí zprávu a jen ze stavu SENDING/SENT/FAILED - DELIVERED
+     * je stav „nejlepší z nich" (i FAILED se smí opravit na DELIVERED: doručení
+     * mohlo projít, jen se nám nevrátilo 2xx). Je idempotentní: už doručenou
+     * zprávu nepřepisuje (žádný zbytečný zápis).
+     *
+     * Vrací [DeliveryResult] - selhání zápisu MUSÍ jít odlišit, aby volající
+     * potvrzení nepotvrdil a dorazilo znovu.
+     */
+    fun markDelivered(contactId: String, wireRef: String): DeliveryResult = synchronized(lock) {
+        val current = loadForWriteLocked(contactId) ?: return DeliveryResult.FAILED
+        val index = current.indexOfFirst { it.outgoing && it.wireRef == wireRef }
+        // Cíl tu není (uživatel zprávu smazal, nebo potvrzení míří na neznámé ID).
+        // Není to chyba - potvrzení se smí potvrdit, jen není co aktualizovat.
+        if (index < 0) return DeliveryResult.TARGET_MISSING
+        val message = current[index]
+        // Idempotence: DELIVERED už je konečný stav, znovu nezapisuj.
+        if (message.status == ChatMessage.Status.DELIVERED) return DeliveryResult.UPDATED
+        // DELIVERED přebíjí jen „horší" odchozí stavy. RECEIVED/RECEIVING sem
+        // nikdy nepatří (jsou to příchozí / soubor v příjmu), ale pro jistotu je
+        // nepřepisujeme.
+        val upgradable = message.status == ChatMessage.Status.SENDING ||
+            message.status == ChatMessage.Status.SENT ||
+            message.status == ChatMessage.Status.FAILED
+        if (!upgradable) return DeliveryResult.TARGET_MISSING
+        val updated = current.toMutableList().also {
+            it[index] = message.copy(status = ChatMessage.Status.DELIVERED)
+        }
+        if (saveLocked(contactId, updated)) DeliveryResult.UPDATED else DeliveryResult.FAILED
+    }
+
+    /** Jak dopadlo označení zprávy za doručenou. */
+    enum class DeliveryResult {
+        /** Zpráva označena za doručenou (nebo už doručená byla). */
+        UPDATED,
+
+        /** Cílová odchozí zpráva v historii není - potvrzení se smí potvrdit. */
+        TARGET_MISSING,
+
+        /** Zápis selhal - potvrzení nepotvrzuj, ať dorazí znovu. */
+        FAILED
+    }
+
     /** Doplní cestu k souboru a stav (po složení všech kousků přijatého souboru). */
     fun updateMedia(
         contactId: String,

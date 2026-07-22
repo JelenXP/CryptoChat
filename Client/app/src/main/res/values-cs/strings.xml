@@ -347,8 +347,10 @@
 
     <!-- Konverzace -->
     <string name="chat_title_fallback">Konverzace</string>
-    <string name="chat_menu_detail">Detail a klíč</string>
-    <string name="chat_menu_server">Server chatu</string>
+    <string name="chat_menu_search">Hledat</string>
+    <string name="chat_menu_view_contact">Zobrazit kontakt</string>
+    <string name="chat_search_hint">Hledat</string>
+    <string name="chat_search_no_results">Žádná zpráva neodpovídá hledání.</string>
     <string name="chat_notice_no_key">Tento kontakt zatím nemá klíč. Nejdřív ho spáruj (Detail a klíč).</string>
     <string name="chat_notice_no_server">Není nastavený server chatu. Nastav ho v menu (⋮ → Server chatu).</string>
     <string name="chat_empty">Zatím žádné zprávy.\nNapiš první.</string>

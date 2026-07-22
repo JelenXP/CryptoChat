@@ -89,6 +89,17 @@ object ChatEnvelope {
         ) : Opened
 
         /**
+         * Potvrzení doručení (delivery receipt). Není to zpráva pro historii -
+         * jen řekne, že protějšek NAŠE odchozí zprávy s těmito ID
+         * ([targetHexes]) vyzvedl a uložil (druhá fajfka). Nezvyšuje nepřečtené
+         * ani neposílá notifikaci.
+         */
+        data class Delivery(
+            override val timestamp: Long,
+            val targetHexes: List<String>
+        ) : Opened
+
+        /**
          * Řídicí zpráva KEM re-key (Fáze 4, PCS). Není to zpráva pro historii -
          * [subtype] je [WireExt.REKEY_OFFER]/[WireExt.REKEY_ACCEPT]/[WireExt.REKEY_CONFIRM],
          * [rekeyIdHex] spojuje fáze, [kem] je ML-KEM materiál (pubkey / ciphertext).
@@ -215,6 +226,41 @@ object ChatEnvelope {
             .build()
         // Do koše jako text - reakce tak na drátě vypadá jako krátká zpráva
         // a relay z velikosti nepozná, že jde o reakci.
+        val padded = ByteArray(bucketFor(HEADER + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, 0)
+        System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
+        return padded
+    }
+
+    /**
+     * Potvrzení doručení jako **řídicí zpráva** (prázdné tělo, vše v traileru) -
+     * stejný kontrakt jako reakce (viz [WireExt.Control]): verze bez schopnosti
+     * [WireExt.CAP_RECEIPTS] ho bezpečně zahodí. [targets] jsou 16bajtová ID
+     * NAŠICH odchozích zpráv, které protějšek vyzvedl.
+     */
+    fun sealDelivery(
+        targets: List<ByteArray>,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int
+    ): ByteArray {
+        return encrypt(buildDeliveryPayload(targets, timestamp), keyBase64, dir)
+    }
+
+    /** Vnitřní plaintext potvrzení doručení (řídicí zpráva: prázdné tělo, vše v traileru). */
+    internal fun buildDeliveryPayload(targets: List<ByteArray>, timestamp: Long): ByteArray {
+        val control = byteArrayOf(
+            ((WireExt.FEATURE_DELIVERY ushr 8) and 0xFF).toByte(),
+            (WireExt.FEATURE_DELIVERY and 0xFF).toByte(),
+            0 // příznaky, zatím žádné
+        )
+        val trailer = WireExt.Builder()
+            .put(WireExt.TYPE_CONTROL, control)
+            .put(WireExt.TYPE_DELIVERY, WireExt.buildDelivery(targets))
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
+            .putCapabilities(WireExt.LOCAL_CAPABILITIES)
+            .build()
+        // Do koše jako text - na drátě vypadá jako krátká zpráva.
         val padded = ByteArray(bucketFor(HEADER + trailer.size))
         writeHeader(padded, KIND_TEXT, timestamp, 0)
         System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
@@ -441,16 +487,30 @@ object ChatEnvelope {
         // notifikací a nepřečtenou zprávou o ničem.
         if (kind == KIND_TEXT && len == 0) {
             val control = trailer?.control
-            if (control?.featureId == WireExt.FEATURE_REACTION) {
-                val r = trailer.reaction
-                if (r != null) {
-                    return Result.Ok(
-                        senderMinor,
-                        Opened.Reaction(timestamp, r.targetHex, r.emoji, r.remove),
-                        trailer.msgIdHex,
-                        maxMajor = trailer.maxMajor,
-                        capabilities = trailer.capabilities
-                    )
+            when (control?.featureId) {
+                WireExt.FEATURE_REACTION -> {
+                    val r = trailer.reaction
+                    if (r != null) {
+                        return Result.Ok(
+                            senderMinor,
+                            Opened.Reaction(timestamp, r.targetHex, r.emoji, r.remove),
+                            trailer.msgIdHex,
+                            maxMajor = trailer.maxMajor,
+                            capabilities = trailer.capabilities
+                        )
+                    }
+                }
+                WireExt.FEATURE_DELIVERY -> {
+                    val targets = trailer.deliveryTargets
+                    if (targets != null) {
+                        return Result.Ok(
+                            senderMinor,
+                            Opened.Delivery(timestamp, targets),
+                            trailer.msgIdHex,
+                            maxMajor = trailer.maxMajor,
+                            capabilities = trailer.capabilities
+                        )
+                    }
                 }
             }
             return Result.Unsupported(senderMinor)
