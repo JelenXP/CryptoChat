@@ -324,15 +324,19 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         // Odkaz vytáhni TEĎ a náhled zavři - kdyby se to dělalo až v korutině,
         // uživatel by mezitím mohl odpověď zrušit a zpráva by odešla s odkazem.
         val replyRef = replyTo?.wireRef
+        // Snapshot i pro obnovu při selhání (nález round-3-b-1): jinak by se vrátil
+        // jen text, ale citovaná zpráva by se ztratila.
+        val replySnapshot = replyTo
         replyTo = null
         scope.launch {
             val msg = withContext(Dispatchers.IO) {
                 RelaySync.enqueue(context, contact, text, replyRef)
             }
             // Uložení do historie selhalo → NEODESÍLAT (jinak by zpráva odešla, ale
-            // u nás v historii nebyla). Vrať text do pole, ať jde zkusit znovu.
+            // u nás v historii nebyla). Vrať text i citaci do pole, ať jde zkusit znovu.
             if (msg == null) {
                 input = text
+                replyTo = replySnapshot
                 Toast.makeText(context, messageFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }

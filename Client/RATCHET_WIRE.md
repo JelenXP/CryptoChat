@@ -17,13 +17,10 @@ R2 + PCS). **Autoritou je KÓD** (`chat/ChatEnvelope.kt`, `chat/RelayCrypto.kt`,
 > - **Kořenový KDF label** je `CryptoChat/ratchet/rekey-root/v1|gen=<g>`
 >   (`DoubleRatchet.REKEY_ROOT`), ne `.../kem-root/v1`.
 > - **KEM krok NEposouvá epochu** (`applyRekey` se `sendEpoch`/`msgsSinceEpoch`
->   nedotýká); epochu žene JEN čítač `K` (`RATCHET_EPOCH_MSGS`).
+>   nedotýká); epochu žene JEN čítač `K` (`EPOCH_MSGS`).
 >
 > Fáze-4 sekce ponechány jako historický návrh, aby se golden vzorky a čísla
 > generací daly dohledat; při jakékoli změně re-key se řiď KÓDEM, ne jimi.
-
-Souvisí s pravidly ve `WireCompat` (major migrace, capability) a s datovým
-modelem `RatchetState` (Fáze 1). Legacy formát (major 3) se NEMĚNÍ.
 
 Souvisí s pravidly ve `WireCompat` (major migrace, capability) a s datovým
 modelem `RatchetState` (Fáze 1). Legacy formát (major 3) se NEMĚNÍ.
@@ -35,9 +32,9 @@ modelem `RatchetState` (Fáze 1). Legacy formát (major 3) se NEMĚNÍ.
 | konstanta | hodnota | význam |
 |---|---|---|
 | `WIRE_MAJOR_RATCHET` | **4** | otevřený major bajt ratchet blobu |
-| `RATCHET_EPOCH_MSGS` (K) | **32** | posuň epochu po každých K odeslaných zprávách (Návrh 2) |
-| `RATCHET_LOOKAHEAD` (W) | **8** | kolik kandidátních schránek dopředu příjemce pollne |
-| `RATCHET_SKIP_MAX` | **1000** | strop přeskočených klíčů / max. přetočení řetězu; nad → karanténa |
+| `EPOCH_MSGS` (K) | **32** | posuň epochu po každých K odeslaných zprávách (Návrh 2) |
+| `LOOKAHEAD` (W) | **8** | kolik kandidátních schránek dopředu příjemce pollne |
+| `SKIP_MAX` | **1000** | strop přeskočených klíčů / max. přetočení řetězu; nad → karanténa |
 | `EPOCH_BYTES` / `MSGNO_BYTES` | 4 / 4 | u32 BE |
 
 Všechny KDF = **HKDF-SHA256** (RFC 5869), stejná implementace jako
@@ -194,13 +191,13 @@ blob        = IV[12] ++ ciphertext ++ tag[16]
 - `msgNo` je **globální monotónní** čítač ve směru (neresetuje se na hranici
   epochy). Indexuje pozici v symetrickém řetězu.
 - `epoch` (e_send) se posune, když `msgsSinceEpoch` dosáhne `K`
-  (`RATCHET_EPOCH_MSGS`). Při posunu `epoch++`, `msgsSinceEpoch = 0`. `msgNo` běží
+  (`EPOCH_MSGS`). Při posunu `epoch++`, `msgsSinceEpoch = 0`. `msgNo` běží
   dál (řetěz se posunem epochy NEpřeseje — to dělá jen KEM krok). **Pozn.:** KEM
   krok (Fáze 4) epochu NEposouvá (viz `applyRekey`); dřívější návrh „(a) KEM krok
   posune epochu" se do implementace nepromítl (nález v2.0-34 / A-N2).
 - **Příjem:** pollni `mailbox(recvDir, e_recv .. e_recv+W)`. Ve zprávě přečti
   autentizovaný `epoch`,`msgNo`. Posuň `e_recv` na vyšší viděnou epochu. Pro
-  `msgNo > n_recv` přetoč řetěz o `msgNo − n_recv` kroků (max `RATCHET_SKIP_MAX`,
+  `msgNo > n_recv` přetoč řetěz o `msgNo − n_recv` kroků (max `SKIP_MAX`,
   jinak → karanténa), přeskočené `MK` ulož. Pro `msgNo ≤ n_recv` (out-of-order /
   už viděné) najdi `MK` ve skipped-store (idempotence příjmu).
   **Okno `e_recv .. e_recv+W` je DURABILNÍ „podlaha" (`RatchetState.backfillFloor`),
@@ -229,6 +226,6 @@ blob        = IV[12] ++ ciphertext ++ tag[16]
 
 ## 8. Parametry k potvrzení
 
-- `RATCHET_EPOCH_MSGS` K = 32 (jak často rotovat schránku jednosměrně).
-- `RATCHET_LOOKAHEAD` W = 8 (kolik schránek dopředu pollovat).
-- `RATCHET_SKIP_MAX` = 1000 (strop přeskočení / přetočení řetězu).
+- `EPOCH_MSGS` K = 32 (jak často rotovat schránku jednosměrně).
+- `LOOKAHEAD` W = 8 (kolik schránek dopředu pollovat).
+- `SKIP_MAX` = 1000 (strop přeskočení / přetočení řetězu).

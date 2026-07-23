@@ -1458,8 +1458,13 @@ object RelaySync {
             // posune - jinak by restart mezi posunem a backfillem podlahu (a s ní
             // celý interval přeskočených epoch) ztratil. Nové stavy mají bf>=0
             // (bootstrap = 0), takže tenhle zápis proběhne max jednou za život stavu.
-            if (ratchetState.backfillFloor < 0) {
-                ratchetStore.updateBackfillFloor(contact.id, re)
+            // Když durabilní zápis podlahy SELŽE, poll ukonči DŘÍV, než cokoli posune
+            // recvEpoch (jako „save před ACK") - jinak by restart po posunu recvEpoch,
+            // ale před připnutím podlahy, epochu ztratil (nález round-3-a-1). failed=true
+            // → volající zpomalí (backoff), migrace se zkusí příště.
+            if (ratchetState.backfillFloor < 0 && !ratchetStore.updateBackfillFloor(contact.id, re)) {
+                failed = true
+                return finishPoll(0)
             }
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
             // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
@@ -1476,8 +1481,16 @@ object RelaySync {
             // dávka odACKovaná, `lastFetchDrained`). Když backfill GET přechodně selže
             // (rozpadlý Tor okruh), podlaha zůstane a příští poll (i po restartu) to
             // zkusí znovu → reziduum v2.0-27: jediný neúspěšný pokus epochu neztratí.
-            // Zastropováno LOOKAHEAD (dočte se max tolik epoch za poll; skipped klíče
-            // sahají 1000 msgNo >> LOOKAHEAD*EPOCH_MSGS, takže bloby jdou dešifrovat).
+            // Zastropováno LOOKAHEAD - to jen rozloží dlouhou díru do víc pollů (za
+            // jeden poll se posune max o LOOKAHEAD), zbytek dožene další poll. POZOR:
+            // dešifrovatelnost backfill blobů NEzávisí na LOOKAHEAD, ale na tom, že
+            // skipped-store pořád drží klíče pro NEJNIŽŠÍ dočítané msgNo. `boundSkipped`
+            // ořezává na SKIP_MAX a odhazuje nejnižší (gen,msgNo) první - přesně ty,
+            // co backfill (odspodu nahoru) potřebuje. Skutečná invarianta: celá díra
+            // `(recvEpoch - backfillFloor)*EPOCH_MSGS <= SKIP_MAX`. Drží ji `recvKey`,
+            // který skok > SKIP_MAX odmítne (SkipTooLarge → karanténa, recvEpoch se
+            // neposune), takže díra nikdy nepřeroste SKIP_MAX. Kdyby někdo snížil
+            // SKIP_MAX nebo zvýšil EPOCH_MSGS, tahle mez se musí přepočítat.
             run {
                 val cur = ratchetStore.load(contact.id) ?: ratchetState
                 val recvNow = cur.recvEpoch
