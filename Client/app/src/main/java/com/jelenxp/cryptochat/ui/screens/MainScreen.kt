@@ -54,6 +54,7 @@ import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.DraftStore
 import com.jelenxp.cryptochat.chat.RelayConn
 import com.jelenxp.cryptochat.chat.RelayStatus
 import com.jelenxp.cryptochat.data.Contact
@@ -116,6 +117,10 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
     // dešifruje historii Keystorem a při víc kontaktech by to na hlavním vlákně
     // znamenalo zamrznutí až ANR.
     var previews by remember { mutableStateOf(previewCache) }
+    // Rozepsané drafty (contactId -> text) pro indikátor „Rozepsáno" v seznamu.
+    // Všechny naráz jedním dešifrováním (DraftStore drží jeden blob).
+    var drafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    val draftStore = remember { DraftStore(context) }
     LaunchedEffect(contacts) {
         // První načtení hned (ne až po prodlevě), ale na IO vlákně.
         previews = withContext(Dispatchers.IO) {
@@ -123,6 +128,7 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                 c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
             }
         }.also { previewCache = it }
+        drafts = withContext(Dispatchers.IO) { draftStore.all() }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 // Každý průchod dešifruje historii všech konverzací přes Keystore,
@@ -134,11 +140,13 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                         c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
                     }
                 }
+                val freshDrafts = withContext(Dispatchers.IO) { draftStore.all() }
                 // Přiřaď jen při změně, ať se seznam zbytečně nerekomponuje.
                 if (fresh != previews) {
                     previews = fresh
                     previewCache = fresh
                 }
+                if (freshDrafts != drafts) drafts = freshDrafts
             }
         }
     }
@@ -250,7 +258,8 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                                 modifier = Modifier.animateItemPlacement(),
                                 // Klik otevře konverzaci; detail/klíč je pod dlouhým stiskem.
                                 onClick = { navController.navigate("chat/${contact.id}") },
-                                onLongClick = { quickActions = contact }
+                                onLongClick = { quickActions = contact },
+                                draft = drafts[contact.id]
                             )
                         }
                     }
@@ -314,7 +323,8 @@ private fun ContactCard(
     innerPadding: androidx.compose.ui.unit.Dp,
     modifier: Modifier,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    draft: String? = null
 ) {
     val hasKey = contact.keyBase64 != null
     val isUnread = unread > 0
@@ -340,9 +350,11 @@ private fun ContactCard(
                 )
                 // Rozhodnutí, co ukázat, je v MainScreenLogic (testovatelné);
                 // tady se jen přeloží na text. Odchozí má prefix „Ty:".
-                val subtitle = when (val s = MainScreenLogic.contactSubtitle(hasKey, lastMessage)) {
+                val s = MainScreenLogic.contactSubtitle(hasKey, lastMessage, draft)
+                val subtitle = when (s) {
                     MainScreenLogic.Subtitle.NoKey -> stringResource(R.string.key_not_set)
                     MainScreenLogic.Subtitle.NoMessages -> stringResource(R.string.chat_preview_none)
+                    is MainScreenLogic.Subtitle.Draft -> stringResource(R.string.chat_preview_draft, s.text)
                     is MainScreenLogic.Subtitle.Last -> {
                         val body = when (s.kind) {
                             ChatMessage.Kind.IMAGE -> stringResource(R.string.chat_preview_photo)
@@ -352,13 +364,18 @@ private fun ContactCard(
                         if (s.fromMe) stringResource(R.string.chat_last_you, body) else body
                     }
                 }
+                val isDraft = s is MainScreenLogic.Subtitle.Draft
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (isUnread) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    // Rozepsáno zvýrazni značkovou barvou (jako u běžných messengerů).
+                    color = when {
+                        isDraft -> MaterialTheme.colorScheme.primary
+                        isUnread -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     fontWeight = if (isUnread) FontWeight.SemiBold else null
                 )
             }

@@ -382,6 +382,7 @@
     <string name="chat_image_unavailable">Image unavailable</string>
     <string name="chat_last_you">You: %1$s</string>
     <string name="chat_preview_none">No messages yet</string>
+    <string name="chat_preview_draft">Draft: %1$s</string>
     <string name="chat_peer_major_outdated">This contact is using an older version of the app. Your messages can\'t reach each other until they update.</string>
     <string name="chat_peer_major_newer">This contact is using a newer version of the app. Update CryptoChatServer to exchange messages again.</string>
     <string name="chat_peer_minor_outdated">This contact is using a slightly older version. Messages work, but some newer features may not.</string>

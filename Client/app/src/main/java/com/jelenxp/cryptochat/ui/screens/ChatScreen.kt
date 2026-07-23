@@ -94,6 +94,7 @@ import com.jelenxp.cryptochat.chat.ChatNotifications
 import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.DraftStore
 import com.jelenxp.cryptochat.chat.MediaTransfers
 import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RelaySync
@@ -146,6 +147,23 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
+
+    // Trvalý rozepsaný text (draft): přežije odchod z konverzace i restart.
+    // Načti ho JEDNOU při otevření (mimo main - dešifruje se Keystorem). `draftLoaded`
+    // gate zabrání, aby ukládací efekt níž smazal draft dřív, než ho vůbec načteme.
+    var draftLoaded by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        val draft = withContext(Dispatchers.IO) { DraftStore(context).get(id) }
+        if (draft.isNotEmpty()) input = draft
+        draftLoaded = true
+    }
+    // Ukládej rozepsaný text debounced (400 ms po posledním úhozu). Prázdný text
+    // draft smaže (po odeslání input="" → smaz). Nikdy před dokončením načtení.
+    LaunchedEffect(input, id, draftLoaded) {
+        if (!draftLoaded) return@LaunchedEffect
+        delay(400)
+        withContext(Dispatchers.IO) { DraftStore(context).set(id, input) }
+    }
 
     // Hledání v konverzaci: horní lišta se přepne na vyhledávací pole a seznam
     // ukazuje jen shodné zprávy. Filtr je čistá funkce v ChatScreenLogic.
@@ -383,6 +401,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 Toast.makeText(context, messageFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }
+            // Odesláno → draft hned zahoď (debounced efekt by ho stejně smazal, tohle
+            // je jen okamžité, ať se sem po zavření appky do 400 ms nevrátí).
+            withContext(Dispatchers.IO) { DraftStore(context).clear(id) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }

@@ -382,6 +382,7 @@
     <string name="chat_image_unavailable">Obrázek není dostupný</string>
     <string name="chat_last_you">Ty: %1$s</string>
     <string name="chat_preview_none">Zatím žádné zprávy</string>
+    <string name="chat_preview_draft">Rozepsáno: %1$s</string>
     <string name="chat_peer_major_outdated">Protějšek má starší verzi aplikace. Zprávy si navzájem nepřečtete, dokud si ji neaktualizuje.</string>
     <string name="chat_peer_major_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChatServer, aby si šlo zase psát.</string>
     <string name="chat_peer_minor_outdated">Protějšek má o něco starší verzi. Zprávy chodí, ale některé novější funkce nemusí fungovat.</string>

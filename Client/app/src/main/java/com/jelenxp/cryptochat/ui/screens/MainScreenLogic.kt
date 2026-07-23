@@ -47,6 +47,9 @@ object MainScreenLogic {
         /** Klíč je, ale žádná zpráva zatím nedorazila. */
         data object NoMessages : Subtitle
 
+        /** Rozepsaný neodeslaný text (má přednost před poslední zprávou). */
+        data class Draft(val text: String) : Subtitle
+
         /** Náhled poslední zprávy. [fromMe] = odchozí (prefix „Ty:"). */
         data class Last(
             val kind: ChatMessage.Kind,
@@ -60,10 +63,16 @@ object MainScreenLogic {
      *
      * **Priorita je záměrná:** chybějící klíč vyhraje i tehdy, když v historii
      * leží stará zpráva (třeba po obnově klíče) - jinak by seznam tvrdil, že jde
-     * psát, i když ještě ne.
+     * psát, i když ještě ne. Rozepsaný draft má přednost před poslední zprávou
+     * (jako v běžných messengerech), ale ne před chybějícím klíčem.
      */
-    fun contactSubtitle(hasKey: Boolean, lastMessage: ChatMessage?): Subtitle = when {
+    fun contactSubtitle(
+        hasKey: Boolean,
+        lastMessage: ChatMessage?,
+        draft: String? = null
+    ): Subtitle = when {
         !hasKey -> Subtitle.NoKey
+        !draft.isNullOrBlank() -> Subtitle.Draft(draft)
         lastMessage != null -> Subtitle.Last(
             kind = lastMessage.kind,
             text = lastMessage.text,
