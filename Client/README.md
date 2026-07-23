@@ -33,17 +33,19 @@ Each step explains why it's needed and takes you straight to the right settings 
 
 ## Adding a contact
 
-Tap **+**, enter the person's name, and pick how you'll connect:
+Tap **+**, enter the person's name, and pick your role:
 
-- **In person** — one phone shows the key (text + QR code), the other scans or pastes it.
-  Trust comes from the physical channel.
-- **Via invite (over the internet)** — one of you creates a **one-time invite code** and
-  reads it to the other, who types it in. The connection then sets up automatically using
-  a **post-quantum** key exchange (ML-KEM-768).
+- **Create an invite** — your phone shows a **one-time invite code** as text *and* as a
+  **QR code**.
+- **Enter an invite** — the other person types the code in, or taps **Scan QR** and points
+  the camera at the first phone. Scanning starts the pairing straight away.
 
-In both cases you then **compare a short verification code** out loud. Only if it matches
-on both phones is the contact saved — that code is what protects you from a
-man-in-the-middle.
+The connection then sets itself up using a **post-quantum** key exchange (ML-KEM-768).
+Afterwards you **compare a short verification code** out loud. Only if it matches on both
+phones is the contact saved — that code is what protects you from a man-in-the-middle.
+
+Once you've compared it, open the contact and tap **Mark as verified**. The app remembers
+it, and if that person's security code ever changes later, the conversation warns you.
 
 ## Chatting
 
@@ -51,11 +53,18 @@ man-in-the-middle.
 - Tap the **photo button** to send a picture from the **camera** or **gallery**. The photo
   is encrypted the same way; the other side sees it decrypted directly in the chat.
 - **Reply** — swipe a message from left to right, or hold it and pick Reply. The original
-  is quoted above your answer.
+  is quoted above your answer. **Tap the quote** to jump to the original message, which
+  lights up briefly.
 - **React** — hold a message and pick one of six emoji. Tapping the same one removes it.
   Both phones need a recent version; until then reactions simply aren't sent.
 - **Copy or delete** — holding a message also lets you copy its text or delete it from
   this phone only. The other person keeps their copy.
+- **Day separators** mark where each day starts (Today / Yesterday / date), and a
+  **"New messages"** line shows where you left off.
+- Scroll up and a **jump-to-latest button** appears, with a count of messages that arrived
+  meanwhile.
+- **Unfinished text is kept.** Leave the conversation — or restart the app — and it's still
+  there. The contact list marks such chats with **Draft**.
 - **Straight from the notification** — a new-message notification shows all the unseen
   messages as a conversation. You can **Reply** right there (it's sent as a normal message)
   or tap **Like** to put a 👍 on the last one. Opening the chat clears its notification.
@@ -80,6 +89,15 @@ it — on this or another phone — restores exactly the same state.
 By default the app uses the built-in relay over Tor. In **Chat server** you can switch to
 **Custom** and enter your own address (your own relay on your local network or your own
 `.onion`).
+
+You can also list **backup servers**, one address per line. If the main one doesn't answer,
+messages go out over a backup — and the app looks for incoming ones there too. Because a
+mailbox address is derived from your shared key, the same mailbox exists on every server,
+so the two phones don't have to agree on which one to use.
+
+**Settings → Connection diagnostics** shows how Tor is starting up, how the server is
+responding (success rate, response time) and the last few log lines. Server addresses and
+mailbox identifiers are never shown there.
 
 ## Security at a glance
 
@@ -157,17 +175,20 @@ U každého kroku je vysvětlené proč a tlačítko, které tě pošle rovnou d
 
 ## Přidání kontaktu
 
-Ťukni na **+**, zadej jméno a vyber, jak se spojíte:
+Ťukni na **+**, zadej jméno a vyber svou roli:
 
-- **Osobně** — jeden telefon ukáže klíč (text + QR kód), druhý ho naskenuje nebo vloží.
-  Důvěra plyne z fyzického kanálu.
-- **Na pozvánku (přes internet)** — jeden z vás vytvoří **jednorázový pozvánkový kód** a
-  řekne ho druhému, ten ho zadá. Spojení se pak naváže automaticky **post-kvantovou**
-  výměnou klíče (ML-KEM-768).
+- **Vytvořit pozvánku** — tvůj telefon ukáže **jednorázový pozvánkový kód** jako text *i*
+  jako **QR kód**.
+- **Zadat pozvánku** — druhý ho buď opíše, nebo ťukne na **Naskenovat QR** a namíří foťák
+  na první telefon. Naskenováním se párování rovnou spustí.
 
-V obou případech si pak **nahlas porovnáte krátký ověřovací kód**. Kontakt se uloží, jen
-když se na obou telefonech shoduje — právě ten kód tě chrání před útokem
-man-in-the-middle.
+Spojení se pak naváže automaticky **post-kvantovou** výměnou klíče (ML-KEM-768). Potom si
+**nahlas porovnáte krátký ověřovací kód**. Kontakt se uloží, jen když se na obou telefonech
+shoduje — právě ten kód tě chrání před útokem man-in-the-middle.
+
+Až si kód porovnáte, otevři kontakt a ťukni na **Označit jako ověřený**. Appka si to
+zapamatuje, a kdyby se bezpečnostní kód toho člověka někdy později změnil, konverzace tě
+varuje.
 
 ## Chatování
 
@@ -175,11 +196,18 @@ man-in-the-middle.
 - Tlačítkem **fotky** pošleš obrázek z **foťáku** nebo **galerie**. Fotka se šifruje stejně
   jako zprávy a druhá strana ji vidí rovnou dešifrovanou přímo v chatu.
 - **Odpověď** — přetáhni zprávu zleva doprava, nebo ji podrž a zvol Odpovědět. Původní
-  zpráva se ukáže nad tvojí odpovědí.
+  zpráva se ukáže nad tvojí odpovědí. **Ťuknutím na citaci** skočíš na původní zprávu,
+  která se na chvíli rozsvítí.
 - **Reakce** — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zruší.
   Oba telefony potřebují novější verzi; do té doby se reakce prostě neposílají.
 - **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat
   jen z tohohle telefonu. Protějšku jeho kopie zůstane.
+- **Oddělovače dnů** ukazují, kde začíná který den (Dnes / Včera / datum), a čára
+  **„Nové zprávy"** označí, kde jsi skončil.
+- Když odroluješ nahoru, objeví se **tlačítko skoku na konec** s počtem zpráv, které mezitím
+  dorazily.
+- **Rozepsaný text se uchová.** Odejdeš z konverzace — nebo restartuješ appku — a pořád tam
+  je. V seznamu kontaktů se takový chat označí jako **Rozepsáno**.
 - **Přímo z oznámení** — oznámení o nové zprávě ukáže všechny nepřečtené zprávy jako
   konverzaci. Můžeš na něj rovnou **Odpovědět** (odešle se jako normální zpráva) nebo
   ťuknout na **To se mi líbí** a dát 👍 na poslední. Otevřením chatu oznámení zmizí.
@@ -204,6 +232,15 @@ nebo jiném telefonu — obnoví přesně stejný stav.
 Ve výchozím stavu appka používá zabudovaný relay přes Tor. V **Serveru chatu** můžeš
 přepnout na **Vlastní** a zadat svou adresu (vlastní relay v místní síti nebo vlastní
 `.onion`).
+
+Můžeš taky vypsat **záložní servery**, jednu adresu na řádek. Když hlavní neodpovídá,
+zprávy odejdou přes záložní — a appka tam hledá i příchozí. Adresa schránky se odvozuje ze
+sdíleného klíče, takže stejná schránka existuje na každém serveru a telefony se nemusí
+domlouvat, který zrovna použít.
+
+**Nastavení → Diagnostika připojení** ukáže, jak se rozjíždí Tor, jak odpovídá server
+(úspěšnost, doba odezvy) a posledních pár řádků logu. Adresy serverů ani identifikátory
+schránek se tam nikdy nezobrazují.
 
 ## Zabezpečení ve zkratce
 
