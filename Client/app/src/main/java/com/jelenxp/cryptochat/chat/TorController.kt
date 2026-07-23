@@ -108,6 +108,7 @@ object TorController {
                 BOOTSTRAP_RE.find(line)?.let { match ->
                     val percent = match.groupValues[1]
                     DiagnosticsLog.log(TAG, "bootstrap Toru $percent %")
+                    percent.toIntOrNull()?.let { TorManager.noteBootstrapPercent(it) }
                     // Teprve po 100 % má Tor postavené okruhy a má smysl posílat
                     // požadavky na onion službu (viz TorManager.awaitReady).
                     if (percent == "100") TorManager.markBootstrapped()

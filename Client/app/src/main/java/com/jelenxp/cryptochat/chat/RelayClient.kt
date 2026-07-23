@@ -294,6 +294,7 @@ object RelayClient {
                 val elapsed = System.currentTimeMillis() - t0
                 Log.i(TAG, "onion $method -> HTTP ${r.code} (${elapsed} ms, pokus ${attempt + 1})")
                 DiagnosticsLog.log(TAG, "onion $method -> HTTP ${r.code} ($elapsed ms, pokus ${attempt + 1})")
+                RelayTelemetry.recordSuccess(elapsed)
                 return r
             } catch (e: AfterSendException) {
                 // Neopakuj jen u PUT: zápis u serveru možná prošel a opakování by
@@ -308,6 +309,7 @@ object RelayClient {
                         "${e.cause?.javaClass?.simpleName}")
                     DiagnosticsLog.warn(TAG, "onion $method selhal po odeslání, neopakuji " +
                         "(${e.cause?.javaClass?.simpleName})")
+                    RelayTelemetry.recordFailure(e.cause?.javaClass?.simpleName ?: "AfterSend")
                     throw e
                 }
                 last = e
@@ -336,7 +338,9 @@ object RelayClient {
                 }
             }
         }
-        throw last ?: IOException("onion request failed")
+        val err = last ?: IOException("onion request failed")
+        RelayTelemetry.recordFailure(err.javaClass.simpleName)
+        throw err
     }
 
     // --- Přímé spojení (http/https) ---

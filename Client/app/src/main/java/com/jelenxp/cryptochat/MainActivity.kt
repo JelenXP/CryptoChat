@@ -68,6 +68,7 @@ import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
 import com.jelenxp.cryptochat.ui.screens.BugReportScreen
 import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
+import com.jelenxp.cryptochat.ui.screens.DiagnosticsScreen
 import com.jelenxp.cryptochat.ui.screens.ChatScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
 import com.jelenxp.cryptochat.ui.screens.DesignScreen
@@ -587,6 +588,10 @@ fun CryptoChatApp(
                 version = currentVersionName(LocalContext.current),
                 onDismiss = { navController.popBackStack() }
             )
+        }
+
+        composable("diagnostics") {
+            DiagnosticsScreen(navController = navController)
         }
 
         composable(

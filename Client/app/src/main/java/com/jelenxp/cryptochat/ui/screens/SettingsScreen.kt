@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material3.*
@@ -314,6 +315,12 @@ fun SettingsScreen(navController: NavController) {
                 title = stringResource(R.string.about_changelog_label),
                 description = stringResource(R.string.about_changelog_desc),
                 onClick = { navController.navigate("changelog") }
+            )
+            NavCard(
+                icon = Icons.Default.NetworkCheck,
+                title = stringResource(R.string.diag_settings_label),
+                description = stringResource(R.string.diag_settings_desc),
+                onClick = { navController.navigate("diagnostics") }
             )
             if (FeatureFlags.UPDATE_CHECK_ENABLED) {
                 NavCard(

@@ -39,12 +39,23 @@ object TorManager {
     var bootstrapped: Boolean = false
         private set
 
+    /** Poslední známé procento bootstrapu Toru (0-100). Jen pro diagnostiku. */
+    @Volatile
+    var bootstrapPercent: Int = 0
+        private set
+
     private val lock = Object()
+
+    /** Zaznamená aktuální procento bootstrapu (z hlášky Toru). Diagnostika. */
+    fun noteBootstrapPercent(percent: Int) {
+        bootstrapPercent = percent.coerceIn(0, 100)
+    }
 
     /** Zaznamená dokončený bootstrap a probudí čekatele. */
     fun markBootstrapped() {
         synchronized(lock) {
             bootstrapped = true
+            bootstrapPercent = 100
             lock.notifyAll()
         }
     }
