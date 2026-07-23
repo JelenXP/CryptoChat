@@ -7,7 +7,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,19 +65,22 @@ fun PairInviteScreen(
     val settings = remember { SettingsRepository(context) }
     val baseUrl = remember { settings.getRelayUrl() }
 
-    // Jednorázová pozvánka (kanonická podoba pro výpočty, formát jen pro zobrazení).
-    // MUSÍ přežít otočení telefonu - jinak by se vygeneroval nový kód do jiné
-    // schránky a ten, který protistrana právě opisuje, by přestal platit.
-    val invite = rememberSaveable { Pairing.generateInvite() }
+    // Veškerý stav párování je JEN v paměti (`remember`, NE `rememberSaveable`):
+    // orientaci drží LockPortraitWhileVisible, takže rotace obrazovku nerekreuje a
+    // saveable není k ničemu. Hlavně ale odvozený `aesKey` (šifrovací klíč konverzace)
+    // a `sas` NESMÍ do savedInstanceState - ten OS může uložit i na disk (stejně jako
+    // RemoteInitScreen/RemoteCompleteScreen). Na smrt procesu se párování radši rozjede
+    // znovu (čerstvá pozvánka) než aby se obnovil půl-stav s prázdným klíčem.
+    val invite = remember { Pairing.generateInvite() }
     // QR s pozvánkou (kóduje se formát pro zobrazení - protistrana ho po skenu
     // stejně prožene `Pairing.normalize`, takže oddělovače nevadí). Bitmapa se
     // spočítá jen jednou; QR je jen pohodlnější podoba téhož kódu, ne tajemství.
     val inviteQr = remember(invite) { generateQrBitmap(Pairing.formatForDisplay(invite)).asImageBitmap() }
 
-    var phase by rememberSaveable { mutableStateOf(if (baseUrl.isBlank()) InvitePhase.NO_RELAY else InvitePhase.WAITING) }
-    var sas by rememberSaveable { mutableStateOf("") }
-    var aesKey by rememberSaveable { mutableStateOf("") }
-    var error by rememberSaveable { mutableStateOf("") }
+    var phase by remember { mutableStateOf(if (baseUrl.isBlank()) InvitePhase.NO_RELAY else InvitePhase.WAITING) }
+    var sas by remember { mutableStateOf("") }
+    var aesKey by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
 
     // Nahraje veřejný klíč do rendezvous schránky a čeká na odpověď protistrany.
     LaunchedEffect(Unit) {

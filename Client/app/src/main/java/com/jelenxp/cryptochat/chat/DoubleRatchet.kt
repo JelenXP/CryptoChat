@@ -300,6 +300,14 @@ object DoubleRatchet {
      * resetují na 0; skipped-store se ZACHOVÁ (staré klíče tagované starou generací
      * kvůli grace). **Obě strany MUSÍ volat se stejným `ssB64` a stejným kořenem**,
      * jinak se řetěze rozejdou. Dotýká se obou půlek → aplikuj pod plným zámkem.
+     *
+     * **Hranice grace (nález v2.1-R1, by-design):** chrání se JEN JEDNA předchozí
+     * generace (`prevRecv*`). Když se stihnou DVA re-key za sebou (G→G+1→G+2) dřív,
+     * než dorazí opožděný in-order konec generace G (jehož klíč není ve `skipped`),
+     * spadne taková zpráva do `AlreadyConsumed` a klíč gen G je už přepsán → ztráta.
+     * Okno je prakticky nedosažitelné (dva 3-cestné handshaky mezi sebou vyžadují
+     * provoz gatovaný `rekeyMarker`, který ten in-flight tail mezitím dotáhne), takže
+     * druhou prev generaci schválně nedržíme.
      */
     fun applyRekey(state: RatchetState, ssB64: String, sendDir: Int, recvDir: Int): RatchetState {
         val ikm = Base64Util.decode(state.rootKeyB64) + Base64Util.decode(ssB64)

@@ -38,6 +38,21 @@ data class TelemetryState(
         lastErrorType = null
     )
 
+    /**
+     * Zaznamená ÚSPĚŠNÝ request, jehož RTT je ale nevypovídající: long-poll GET
+     * drží spojení úmyslně až ~60 s, takže jeho „doba odezvy" není RTT a zanesla by
+     * [avgRttMs] na desítky sekund (a znehodnotila celý účel telemetrie - odlišit
+     * „server spí" od „Tor se staví"). Aktualizuje tedy dostupnost (reset
+     * [consecutiveFailures], [lastSuccessAt]), ale RTT NECHÁ být. Nález v2.1-P2.
+     */
+    fun withReachable(now: Long): TelemetryState = copy(
+        requests = requests + 1,
+        successes = successes + 1,
+        consecutiveFailures = 0,
+        lastSuccessAt = now,
+        lastErrorType = null
+    )
+
     /** Zaznamená selhaný request (po vyčerpání pokusů) daného typu. */
     fun withFailure(errorType: String): TelemetryState = copy(
         requests = requests + 1,
@@ -58,6 +73,9 @@ object RelayTelemetry {
     private val ref = AtomicReference(TelemetryState())
 
     fun recordSuccess(rttMs: Long) = update { it.withSuccess(rttMs, System.currentTimeMillis()) }
+
+    /** Úspěch bez vypovídajícího RTT (long-poll) - viz [TelemetryState.withReachable]. */
+    fun recordReachable() = update { it.withReachable(System.currentTimeMillis()) }
 
     fun recordFailure(errorType: String) = update { it.withFailure(errorType) }
 

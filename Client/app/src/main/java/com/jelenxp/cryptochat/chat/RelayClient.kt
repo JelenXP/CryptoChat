@@ -151,7 +151,7 @@ object RelayClient {
             // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
             val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
             val attempts = if (waitSeconds > 0) ONION_POLL_ATTEMPTS else ONION_ATTEMPTS
-            val response = onionRequest(target, "GET", null, readTimeout, attempts, isolation = mailboxId)
+            val response = onionRequest(target, "GET", null, readTimeout, attempts, isolation = mailboxId, longPoll = waitSeconds > 0)
             when (response.code) {
                 204 -> Fetched(emptyList(), -1)
                 200 -> Fetched(unframe(response.body), response.seq())
@@ -266,7 +266,10 @@ object RelayClient {
         readTimeoutMs: Int,
         attempts: Int = ONION_ATTEMPTS,
         contentType: String = OCTET_CONTENT_TYPE,
-        isolation: String = "default"
+        isolation: String = "default",
+        // U long-pollu se do telemetrie nezanáší RTT (jeho „odezva" je úmyslné
+        // čekání ~60 s) - jen dostupnost. Viz [RelayTelemetry] / nález v2.1-P2.
+        longPoll: Boolean = false
     ): Response {
         if (!TorManager.awaitReady(TOR_READY_TIMEOUT_MS)) {
             Log.w(TAG, "onion $method: Tor není včas připravený")
@@ -294,7 +297,14 @@ object RelayClient {
                 val elapsed = System.currentTimeMillis() - t0
                 Log.i(TAG, "onion $method -> HTTP ${r.code} (${elapsed} ms, pokus ${attempt + 1})")
                 DiagnosticsLog.log(TAG, "onion $method -> HTTP ${r.code} ($elapsed ms, pokus ${attempt + 1})")
-                RelayTelemetry.recordSuccess(elapsed)
+                // Telemetrie: non-2xx je anomálie (server žije, ale chybuje) - nezanášej
+                // ji jako čistý úspěch/RTT. Úspěšný long-poll dokazuje dostupnost, ale RTT
+                // je čekání → jen reset počítadla selhání. Nález v2.1-P2/P3.
+                when {
+                    r.code !in 200..299 -> RelayTelemetry.recordFailure("HTTP${r.code}")
+                    longPoll -> RelayTelemetry.recordReachable()
+                    else -> RelayTelemetry.recordSuccess(elapsed)
+                }
                 return r
             } catch (e: AfterSendException) {
                 // Neopakuj jen u PUT: zápis u serveru možná prošel a opakování by

@@ -7,13 +7,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
+import com.jelenxp.cryptochat.chat.DraftStore
 import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.PendingReactions
+import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.chat.ReplayGuard
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.data.Contact
 import com.jelenxp.cryptochat.data.ContactBackup
 import com.jelenxp.cryptochat.data.ContactRepository
+import com.jelenxp.cryptochat.data.TrustStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,8 +42,9 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     /**
      * Smaže kontakt VČETNĚ všeho, co k němu patří. Samotný záznam kontaktu
      * nestačí - historie zpráv (i s fotkami), počítadlo nepřečtených, otisky
-     * proti replay i stav kompatibility by jinak zůstaly na disku, ačkoli
-     * uživatel čeká, že smazáním kontaktu je pryč všechno.
+     * proti replay, stav kompatibility, KLÍČOVÝ MATERIÁL RATCHETU (root/chain
+     * klíče konverzace), ověřený otisk (trust) i rozepsaný draft by jinak zůstaly
+     * na disku, ačkoli uživatel čeká, že smazáním kontaktu je pryč všechno.
      */
     fun deleteContact(id: String): Boolean {
         val success = repository.delete(id)
@@ -55,10 +59,30 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
             runCatching { BlobQuarantine.clear(ctx, id) }
             runCatching { PendingReactions.clear(id) }
             runCatching { MuteStore.clear(ctx, id) }
+            // Ratchet klíče konverzace jsou CITLIVĚJŠÍ než replay otisky, které se
+            // mazaly - bez tohohle by root/chain klíč zůstal na disku.
+            runCatching { RatchetStore(ctx).clear(id) }
+            runCatching { TrustStore(ctx).clear(id) }
+            runCatching { DraftStore(ctx).clear(id) }
             runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
         }
         refresh()
         return success
+    }
+
+    /**
+     * Změna sdíleného klíče (re-key / re-pairing) MUSÍ zahodit ratchet stav: poll
+     * bootstrapuje ratchet JEN z prázdného stavu ([RelaySync] `is Absent`), takže
+     * nad existujícím stavem seedovaným ze STARÉHO klíče by se re-bootstrap nikdy
+     * nespustil a zprávy by se dál řetězily ze starého rootu - čerstvý post-kvantový
+     * klíč by se pro šifrování obsahu vůbec nepoužil (přínos re-pairingu, PCS/uzdravení
+     * z úniku klíče, by se tiše ztratil). Obě strany re-key uloží nový klíč, obě tak
+     * zahodí stav a re-bootstrapují z nového klíče.
+     */
+    private fun clearRatchetIfKeyChanged(existing: Contact?, id: String?, newKey: String) {
+        if (existing != null && id != null && existing.keyBase64 != newKey) {
+            runCatching { RatchetStore(getApplication()).clear(id) }
+        }
     }
 
     fun getContact(id: String): Contact? =
@@ -81,6 +105,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         initiator: Boolean
     ): Boolean {
         val existing = contactId?.let { getContact(it) }
+        clearRatchetIfKeyChanged(existing, contactId, keyBase64)
         val contact = existing?.copy(keyBase64 = keyBase64, initiator = initiator)
             ?: Contact(
                 id = contactId ?: UUID.randomUUID().toString(),
@@ -99,6 +124,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
      */
     fun saveChatContact(contactId: String?, name: String, keyBase64: String, initiator: Boolean): Boolean {
         val existing = contactId?.let { getContact(it) }
+        clearRatchetIfKeyChanged(existing, contactId, keyBase64)
         val contact = existing?.copy(keyBase64 = keyBase64, initiator = initiator)
             ?: Contact(
                 id = contactId ?: UUID.randomUUID().toString(),

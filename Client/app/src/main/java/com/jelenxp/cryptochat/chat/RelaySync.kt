@@ -979,6 +979,11 @@ object RelaySync {
         // (ratchet / prev-epocha / aktuální) poll skončil.
         // Kolik zpráv přišlo ze ZÁLOŽNÍCH relayí (failover příjmu, sweep ve finishPoll).
         var secondaryReceived = 0
+        // Podlaha backfillu ZAČÁTKU tohoto pollu (ratchet větev ji nastaví před prvním
+        // fetchem). Sweep záložních relayí ji čte, aby prohledal celé durabilní přijímací
+        // okno - primární backfill mohl v tomhle pollu posunout podlahu přes epochu, která
+        // na fallbacku ještě leží (nález v2.1-P1b). Null v legacy větvi (bez backfillu).
+        var sweepFloorStart: Int? = null
 
         // Vyzvedne jednu schránku (dané epochy), otevře bloby a uloží je. Vrací
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
@@ -1471,16 +1476,19 @@ object RelaySync {
 
         // Dokončí poll: FAILOVER PŘÍJMU (sweep záložních relayí) + potvrzení
         // doručení. Jediné místo, kudy se z pollu vrací.
-        fun finishPoll(n: Int): PollResult {
+        fun finishPoll(n: Int, allowSweep: Boolean = true): PollResult {
             // Sweep záložních relayí: protějšek mohl při výpadku primárního poslat
             // tam. Aditivní (jen fetche na jiné URL; primární logika nedotčená,
             // duplicity řeší ReplayGuard/wireId). Když primární právě NEodpověděl
             // (!reachable), zkus zálohy HNED; jinak jen ŘÍDCE (šetření baterie).
             // Platí se jen s nakonfigurovanými zálohami (jinak seznam prázdný).
+            // [allowSweep]=false: volající ještě neposunul stav durabilně (migrační
+            // bail, bf<0) - sweep by přes fetch→saveRecv posunul recvEpoch mimo
+            // durabilní podlahu → ztráta epochy (nález v2.1-P1a).
             val fallbacks = SettingsRepository(context).getRelayUrls().drop(1)
             val nowMs = System.currentTimeMillis()
             val lastSwept = secondarySweptAt[contact.id]
-            val sweep = fallbacks.isNotEmpty() &&
+            val sweep = allowSweep && fallbacks.isNotEmpty() &&
                 (!reachable || lastSwept == null || nowMs - lastSwept >= SECONDARY_SWEEP_MS)
             if (sweep) {
                 // Stav záloh NESMÍ ovlivnit backoff/dostupnost primárního (mrtvá
@@ -1492,8 +1500,20 @@ object RelaySync {
                 for (fb in fallbacks) {
                     if (rs != null) {
                         val re2 = rs.recvEpoch
-                        secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, re2), 0, ratchet = true, url = fb)
-                        secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, re2 + 1), 0, ratchet = true, url = fb)
+                        // Prohledej celé DURABILNÍ přijímací okno [podlaha-začátku-pollu ..
+                        // re2+1], ne jen 2 sousední epochy: zpráva ležící JEN na záložním
+                        // relayi v nižší epoše (primární ji floornul jako prázdnou) by se
+                        // jinak nikdy nevyzvedla (nález v2.1-P1b). Podlaha ZAČÁTKU pollu
+                        // (ne aktuální) proto, že primární backfill ji mohl v tomhle pollu
+                        // posunout přes epochu, která na fallbacku ještě leží. Strop
+                        // LOOKAHEAD drží počet onion GETů rozumný; zbytek okna dožene další
+                        // sweep, jak podlaha stoupá.
+                        val floorStart = (sweepFloorStart ?: re2).coerceAtMost(re2)
+                        val to = minOf(re2, floorStart + DoubleRatchet.LOOKAHEAD)
+                        val sweepEpochs = ((floorStart..to) + re2 + (re2 + 1)).distinct()
+                        for (e in sweepEpochs) {
+                            secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, e), 0, ratchet = true, url = fb)
+                        }
                     } else {
                         secondaryReceived += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false, url = fb)
                     }
@@ -1513,6 +1533,9 @@ object RelaySync {
             var received = 0
             val re = ratchetState.recvEpoch
             val now = System.currentTimeMillis()
+            // Podlaha na začátku pollu (než ji sousední fetch / backfill posune) - sweep
+            // fallbacků z ní odvodí spodní hranu okna (viz finishPoll / nález v2.1-P1b).
+            sweepFloorStart = ratchetState.backfillFloor.let { if (it < 0) re else it }
             // Migrace stavů z doby před polem `backfillFloor` (bf<0): připni podlahu
             // na aktuální recvEpoch DURABILNĚ, JEŠTĚ než sousední fetch recvEpoch
             // posune - jinak by restart mezi posunem a backfillem podlahu (a s ní
@@ -1524,7 +1547,9 @@ object RelaySync {
             // → volající zpomalí (backoff), migrace se zkusí příště.
             if (ratchetState.backfillFloor < 0 && !ratchetStore.updateBackfillFloor(contact.id, re)) {
                 failed = true
-                return finishPoll(0)
+                // allowSweep=false: podlaha není durabilní, takže sweep NESMÍ posunout
+                // recvEpoch (jako „save před ACK") - jinak nález v2.1-P1a.
+                return finishPoll(0, allowSweep = false)
             }
             // Rychle: sousední epocha (odesílatel mohl posunout epochu po 32 zprávách).
             // Chytí běžný jednokrokový posun HNED, bez čekání na beacon.
