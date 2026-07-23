@@ -10,8 +10,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import android.graphics.Bitmap
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -19,6 +21,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import com.jelenxp.cryptochat.ui.util.decodeSampledFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -38,9 +42,17 @@ fun ContactAvatar(
     // Podvzorkovaně a s ochranou proti OutOfMemoryError (viz decodeSampledFile).
     // 512 px bohatě stačí i pro největší zobrazení avataru, ale zabrání načtení
     // několikamegapixelové fotky v plné velikosti do paměti.
-    val bitmap = remember(avatarPath) {
-        avatarPath?.let { path ->
-            if (File(path).exists()) decodeSampledFile(path, reqPx = 512) else null
+    //
+    // Dekóduje se MIMO hlavní vlákno: dřív to bylo v `remember`, tedy disková IO
+    // plus JPEG dekód přímo v kompozici, a to pro KAŽDÝ řádek seznamu kontaktů.
+    // Na rychlém telefonu neznatelné, na pomalejším to shazovalo snímky a s nimi
+    // i klepnutí. Než bitmapa dojde, drží se iniciála a Crossfade ji pak prolne -
+    // což je přesně to, co se dělo i dřív při změně fotky.
+    val bitmap by produceState<Bitmap?>(initialValue = null, key1 = avatarPath) {
+        value = withContext(Dispatchers.IO) {
+            avatarPath?.let { path ->
+                if (File(path).exists()) decodeSampledFile(path, reqPx = 512) else null
+            }
         }
     }
 

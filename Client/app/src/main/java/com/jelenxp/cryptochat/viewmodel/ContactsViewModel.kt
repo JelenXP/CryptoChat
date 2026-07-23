@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.DraftStore
@@ -26,15 +27,38 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
 
     private val repository = ContactRepository(application)
 
+    // První načtení je synchronní schválně: proběhne jednou, ještě před prvním
+    // snímkem, a drží [getContact] u toho, aby nemusel sahat na repozitář z
+    // kompozice. Každé DALŠÍ načtení už jde přes [refresh] mimo hlavní vlákno.
     private val _contacts = MutableStateFlow(repository.getContacts())
     val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
 
+    /**
+     * Znovu načte kontakty ze storage - **mimo hlavní vlákno**.
+     *
+     * `getContacts()` dešifruje jméno i klíč každého kontaktu neexportovatelným
+     * klíčem z Android Keystore, tedy dvě operace přes binder do TEE na kontakt.
+     * Na rychlém telefonu se to schová do jednoho snímku, na pomalejším (jiný
+     * TEE) to při každém vstupu na seznam i po každé změně kontaktu zamrzlo UI a
+     * klepnutí padala pod stůl. Volající na výsledek nečeká - seznam je
+     * `StateFlow` a překreslí se, jakmile data dojdou.
+     */
     fun refresh() {
-        _contacts.value = repository.getContacts()
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) { repository.getContacts() }
+            _contacts.value = loaded
+        }
     }
 
     fun addOrUpdateContact(contact: Contact): Boolean {
         val success = repository.addOrUpdate(contact)
+        // Protože [refresh] je asynchronní, zapiš kontakt do flow rovnou: jinak by
+        // obrazovka, která se na něj hned po uložení zeptá (`getContact`), spadla
+        // do synchronního fallbacku přes Keystore - tedy přesně to, čemu se
+        // vyhýbáme. Pořadí dorovná refresh, seznam se stejně řadí podle aktivity.
+        if (success) {
+            _contacts.value = _contacts.value.filterNot { it.id == contact.id } + contact
+        }
         refresh()
         return success
     }
@@ -48,6 +72,9 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
      */
     fun deleteContact(id: String): Boolean {
         val success = repository.delete(id)
+        // Stejný důvod jako u [addOrUpdateContact]: refresh je asynchronní, takže
+        // smazaný kontakt odeber z flow hned, ať nezůstane v seznamu do doběhnutí.
+        if (success) _contacts.value = _contacts.value.filterNot { it.id == id }
         val ctx = getApplication<Application>()
         // Úklid (mazání adresářů, prefs) běží mimo hlavní vlákno - volá se přímo
         // z kliknutí a rekurzivní mazání by jinak zamrzlo UI. Na výsledek se

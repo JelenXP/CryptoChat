@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.jelenxp.cryptochat.ui.components.LocalUiBlocked
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -280,7 +281,9 @@ private fun AppLockGate(content: @Composable () -> Unit) {
     // odemčení uživatel skončí přesně tam, kde byl (důležité u rozdělané
     // výměny klíče na dálku, kdy na pár sekund odejde z appky).
     Box(modifier = Modifier.fillMaxSize()) {
-        content()
+        // Pod zámkem se stejně nedá nic ovládat - ať zakrytá obrazovka neplýtvá
+        // hlavním vláknem na obnovování něčeho, co není vidět (viz LocalUiBlocked).
+        CompositionLocalProvider(LocalUiBlocked provides needsUnlock) { content() }
         // Zámek při ZAMYKÁNÍ naskočí OKAMŽITĚ (EnterTransition.None), ne fadem -
         // jinak by se během ~200 ms nasouvání dal pod poloprůhledným překryvem
         // číst obsah (typicky otevřená konverzace s dešifrovanými zprávami), což
@@ -294,17 +297,26 @@ private fun AppLockGate(content: @Composable () -> Unit) {
         ) {
             // Neprůhledný celoobrazovkový překryv, který navíc pohltí doteky,
             // aby nešlo omylem ovládat skrytý obsah pod zámkem.
+            //
+            // Polykat doteky se smí JEN dokud je zámek opravdu potřeba. Během
+            // odemykacího fadu (220 ms) je překryv pořád složený a jako sourozenec
+            // leží NAD obsahem - kdyby dál polykal, prvních 220 ms po odemčení by
+            // appka nereagovala na klepnutí. Na rychlém telefonu to splyne s
+            // animací, na pomalejším je to znát. Obsah je během fadu legitimně
+            // vidět (proto ten fade existuje), takže ho smí jít i ovládat.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                awaitPointerEvent().changes.forEach { it.consume() }
+                    .then(
+                        if (needsUnlock) Modifier.pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent().changes.forEach { it.consume() }
+                                }
                             }
-                        }
-                    }
+                        } else Modifier
+                    )
             ) {
                 LockScreen(onUnlocked = { needsUnlock = false })
             }
@@ -369,8 +381,12 @@ private fun StartupGate(content: @Composable () -> Unit) {
         }
     }
 
+    val overlayShown = showChangelog || (updateEligible && updateInfo != null)
+
     Box(modifier = Modifier.fillMaxSize()) {
-        content()
+        // Obsahu pod překryvem řekni, že je zakrytý - pozastaví periodickou práci,
+        // ať nekonkuruje o hlavní vlákno, zatímco uživatel klepe do překryvu.
+        CompositionLocalProvider(LocalUiBlocked provides overlayShown) { content() }
         val info = updateInfo
         when {
             // Novinky mají přednost; teprve po jejich zavření se případně ukáže update.

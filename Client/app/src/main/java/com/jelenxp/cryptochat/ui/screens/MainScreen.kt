@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
@@ -60,6 +61,7 @@ import com.jelenxp.cryptochat.chat.RelayStatus
 import com.jelenxp.cryptochat.data.Contact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
@@ -70,6 +72,7 @@ import java.util.Locale
 import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
+import com.jelenxp.cryptochat.ui.components.LocalUiBlocked
 import com.jelenxp.cryptochat.ui.theme.LocalUiSpacing
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
@@ -117,6 +120,8 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
     // dešifruje historii Keystorem a při víc kontaktech by to na hlavním vlákně
     // znamenalo zamrznutí až ANR.
     var previews by remember { mutableStateOf(previewCache) }
+    // Leží nad seznamem blokující překryv? Pak se poll níž pozastaví.
+    val uiBlocked = LocalUiBlocked.current
     // Rozepsané drafty (contactId -> text) pro indikátor „Rozepsáno" v seznamu.
     // Všechny naráz jedním dešifrováním (DraftStore drží jeden blob).
     var drafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -130,23 +135,30 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
         }.also { previewCache = it }
         drafts = withContext(Dispatchers.IO) { draftStore.all() }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                // Každý průchod dešifruje historii všech konverzací přes Keystore,
-                // takže krátký interval by při rozsvícené obrazovce zbytečně žral
-                // CPU. 5 s je na živý náhled pořád dost svižné.
-                delay(5000)
-                val fresh = withContext(Dispatchers.IO) {
-                    contacts.associate { c ->
-                        c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
+            // Pod blokujícím překryvem (zámek, Novinky, upozornění na aktualizaci)
+            // seznam stejně není vidět ani ovladatelný - a překreslování s
+            // animací přesunů by konkurovalo o hlavní vlákno právě ve chvíli, kdy
+            // uživatel klepe na tlačítka v překryvu. Viz [LocalUiBlocked].
+            snapshotFlow { uiBlocked }.collectLatest { blocked ->
+                if (blocked) return@collectLatest
+                while (true) {
+                    // Každý průchod dešifruje historii všech konverzací přes Keystore,
+                    // takže krátký interval by při rozsvícené obrazovce zbytečně žral
+                    // CPU. 5 s je na živý náhled pořád dost svižné.
+                    delay(5000)
+                    val fresh = withContext(Dispatchers.IO) {
+                        contacts.associate { c ->
+                            c.id to (chatRepo.getLastMessage(c.id) to chatRepo.getUnreadCount(c.id))
+                        }
                     }
+                    val freshDrafts = withContext(Dispatchers.IO) { draftStore.all() }
+                    // Přiřaď jen při změně, ať se seznam zbytečně nerekomponuje.
+                    if (fresh != previews) {
+                        previews = fresh
+                        previewCache = fresh
+                    }
+                    if (freshDrafts != drafts) drafts = freshDrafts
                 }
-                val freshDrafts = withContext(Dispatchers.IO) { draftStore.all() }
-                // Přiřaď jen při změně, ať se seznam zbytečně nerekomponuje.
-                if (fresh != previews) {
-                    previews = fresh
-                    previewCache = fresh
-                }
-                if (freshDrafts != drafts) drafts = freshDrafts
             }
         }
     }

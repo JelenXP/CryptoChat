@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -1117,16 +1118,28 @@ private fun MessageRow(
             // dál jdou gesta na zbytek konverzace.
             //
             // Animace: při vyskočení scale 0.85→1 + fade in, při skrytí fade out.
-            // Popup držíme namontovaný, dokud fade ven nedojede (alpha > 0), aby
-            // se skrytí opravdu ukázalo, ne jen zmizelo.
+            // Popup držíme namontovaný, dokud fade ven nedojede, aby se skrytí
+            // opravdu ukázalo, ne jen zmizelo.
+            //
+            // POZOR na `tween`: `graphicsLayer { alpha = 0f }` NEVYPÍNÁ hit-testing,
+            // takže složený Popup polyká doteky i když je neviditelný - a leží NAD
+            // bublinou, tedy přes zprávu o řádek výš. S výchozí pružinou se alpha
+            // k nule blíží asymptoticky, takže mrtvá zóna neměla konec a na
+            // pomalejším telefonu se projevila jako „nejde klikat". Tween skončí
+            // přesně na nule za PICKER_FADE_MS a `reactionPickerMounted` Popup hned
+            // odmontuje. Podmínka je v ChatScreenLogic, aby šla otestovat.
             val pickerWanted = showReactionPicker && canReact
             val pickerAlpha by animateFloatAsState(
-                targetValue = if (pickerWanted) 1f else 0f, label = "pickerAlpha"
+                targetValue = if (pickerWanted) 1f else 0f,
+                animationSpec = tween(ChatScreenLogic.PICKER_FADE_MS),
+                label = "pickerAlpha"
             )
             val pickerScale by animateFloatAsState(
-                targetValue = if (pickerWanted) 1f else 0.85f, label = "pickerScale"
+                targetValue = if (pickerWanted) 1f else 0.85f,
+                animationSpec = tween(ChatScreenLogic.PICKER_FADE_MS),
+                label = "pickerScale"
             )
-            if (pickerWanted || pickerAlpha > 0.01f) {
+            if (ChatScreenLogic.reactionPickerMounted(pickerWanted, pickerAlpha)) {
                 Popup(
                     popupPositionProvider = remember(message.outgoing) {
                         AboveAnchorPosition(alignEnd = message.outgoing)
@@ -1141,10 +1154,12 @@ private fun MessageRow(
                             transformOrigin = TransformOrigin(0.5f, 1f)
                         }
                     ) {
+                        // Během mizení paleta nesmí reagovat: uživatel už mířil
+                        // na zprávu pod ní, ne na emoji.
                         ReactionPicker(
                             mine = message.reactionOf(ChatMessage.REACTOR_ME),
-                            onPick = onReact,
-                            onMore = onMore
+                            onPick = { if (pickerWanted) onReact(it) },
+                            onMore = { if (pickerWanted) onMore() }
                         )
                     }
                 }

@@ -99,6 +99,34 @@ object ChatScreenLogic {
     fun doubleTapReaction(mine: String?): String? =
         if (mine != null) null else DEFAULT_REACTION
 
+    /** Pod touhle průhledností je paleta reakcí neviditelná a MUSÍ se odmontovat. */
+    const val PICKER_ALPHA_EPSILON = 0.01f
+
+    /**
+     * Doba mizení palety reakcí (ms). Zároveň je to STROP, jak dlouho smí
+     * neviditelná paleta polykat doteky - viz [reactionPickerMounted]. Proto
+     * krátce a proto `tween`, ne pružina.
+     */
+    const val PICKER_FADE_MS = 120
+
+    /**
+     * Má být plovoucí paleta reakcí ještě SLOŽENÁ (jako `Popup`)?
+     *
+     * Popup se schválně drží namontovaný i po zavření, dokud nedojede fade ven -
+     * jinak by paleta jen zmizela místo aby „odtála". Jenže `graphicsLayer
+     * { alpha = 0f }` **nevypíná hit-testing**: dokud je Popup složený, je to
+     * plnohodnotné okno, které polyká doteky na ploše NAD bublinou, tedy na
+     * zprávě o řádek výš. Uživateli se to jeví tak, že klepnutí nefunguje a musí
+     * klikat opakovaně.
+     *
+     * Proto se paleta odmontuje, jakmile je průhledná - a proto animace MUSÍ být
+     * `tween` ([PICKER_FADE_MS]), ne pružina: pružina se k nule blíží
+     * asymptoticky, takže by neviditelné okno žralo klepnutí neomezeně dlouho
+     * (na pomalejším zařízení citelně - přesně tam se to projevilo).
+     */
+    fun reactionPickerMounted(wanted: Boolean, alpha: Float): Boolean =
+        wanted || alpha > PICKER_ALPHA_EPSILON
+
     /**
      * Zprávy konverzace odpovídající hledanému výrazu [query]. Vytaženo z
      * composable schválně (pravidlo projektu) - filtr je čistá funkce, takže jde
