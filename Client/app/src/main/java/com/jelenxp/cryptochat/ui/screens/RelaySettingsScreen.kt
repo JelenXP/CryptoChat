@@ -99,6 +99,31 @@ fun RelaySettingsScreen(navController: NavController) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
+            // Záložní relaye (failover). Platí nad primárním (výchozím i vlastním);
+            // když primární neodpoví, odeslání zkusí tyhle v pořadí a příjem je řídce
+            // prohledává. Jeden na řádek.
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            var fallbacks by remember { mutableStateOf(settings.getRelayFallbackText()) }
+            OutlinedTextField(
+                value = fallbacks,
+                onValueChange = {
+                    fallbacks = it
+                    settings.setRelayFallbackUrls(it)
+                    ensureTorIfOnion()
+                },
+                label = { Text(stringResource(R.string.relay_fallback_label)) },
+                placeholder = { Text("http://…\nhttp://…") },
+                minLines = 2,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = stringResource(R.string.relay_fallback_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

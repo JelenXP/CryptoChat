@@ -79,6 +79,16 @@ object RelaySync {
     /** Poslední epocha, pro kterou už se u daného kontaktu kontrolovala stará schránka. */
     private val prevEpochChecked = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /**
+     * Jak často se ŘÍDCE prohledávají ZÁLOŽNÍ relaye (failover příjmu), když je
+     * primární zdravý. Při nedostupném primárním se sweep dělá HNED každý poll
+     * (viz `finishPoll`), tohle je jen pojistka pro asymetrický výpadek.
+     */
+    private const val SECONDARY_SWEEP_MS = 3L * 60 * 1000
+
+    /** Kdy (ms) se u kontaktu naposledy prohledávaly záložní relaye. */
+    private val secondarySweptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /** Kdy (ms) se u daného kontaktu naposledy kontrolovala předchozí schránka. */
     private val prevEpochCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -137,6 +147,7 @@ object RelaySync {
         prevEpochChecked.clear()
         prevEpochCheckedAt.clear()
         legacyGraceCheckedAt.clear()
+        secondarySweptAt.clear()
     }
 
     /**
@@ -238,7 +249,7 @@ object RelaySync {
                 val blob = ChatEnvelope.sealReaction(
                     target, emoji ?: "", emoji == null, now, key, dir
                 )
-                transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+                putFailover(context, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
             }
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání reakce selhalo (${e.javaClass.simpleName})")
@@ -385,6 +396,28 @@ object RelaySync {
      * `wireId`, takže ji příjemce dedupuje podle obsahu. [buildPayload] proto MUSÍ
      * být deterministický (stabilní `wireId`/ts/obsah).
      */
+    /**
+     * PUT s FAILOVEREM: zkusí relaye z [SettingsRepository.getRelayUrls] v pořadí,
+     * dokud jeden blob nepřijme. ID schránky na adrese relaye NEzávisí, takže tatáž
+     * schránka existuje na kterémkoli serveru - failover nepotřebuje koordinaci
+     * obsahu. Když primární relay spí, odchozí zpráva projde přes záložní. Vrací
+     * true, když aspoň jeden relay uspěl. NEmirroruje (nezapisuje na víc naráz) -
+     * to by dvěma serverům dalo stejný časový otisk téže dvojice.
+     */
+    private fun putFailover(context: Context, mailbox: String, blob: ByteArray): Boolean {
+        for (url in SettingsRepository(context).getRelayUrls()) {
+            if (url.isBlank()) continue
+            val ok = try {
+                transport.put(url, mailbox, blob)
+            } catch (e: Exception) {
+                DiagnosticsLog.warn(TAG, "PUT na relay selhal (${e.javaClass.simpleName}), zkouším další")
+                false
+            }
+            if (ok) return true
+        }
+        return false
+    }
+
     private fun sendOneRatchet(
         context: Context,
         contact: Contact,
@@ -404,12 +437,7 @@ object RelaySync {
         }
         val blob = ChatEnvelope.encryptRatchet(buildPayload(), step.aesKey, step.iv, step.epoch, step.msgNo, step.generation, dir)
         val mailbox = RelayCrypto.ratchetMailboxId(key, dir, step.epoch)
-        val put = try {
-            transport.put(baseUrl, mailbox, blob)
-        } catch (e: Exception) {
-            DiagnosticsLog.warn(TAG, "odeslání ratchet blobu selhalo (${e.javaClass.simpleName})")
-            false
-        }
+        val put = putFailover(context, mailbox, blob)
         if (put) maybeWriteBeacon(context, contact.id, baseUrl, key, dir, store)
         return put
     }
@@ -439,11 +467,7 @@ object RelaySync {
                 s
             }
             val blob = ChatEnvelope.encryptRatchet(payload, step.aesKey, step.iv, step.epoch, step.msgNo, step.generation, dir)
-            val put = try {
-                transport.put(baseUrl, RelayCrypto.ratchetMailboxId(key, dir, step.epoch), blob)
-            } catch (e: Exception) {
-                false
-            }
+            val put = putFailover(context, RelayCrypto.ratchetMailboxId(key, dir, step.epoch), blob)
             if (put) maybeWriteBeacon(context, contact.id, baseUrl, key, dir, store)
             return put
         }
@@ -772,7 +796,7 @@ object RelaySync {
                 } else {
                     val dir = sendDir(contact)
                     val blob = ChatEnvelope.sealDelivery(chunk, now, key, dir)
-                    transport.put(baseUrl, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
+                    putFailover(context, RelayCrypto.mailboxId(key, dir, currentEpoch()), blob)
                 }
             } catch (e: Exception) {
                 DiagnosticsLog.warn(TAG, "odeslání potvrzení doručení selhalo (${e.javaClass.simpleName})")
@@ -824,7 +848,7 @@ object RelaySync {
                     ChatEnvelope.seal(message.text, message.timestamp, key, dir, msgId, replyTo)
                 }
                 val mailbox = RelayCrypto.mailboxId(key, dir, currentEpoch())
-                transport.put(baseUrl, mailbox, blob)
+                putFailover(context, mailbox, blob)
             }
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání zprávy selhalo (${e.javaClass.simpleName})")
@@ -870,7 +894,7 @@ object RelaySync {
                         message.mimeType ?: "application/octet-stream",
                         message.text, message.timestamp, key, dir
                     )
-                    if (!transport.put(baseUrl, mailbox, manifest)) {
+                    if (!putFailover(context, mailbox, manifest)) {
                         false
                     } else {
                         var index = 0
@@ -889,7 +913,7 @@ object RelaySync {
                                 val blob = ChatEnvelope.sealFileChunk(
                                     fileId, index, chunk, message.timestamp, key, dir
                                 )
-                                if (!transport.put(baseUrl, mailbox, blob)) {
+                                if (!putFailover(context, mailbox, blob)) {
                                     ok = false
                                     break
                                 }
@@ -953,22 +977,21 @@ object RelaySync {
         // viz [flushDeliveryReceipts]) a vrátí výsledek. Jediné místo, kudy se
         // z pollu vrací - ať se receipt pošle bez ohledu na to, kterou větví
         // (ratchet / prev-epocha / aktuální) poll skončil.
-        fun finishPoll(n: Int): PollResult {
-            flushDeliveryReceipts(context, contact, deliveredRefs)
-            return PollResult(n, failed, reachable)
-        }
+        // Kolik zpráv přišlo ze ZÁLOŽNÍCH relayí (failover příjmu, sweep ve finishPoll).
+        var secondaryReceived = 0
 
         // Vyzvedne jednu schránku (dané epochy), otevře bloby a uloží je. Vrací
         // počet nově přijatých zpráv. Síťovou chybu spolkne (0), ale poznamená ji
-        // do `failed`, aby volající mohl zpomalit.
-        fun fetch(mailbox: String, waitSeconds: Int, ratchet: Boolean): Int {
+        // do `failed`, aby volající mohl zpomalit. [url] = z kterého relaye (default
+        // primární; sweep níž ho volá pro záložní).
+        fun fetch(mailbox: String, waitSeconds: Int, ratchet: Boolean, url: String = baseUrl): Int {
             // Reachable se vztahuje k TÉHLE operaci get (výsledek se vrací podle
             // ní). Reset na začátku, ať prev-epoch get, který uspěl, nemaskuje
             // následné síťové selhání aktuální epochy.
             reachable = false
             lastFetchDrained = false
             val fetched = try {
-                transport.get(baseUrl, mailbox, waitSeconds)
+                transport.get(url, mailbox, waitSeconds)
             } catch (ex: Exception) {
                 failed = true
                 DiagnosticsLog.warn(TAG, "vyzvednutí zpráv selhalo (${ex.javaClass.simpleName})")
@@ -1433,7 +1456,7 @@ object RelaySync {
             // `lastFetchDrained` = schránka je vyprázdněná (relay ji smaže) →
             // backfill smí posunout podlahu přes tuhle epochu.
             if (fetched.ackSeq >= 0 && allSafe) {
-                if (transport.ack(baseUrl, mailbox, fetched.ackSeq)) lastFetchDrained = true
+                if (transport.ack(url, mailbox, fetched.ackSeq)) lastFetchDrained = true
                 else failed = true
             } else if (!allSafe) {
                 DiagnosticsLog.warn(TAG, "dávka není celá uložená, potvrzení se neposílá")
@@ -1444,6 +1467,43 @@ object RelaySync {
             }
             if (n > 0) DiagnosticsLog.log(TAG, "přijato $n nových zpráv")
             return n
+        }
+
+        // Dokončí poll: FAILOVER PŘÍJMU (sweep záložních relayí) + potvrzení
+        // doručení. Jediné místo, kudy se z pollu vrací.
+        fun finishPoll(n: Int): PollResult {
+            // Sweep záložních relayí: protějšek mohl při výpadku primárního poslat
+            // tam. Aditivní (jen fetche na jiné URL; primární logika nedotčená,
+            // duplicity řeší ReplayGuard/wireId). Když primární právě NEodpověděl
+            // (!reachable), zkus zálohy HNED; jinak jen ŘÍDCE (šetření baterie).
+            // Platí se jen s nakonfigurovanými zálohami (jinak seznam prázdný).
+            val fallbacks = SettingsRepository(context).getRelayUrls().drop(1)
+            val nowMs = System.currentTimeMillis()
+            val lastSwept = secondarySweptAt[contact.id]
+            val sweep = fallbacks.isNotEmpty() &&
+                (!reachable || lastSwept == null || nowMs - lastSwept >= SECONDARY_SWEEP_MS)
+            if (sweep) {
+                // Stav záloh NESMÍ ovlivnit backoff/dostupnost primárního (mrtvá
+                // záloha by jinak shodila reachable a nutila backoff i při zdravém
+                // primárním) - ulož a obnov.
+                val savedFailed = failed
+                val savedReachable = reachable
+                val rs = ratchetStore.load(contact.id)
+                for (fb in fallbacks) {
+                    if (rs != null) {
+                        val re2 = rs.recvEpoch
+                        secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, re2), 0, ratchet = true, url = fb)
+                        secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, re2 + 1), 0, ratchet = true, url = fb)
+                    } else {
+                        secondaryReceived += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false, url = fb)
+                    }
+                }
+                failed = savedFailed
+                reachable = savedReachable
+                secondarySweptAt[contact.id] = nowMs
+            }
+            flushDeliveryReceipts(context, contact, deliveredRefs)
+            return PollResult(n + secondaryReceived, failed, reachable)
         }
 
         // Ratchet aktivní (stav existuje) → příjem na RATCHET schránky. Odesílatel

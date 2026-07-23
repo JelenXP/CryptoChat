@@ -347,6 +347,8 @@
     <string name="relay_custom_desc">Zadej si vlastní adresu serveru.</string>
     <string name="relay_custom_label">Adresa serveru</string>
     <string name="relay_custom_help">Například http://192.168.1.10:8787 v místní síti nebo .onion adresa přes Tor. Necháš-li prázdné, chat přes server je vypnutý.</string>
+    <string name="relay_fallback_label">Záložní relaye (jeden na řádek)</string>
+    <string name="relay_fallback_help">Volitelné. Když primární relay neodpovídá, odchozí zprávy se přesměrují na tyhle (v pořadí) a příchozí se tu taky kontrolují. Schránka je na každém relayi stejná, takže oba telefony můžou mít různé zálohy.</string>
     <string name="content_desc_relay">Server chatu</string>
 
     <!-- Konverzace -->

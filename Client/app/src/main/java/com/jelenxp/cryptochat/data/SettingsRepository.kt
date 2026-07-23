@@ -165,6 +165,33 @@ class SettingsRepository(context: Context) {
     fun getRelayUrl(): String =
         if (isUsingCustomRelay()) getRelayCustomUrl() else DEFAULT_RELAY_URL
 
+    /**
+     * Záložní relaye (jeden na řádek). Když primární neodpoví, odeslání zkusí je
+     * v pořadí (failover). ID schránek na adrese relaye NEzávisí, takže tatáž
+     * schránka existuje na kterémkoli serveru - failover nepotřebuje koordinaci.
+     */
+    fun getRelayFallbackUrls(): List<String> =
+        prefs.getString(KEY_RELAY_FALLBACKS, "").orEmpty()
+            .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+
+    fun setRelayFallbackUrls(text: String) {
+        prefs.edit().putString(KEY_RELAY_FALLBACKS, text.trim()).apply()
+    }
+
+    /** Text pro editaci pole záložních relayí (jeden na řádek). */
+    fun getRelayFallbackText(): String = prefs.getString(KEY_RELAY_FALLBACKS, "").orEmpty()
+
+    /**
+     * Efektivní seznam relayí: primární první, pak záložní (bez duplicit a prázdných).
+     * Prázdný jen když je chat vypnutý (prázdná efektivní adresa).
+     */
+    fun getRelayUrls(): List<String> {
+        val out = ArrayList<String>()
+        getRelayUrl().takeIf { it.isNotBlank() }?.let { out.add(it) }
+        for (u in getRelayFallbackUrls()) if (u !in out) out.add(u)
+        return out
+    }
+
     // --- Onboarding (první spuštění) ---
     // Průvodce povoleními pro běh na pozadí (notifikace, baterie, autostart).
     fun isOnboardingDone(): Boolean = prefs.getBoolean(KEY_ONBOARDING_DONE, false)
@@ -218,6 +245,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_FILE_LIMIT = "file_size_limit_enabled"
         private const val KEY_RELAY_URL = "relay_url"
         private const val KEY_RELAY_CUSTOM = "relay_use_custom"
+        private const val KEY_RELAY_FALLBACKS = "relay_fallbacks"
         private const val KEY_ONBOARDING_DONE = "onboarding_done"
         private const val KEY_LANGUAGE = "app_language_tag"
         private const val KEY_LANGUAGE_MIGRATED = "app_language_migrated"

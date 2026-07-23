@@ -347,6 +347,8 @@
     <string name="relay_custom_desc">Use your own server address.</string>
     <string name="relay_custom_label">Server address</string>
     <string name="relay_custom_help">For example http://192.168.1.10:8787 on a local network, or a .onion address over Tor. Leave empty to turn the chat server off.</string>
+    <string name="relay_fallback_label">Backup relays (one per line)</string>
+    <string name="relay_fallback_help">Optional. If the main relay is unreachable, outgoing messages fail over to these in order, and incoming messages are checked here too. A mailbox is the same on any relay, so both phones can use different backups.</string>
     <string name="content_desc_relay">Chat server</string>
 
     <!-- Chat conversation -->
