@@ -1,10 +1,37 @@
 package com.jelenxp.cryptochat.chat
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
 import com.jelenxp.cryptochat.crypto.StorageCrypto
 import org.json.JSONObject
+
+/**
+ * Šev nad zápisem do prefs, aby šlo OTESTOVAT, že ukládací cesta volá `commit()`
+ * (durabilní), NE `apply()` (async) - nález v2.0-13 (nejvyšší závažnost v2.0
+ * auditu): `apply()` by po zabití procesu (u FGS běžné) regredoval `sendMsgNo`,
+ * a protože odeslaná zpráva už je durabilně SENT, příští odeslání by zopakovalo
+ * týž pár (AES-GCM klíč, IV) na JINÝ obsah = katastrofa nonce reuse. Robolectric
+ * `apply`/`commit` flushnou synchronně, takže roundtrip je nerozliší - proto tenhle
+ * šev: testovací fake zaznamená, která metoda byla volaná.
+ */
+interface PrefsEditor {
+    fun putString(key: String, value: String): PrefsEditor
+    fun remove(key: String): PrefsEditor
+    /** DURABILNÍ zápis. Vrací výsledek. */
+    fun commit(): Boolean
+    /** Asynchronní zápis - v [RatchetStore] se NESMÍ použít (viz docstring). */
+    fun apply()
+}
+
+/** Ostrá implementace nad [SharedPreferences.Editor]. */
+class RealPrefsEditor(private val e: SharedPreferences.Editor) : PrefsEditor {
+    override fun putString(key: String, value: String): PrefsEditor { e.putString(key, value); return this }
+    override fun remove(key: String): PrefsEditor { e.remove(key); return this }
+    override fun commit(): Boolean = e.commit()
+    override fun apply() = e.apply()
+}
 
 /**
  * Perzistence [RatchetState] per kontakt - šifrovaně **at rest** přes
@@ -35,11 +62,16 @@ import org.json.JSONObject
  */
 class RatchetStore(
     context: Context,
-    private val crypto: StorageCrypto = KeystoreStorageCrypto
+    private val crypto: StorageCrypto = KeystoreStorageCrypto,
+    editorFactory: (() -> PrefsEditor)? = null
 ) {
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // Zdroj editoru pro DURABILNÍ zápis (default ostrý nad prefs; test dosadí fake,
+    // který zaznamená commit vs apply). Viz [PrefsEditor] / nález v2.0-13.
+    private val newEditor: () -> PrefsEditor = editorFactory ?: { RealPrefsEditor(prefs.edit()) }
 
     /** Výsledek načtení stavu. */
     sealed class Load {
@@ -92,7 +124,7 @@ class RatchetStore(
             return false
         }
         val ok = try {
-            prefs.edit().putString(key(contactId), encrypted).commit()
+            newEditor().putString(key(contactId), encrypted).commit()
         } catch (e: Exception) {
             Log.e(TAG, "Durabilní zápis ratchet stavu selhal (${e.javaClass.simpleName})")
             false
@@ -173,7 +205,7 @@ class RatchetStore(
     fun clear(contactId: String) = synchronized(lock) {
         cache.remove(contactId)
         try {
-            prefs.edit().remove(key(contactId)).commit()
+            newEditor().remove(key(contactId)).commit()
         } catch (e: Exception) {
             Log.w(TAG, "Úklid ratchet stavu selhal", e)
         }

@@ -252,8 +252,13 @@ object DoubleRatchet {
      * Ořízne skipped-store na [SKIP_MAX] - nejstarší (nejnižší (generace, index))
      * padají první. Staré generace jdou ven dřív než nižší indexy v aktuální.
      * Bez toho by protějšek mohl posílat samé mezery a nafouknout paměť.
+     *
+     * **Politika eviction je zafixovaná testem** (nález v2.0-10): opožděná
+     * out-of-order zpráva s oříznutým msgNo dostane `AlreadyConsumed` = tichá
+     * ztráta, takže KTERÁ půlka se obětuje je součást kontraktu - refaktor řazení
+     * by ji jinak tiše změnil. `internal` kvůli testu (jako `ChatEnvelope.bucketFor`).
      */
-    private fun boundSkipped(list: List<SkippedMessageKey>): List<SkippedMessageKey> {
+    internal fun boundSkipped(list: List<SkippedMessageKey>): List<SkippedMessageKey> {
         if (list.size <= SKIP_MAX) return list
         return list
             .sortedWith(compareByDescending<SkippedMessageKey> { it.generation }.thenByDescending { it.msgNo })
