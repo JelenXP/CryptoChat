@@ -14,36 +14,31 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
-import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
 
 private const val STEP_NAME = 0
-private const val STEP_METHOD = 1
-private const val STEP_ROLE = 2
-
-private const val METHOD_IN_PERSON = "in_person"
-private const val METHOD_REMOTE = "remote"
+private const val STEP_ROLE = 1
 
 /**
- * Průvodce přidáním kontaktu ve třech krocích: Jméno → Způsob → Klíč.
- * Kroky žijí uvnitř jedné obrazovky (ne přes navigaci), takže zadané jméno i
- * volba způsobu zůstanou zachované, když se uživatel vrátí o krok zpět.
- * Poslední krok teprve naviguje na konkrétní obrazovku výměny klíče.
+ * Průvodce přidáním kontaktu ve dvou krocích: Jméno → Klíč.
+ * Kontakt se navazuje výhradně přes pozvánku (online párování přes relay);
+ * dřívější osobní výměna klíče „tváří v tvář" už není součástí flow, takže se
+ * krok s výběrem způsobu vypustil.
+ *
+ * Kroky žijí uvnitř jedné obrazovky (ne přes navigaci), takže zadané jméno
+ * zůstane zachované, když se uživatel vrátí o krok zpět. Poslední krok teprve
+ * naviguje na konkrétní obrazovku pozvánky (vytvořit / zadat).
  */
 @Composable
 fun AddUserScreen(
@@ -52,13 +47,12 @@ fun AddUserScreen(
     presetName: String? = null
 ) {
     // Re-key režim: jméno už známe (obnovujeme klíč existujícího kontaktu),
-    // takže se přeskočí krok se jménem a začíná se rovnou volbou způsobu.
+    // takže se přeskočí krok se jménem a začíná se rovnou volbou role.
     val rekey = contactId != null
-    val startStep = if (rekey) STEP_METHOD else STEP_NAME
+    val startStep = if (rekey) STEP_ROLE else STEP_NAME
 
     var step by rememberSaveable { mutableStateOf(startStep) }
     var name by rememberSaveable { mutableStateOf(presetName ?: "") }
-    var method by rememberSaveable { mutableStateOf(METHOD_IN_PERSON) }
 
     val trimmedName = name.trim()
     val encodedName = Uri.encode(trimmedName)
@@ -78,7 +72,7 @@ fun AddUserScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Ukazatel tří kroků dává smysl jen u zakládání (Jméno → Způsob → Klíč).
+            // Ukazatel dvou kroků dává smysl jen u zakládání (Jméno → Klíč).
             if (!rekey) StepIndicator(currentStep = step)
 
             AnimatedContent(
@@ -90,23 +84,12 @@ fun AddUserScreen(
                     STEP_NAME -> NameStep(
                         name = name,
                         onNameChange = { name = it },
-                        onContinue = { if (trimmedName.isNotEmpty()) step = STEP_METHOD }
-                    )
-                    STEP_METHOD -> MethodStep(
-                        name = trimmedName,
-                        note = if (rekey) stringResource(R.string.rekey_warning) else null,
-                        onChoose = { chosen -> method = chosen; step = STEP_ROLE }
+                        onContinue = { if (trimmedName.isNotEmpty()) step = STEP_ROLE }
                     )
                     else -> RoleStep(
-                        method = method,
-                        onPrimary = {
-                            val route = if (method == METHOD_IN_PERSON) "create_key" else "pair_invite"
-                            navController.navigate("$route/$encodedName$idSuffix")
-                        },
-                        onSecondary = {
-                            val route = if (method == METHOD_IN_PERSON) "accept_key" else "pair_join"
-                            navController.navigate("$route/$encodedName$idSuffix")
-                        }
+                        note = if (rekey) stringResource(R.string.rekey_warning) else null,
+                        onPrimary = { navController.navigate("pair_invite/$encodedName$idSuffix") },
+                        onSecondary = { navController.navigate("pair_join/$encodedName$idSuffix") }
                     )
                 }
             }
@@ -114,12 +97,11 @@ fun AddUserScreen(
     }
 }
 
-/** Vodorovný ukazatel tří kroků (Jméno / Způsob / Klíč) s aktivní/hotovou tečkou. */
+/** Vodorovný ukazatel dvou kroků (Jméno / Klíč) s aktivní/hotovou tečkou. */
 @Composable
 private fun StepIndicator(currentStep: Int) {
     val labels = listOf(
         stringResource(R.string.step_name),
-        stringResource(R.string.step_method),
         stringResource(R.string.step_key)
     )
     Row(
@@ -214,74 +196,12 @@ private fun NameStep(name: String, onNameChange: (String) -> Unit, onContinue: (
     }
 }
 
+/**
+ * Poslední krok: volba role u pozvánky - vytvořit pozvánku (iniciátor) nebo
+ * zadat pozvánku od protějšku (připojení). [note] ukáže varování při obnově klíče.
+ */
 @Composable
-private fun MethodStep(name: String, onChoose: (String) -> Unit, note: String? = null) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = stringResource(R.string.add_method_question, name),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
-        Text(
-            text = stringResource(R.string.add_method_help),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
-        // Upozornění při obnově klíče (re-key).
-        note?.let { InfoCard(text = it) }
-        MethodCard(
-            icon = Icons.Default.Groups,
-            title = stringResource(R.string.section_in_person),
-            description = stringResource(R.string.section_in_person_description),
-            onClick = { onChoose(METHOD_IN_PERSON) }
-        )
-        MethodCard(
-            icon = Icons.Default.Link,
-            title = stringResource(R.string.section_invite),
-            description = stringResource(R.string.section_invite_description),
-            onClick = { onChoose(METHOD_REMOTE) }
-        )
-    }
-}
-
-@Composable
-private fun MethodCard(icon: ImageVector, title: String, description: String, onClick: () -> Unit) {
-    AppCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(46.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null) }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RoleStep(method: String, onPrimary: () -> Unit, onSecondary: () -> Unit) {
-    val inPerson = method == METHOD_IN_PERSON
+private fun RoleStep(note: String?, onPrimary: () -> Unit, onSecondary: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -290,24 +210,22 @@ private fun RoleStep(method: String, onPrimary: () -> Unit, onSecondary: () -> U
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = stringResource(
-                if (inPerson) R.string.add_role_title_in_person else R.string.add_role_title_invite
-            ),
+            text = stringResource(R.string.add_role_title_invite),
             style = MaterialTheme.typography.titleLarge
         )
         Text(
-            text = stringResource(
-                if (inPerson) R.string.add_role_desc_in_person else R.string.add_role_desc_invite
-            ),
+            text = stringResource(R.string.add_role_desc_invite),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        // Upozornění při obnově klíče (re-key) - dřív viselo na kroku se způsobem.
+        note?.let { InfoCard(text = it) }
         Spacer(Modifier.height(4.dp))
         Button(onClick = onPrimary, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(if (inPerson) R.string.btn_create_key else R.string.btn_invite_create))
+            Text(stringResource(R.string.btn_invite_create))
         }
         OutlinedButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(if (inPerson) R.string.btn_accept_key else R.string.btn_invite_enter))
+            Text(stringResource(R.string.btn_invite_enter))
         }
     }
 }

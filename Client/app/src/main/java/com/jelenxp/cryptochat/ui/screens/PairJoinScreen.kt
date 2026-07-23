@@ -1,9 +1,15 @@
 package com.jelenxp.cryptochat.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
@@ -13,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.Pairing
@@ -22,8 +29,10 @@ import com.jelenxp.cryptochat.crypto.PostQuantumKem
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
+import com.jelenxp.cryptochat.ui.qr.buildQrScanOptions
 import com.jelenxp.cryptochat.ui.util.LockPortraitWhileVisible
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+import com.journeyapps.barcodescanner.ScanContract
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -63,8 +72,10 @@ fun PairJoinScreen(
     var aesKey by rememberSaveable { mutableStateOf("") }
     var error by rememberSaveable { mutableStateOf("") }
 
-    fun startJoin() {
-        val canonical = Pairing.normalize(code)
+    // Bere kód explicitně (ne ze stavu `code`), aby šel zavolat i hned z callbacku
+    // skeneru, kde by čtení právě zapsaného stavu bylo křehké.
+    fun startJoin(raw: String) {
+        val canonical = Pairing.normalize(raw)
         if (!Pairing.looksValid(canonical)) {
             error = context.getString(R.string.pair_error_bad_code)
             return
@@ -116,6 +127,35 @@ fun PairJoinScreen(
         }
     }
 
+    // --- Sken QR pozvánky (alternativa k opisování kódu) ---
+    val scanPrompt = stringResource(R.string.scan_prompt)
+    val cameraError = stringResource(R.string.error_camera_permission)
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        // result.contents == null i při zrušení skenu - to není chyba, jen se nic nestane.
+        if (result.contents != null) {
+            code = result.contents
+            error = ""
+            // Naskenovaný kód je jednoznačný - rovnou spusť párování.
+            startJoin(result.contents)
+        }
+    }
+    // Oprávnění ke kameře řešíme explicitně PŘED spuštěním skeneru (jinak hrozí
+    // SecurityException) - stejně jako AcceptKeyScreen.
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) scanLauncher.launch(buildQrScanOptions(scanPrompt))
+        else error = cameraError
+    }
+    fun startScan() {
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) scanLauncher.launch(buildQrScanOptions(scanPrompt))
+        else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
     CryptoScaffold(
         title = stringResource(R.string.pair_join_title, name),
         onBack = { navController.popBackStack() }
@@ -140,6 +180,14 @@ fun PairJoinScreen(
 
                 JoinPhase.INPUT -> {
                     InfoCard(text = stringResource(R.string.pair_join_instructions))
+                    Button(
+                        onClick = { startScan() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.btn_scan_qr))
+                    }
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it },
@@ -152,7 +200,7 @@ fun PairJoinScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Button(
-                        onClick = { startJoin() },
+                        onClick = { startJoin(code) },
                         enabled = code.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text(stringResource(R.string.btn_join)) }

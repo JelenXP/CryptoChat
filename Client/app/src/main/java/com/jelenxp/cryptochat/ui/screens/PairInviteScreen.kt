@@ -1,5 +1,6 @@
 package com.jelenxp.cryptochat.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -27,6 +29,8 @@ import com.jelenxp.cryptochat.crypto.PostQuantumKem
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
+import com.jelenxp.cryptochat.ui.qr.QrCard
+import com.jelenxp.cryptochat.ui.qr.generateQrBitmap
 import com.jelenxp.cryptochat.ui.util.LockPortraitWhileVisible
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +70,10 @@ fun PairInviteScreen(
     // MUSÍ přežít otočení telefonu - jinak by se vygeneroval nový kód do jiné
     // schránky a ten, který protistrana právě opisuje, by přestal platit.
     val invite = rememberSaveable { Pairing.generateInvite() }
+    // QR s pozvánkou (kóduje se formát pro zobrazení - protistrana ho po skenu
+    // stejně prožene `Pairing.normalize`, takže oddělovače nevadí). Bitmapa se
+    // spočítá jen jednou; QR je jen pohodlnější podoba téhož kódu, ne tajemství.
+    val inviteQr = remember(invite) { generateQrBitmap(Pairing.formatForDisplay(invite)).asImageBitmap() }
 
     var phase by rememberSaveable { mutableStateOf(if (baseUrl.isBlank()) InvitePhase.NO_RELAY else InvitePhase.WAITING) }
     var sas by rememberSaveable { mutableStateOf("") }
@@ -146,6 +154,16 @@ fun PairInviteScreen(
                     InfoCard(text = stringResource(R.string.pair_invite_instructions))
                     InviteCodeCard(display = Pairing.formatForDisplay(invite)) {
                         clipboard.setText(AnnotatedString(Pairing.formatForDisplay(invite)))
+                    }
+                    // Táž pozvánka jako QR - protistrana může místo opisování naskenovat.
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        QrCard {
+                            Image(
+                                bitmap = inviteQr,
+                                contentDescription = stringResource(R.string.qr_content_desc),
+                                modifier = Modifier.size(220.dp)
+                            )
+                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
