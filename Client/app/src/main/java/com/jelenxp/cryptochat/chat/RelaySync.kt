@@ -162,7 +162,7 @@ object RelaySync {
         contact: Contact,
         text: String,
         replyToWireId: String? = null
-    ): ChatMessage {
+    ): ChatMessage? {
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             outgoing = true,
@@ -175,7 +175,11 @@ object RelaySync {
             wireId = WireExt.toHex(WireExt.randomMsgId()),
             replyToWireId = replyToWireId
         )
-        repoFor(context).append(contact.id, message)
+        // Zápis do historie MUSÍ uspět, než zprávu vrátíme (a volající ji odešle):
+        // jinak by ji `deliver` poslal protějšku, ale u nás by v historii nebyla a
+        // po restartu by z naší strany zmizela (nález v2.0-30 / B-N3). Vrať null =
+        // volající zobrazí chybu a NEodešle.
+        if (!repoFor(context).append(contact.id, message)) return null
         return message
     }
 
@@ -273,7 +277,12 @@ object RelaySync {
             mediaPath = path,
             wireId = WireExt.toHex(WireExt.randomMsgId())
         )
-        repoFor(context).append(contact.id, message)
+        // Zápis do historie selhal → ukliď osiřelou fotku (jinak zůstane na disku
+        // ~1,9 MB, na kterou nic neodkazuje) a vrať null (nález v2.0-30 / B-N3).
+        if (!repoFor(context).append(contact.id, message)) {
+            runCatching { File(path).delete() }
+            return null
+        }
         return message
     }
 
@@ -298,7 +307,12 @@ object RelaySync {
             mediaPath = path,
             mimeType = info.mimeType
         )
-        repoFor(context).append(contact.id, message)
+        // Zápis do historie selhal → ukliď osiřelou kopii souboru a vrať null
+        // (nález v2.0-30 / B-N3).
+        if (!repoFor(context).append(contact.id, message)) {
+            runCatching { File(path).delete() }
+            return null
+        }
         return message
     }
 
@@ -1493,6 +1507,20 @@ object RelaySync {
                 received += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false)
                 // Čas zaznamenej JEN když get prošel (jinak zkus dřív - jako prev-epocha).
                 if (reachable) legacyGraceCheckedAt[contact.id] = now
+            }
+            // Legacy grace i pro PŘEDCHOZÍ denní epochu kolem přelomu dne: legacy
+            // zpráva odeslaná protějškem těsně před přechodem na ratchet mohla spadnout
+            // do VČEREJŠÍ denní schránky. Bez tohohle by se po přechodu příjemce na
+            // ratchet už nikdy nevyzvedla (nález v2.0-32 / B-N2) - stejná asymetrie,
+            // jakou legacy větev (níž) řeší přes shouldCheckPrevEpoch. Týž řídký
+            // mechanismus (jen překryvové okno po přelomu dne + 30min pojistka na
+            // rozjeté hodiny), takže mimo to úzké okno žádný GET navíc.
+            if (shouldCheckPrevEpoch(contact.id, epoch)) {
+                received += fetch(RelayCrypto.mailboxId(key, dir, epoch - 1), 0, ratchet = false)
+                if (reachable) {
+                    prevEpochChecked[contact.id] = epoch
+                    prevEpochCheckedAt[contact.id] = System.currentTimeMillis()
+                }
             }
             var target = ratchetStore.load(contact.id)?.recvEpoch ?: re
             if (target == re) {

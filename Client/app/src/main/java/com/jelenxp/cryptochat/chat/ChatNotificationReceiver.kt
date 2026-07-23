@@ -42,8 +42,11 @@ class ChatNotificationReceiver : BroadcastReceiver() {
                 when (action) {
                     ACTION_REPLY -> if (!replyText.isNullOrEmpty()) {
                         // replyToWireId = null → obyčejná zpráva, ne in-app odpověď.
-                        val msg = RelaySync.enqueue(appContext, contact, replyText, null)
-                        RelaySync.deliver(appContext, contact, msg)
+                        // Odešli jen když se uložila do historie (jinak by odešla,
+                        // ale u nás by chyběla - nález v2.0-30 / B-N3).
+                        RelaySync.enqueue(appContext, contact, replyText, null)?.let {
+                            RelaySync.deliver(appContext, contact, it)
+                        }
                     }
                     ACTION_LIKE -> {
                         val ref = ChatRepository(appContext).getMessages(contactId)

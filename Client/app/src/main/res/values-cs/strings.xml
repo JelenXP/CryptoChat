@@ -392,6 +392,7 @@
     <string name="content_desc_image">Fotka</string>
     <string name="attach_camera">Foťák</string>
     <string name="attach_gallery">Galerie</string>
+    <string name="chat_message_failed">Zprávu se nepodařilo uložit, takže se neodeslala. Zkus to prosím znovu.</string>
     <string name="chat_image_failed">Fotku se nepodařilo odeslat. Možná je moc velká.</string>
     <string name="attach_file">Soubor</string>
     <string name="chat_file_failed">Soubor se nepodařilo odeslat. Maximum je 25 MB.</string>

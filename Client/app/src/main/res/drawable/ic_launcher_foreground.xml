@@ -1,7 +1,12 @@
 <!-- Foreground adaptivni ikony aplikace: stejny glyf jako notifikace (bublina +
-     vyrez zamku), vetsi a vycentrovany v platne 108. Bila bublina, zamek je
-     evenOdd vyrez, takze skrz nej prosvita tyrkysove pozadi. minSdk 26 =
-     adaptivni ikona se pouzije vzdy (legacy PNG mipmapy se neuplatni). -->
+     vyrez zamku). Bila bublina, zamek je evenOdd vyrez, takze skrz nej prosvita
+     tyrkysove pozadi. minSdk 26 = adaptivni ikona se pouzije vzdy (legacy PNG
+     mipmapy se neuplatni).
+     Centrovani: glyf ma ocasek vlevo DOLE, takze centrovani podle
+     bounding-boxu (translateY 12) posouvalo vizualni telo bubliny nahoru a cele
+     to pusobilo posunute. translateY 19 vystredi TELO bubliny (zaobleny
+     obdelnik, lokalni stred y=10) presne do stredu platna (y=54); ocasek visi
+     pod nim. Zamek se posune s bublinou, zustava vystredeny v tele. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -11,7 +16,7 @@
         android:scaleX="3.5"
         android:scaleY="3.5"
         android:translateX="12"
-        android:translateY="12">
+        android:translateY="19">
         <path
             android:fillColor="#FFFFFF"
             android:fillType="evenOdd"

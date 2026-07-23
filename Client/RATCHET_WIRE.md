@@ -1,10 +1,29 @@
 # Drátový kontrakt: Double Ratchet (rotace klíčů)
 
-Tento dokument je **závazná specifikace bajtů a KDF labelů** pro in-band rotaci
-klíčů (Double Ratchet, R2 + PCS). Implementace ve `chat/ChatEnvelope.kt`,
-`chat/RelayCrypto.kt`, `chat/DoubleRatchet.kt` a `chat/RelaySync.kt` z něj MUSÍ
-vycházet. Změna kontraktu = zamražený golden vzorek navíc (nikdy neupravovat
-stávající).
+Tento dokument popisuje drátový kontrakt in-band rotace klíčů (Double Ratchet,
+R2 + PCS). **Autoritou je KÓD** (`chat/ChatEnvelope.kt`, `chat/RelayCrypto.kt`,
+`chat/DoubleRatchet.kt`, `chat/RelaySync.kt`) a zamražené golden vzorky
+(`ChatEnvelopeRatchetGoldenTest`); tenhle text je jejich průvodce. Změna kontraktu
+= zamražený golden vzorek navíc (nikdy neupravovat stávající).
+
+> **POZOR — návrh vs. realita (nález v2.0-34 / A-N2).** Fáze-2 části (symetrický
+> ratchet, adresování, epochy) SEDÍ s implementací. **Fáze-4 KEM krok se ale při
+> implementaci posunul** a části níže popisují PŮVODNÍ návrh, ne odeslané bajty:
+> - **KEM materiál NENÍ v otevřené hlavičce.** Re-key jede jako **in-band řídicí
+>   zprávy** (OFFER/ACCEPT/CONFIRM, `kind` uvnitř šifry — viz `ChatEnvelope`
+>   `buildRekey*` a `RelaySync.handleRekey`), ne jako `pub`/`ct` oddíl v hlavičce.
+>   `htype` je proto přesná hodnota `0x00`/`0x02` (= přítomna generace), **ne
+>   bitpole** „bit0 = KEM oddíl".
+> - **Kořenový KDF label** je `CryptoChat/ratchet/rekey-root/v1|gen=<g>`
+>   (`DoubleRatchet.REKEY_ROOT`), ne `.../kem-root/v1`.
+> - **KEM krok NEposouvá epochu** (`applyRekey` se `sendEpoch`/`msgsSinceEpoch`
+>   nedotýká); epochu žene JEN čítač `K` (`RATCHET_EPOCH_MSGS`).
+>
+> Fáze-4 sekce ponechány jako historický návrh, aby se golden vzorky a čísla
+> generací daly dohledat; při jakékoli změně re-key se řiď KÓDEM, ne jimi.
+
+Souvisí s pravidly ve `WireCompat` (major migrace, capability) a s datovým
+modelem `RatchetState` (Fáze 1). Legacy formát (major 3) se NEMĚNÍ.
 
 Souvisí s pravidly ve `WireCompat` (major migrace, capability) a s datovým
 modelem `RatchetState` (Fáze 1). Legacy formát (major 3) se NEMĚNÍ.
@@ -129,7 +148,7 @@ aesKey      = keyIv[0..32)   ; iv = keyIv[32..44)
 **Fáze 4 (KEM krok):** z ML-KEM tajemství `ss` a starého kořene se odvodí nový
 kořen a přeseje řetěz:
 ```
-RK'         = HKDF(ikm=(RK ++ ss), info="CryptoChat/ratchet/kem-root/v1", 32)
+RK'         = HKDF(ikm=(RK ++ ss), info="CryptoChat/ratchet/rekey-root/v1|gen=<g>", 32)  // realita, viz DoubleRatchet.REKEY_ROOT
 CK_recv'_0  = HKDF(ikm=RK', info="CryptoChat/ratchet/chain/v1|dir=<recvDir>|gen=<g>", 32)
 ```
 `gen` = pořadí KEM kroku (aby se řetěze různých generací nepotkaly). SAS kód pro
@@ -174,15 +193,21 @@ blob        = IV[12] ++ ciphertext ++ tag[16]
 
 - `msgNo` je **globální monotónní** čítač ve směru (neresetuje se na hranici
   epochy). Indexuje pozici v symetrickém řetězu.
-- `epoch` (e_send) se posune, když: (a) proběhne KEM krok (Fáze 4) **nebo**
-  (b) `msgsSinceEpoch` dosáhne `K` (`RATCHET_EPOCH_MSGS`). Při posunu `epoch++`,
-  `msgsSinceEpoch = 0`. `msgNo` běží dál (řetěz se posunem epochy NEpřeseje —
-  to dělá jen KEM krok).
+- `epoch` (e_send) se posune, když `msgsSinceEpoch` dosáhne `K`
+  (`RATCHET_EPOCH_MSGS`). Při posunu `epoch++`, `msgsSinceEpoch = 0`. `msgNo` běží
+  dál (řetěz se posunem epochy NEpřeseje — to dělá jen KEM krok). **Pozn.:** KEM
+  krok (Fáze 4) epochu NEposouvá (viz `applyRekey`); dřívější návrh „(a) KEM krok
+  posune epochu" se do implementace nepromítl (nález v2.0-34 / A-N2).
 - **Příjem:** pollni `mailbox(recvDir, e_recv .. e_recv+W)`. Ve zprávě přečti
   autentizovaný `epoch`,`msgNo`. Posuň `e_recv` na vyšší viděnou epochu. Pro
   `msgNo > n_recv` přetoč řetěz o `msgNo − n_recv` kroků (max `RATCHET_SKIP_MAX`,
   jinak → karanténa), přeskočené `MK` ulož. Pro `msgNo ≤ n_recv` (out-of-order /
   už viděné) najdi `MK` ve skipped-store (idempotence příjmu).
+  **Okno `e_recv .. e_recv+W` je DURABILNÍ „podlaha" (`RatchetState.backfillFloor`),
+  ne jen aktuální `e_recv`:** dešifrování vyšší epochy posune `e_recv` hned, ale
+  schránky nižších epoch se musí teprve dočíst — podlaha se posune AŽ po jejich
+  prokazatelném vyprázdnění, takže přechodné selhání GETu epochu neztratí
+  (nález v2.0-27 + reziduum v2.0-29).
 - **Discovery zaostalého příjemce** (utekl za `W`): dorovnej z `beacon`; když je
   prázdný, **odešli první** (vlastní `e_send` znáš vždy) — odpověď protějšku
   přinese jeho aktuální epochu.

@@ -280,10 +280,15 @@ private fun AppLockGate(content: @Composable () -> Unit) {
     // výměny klíče na dálku, kdy na pár sekund odejde z appky).
     Box(modifier = Modifier.fillMaxSize()) {
         content()
-        // Zámek se plynule objeví/zmizí (fade) - po odemčení „odtaje", ne tvrdý skok.
+        // Zámek při ZAMYKÁNÍ naskočí OKAMŽITĚ (EnterTransition.None), ne fadem -
+        // jinak by se během ~200 ms nasouvání dal pod poloprůhledným překryvem
+        // číst obsah (typicky otevřená konverzace s dešifrovanými zprávami), což
+        // je přesně to, před čím má zámek chránit (nález v2.0-33 / C-N1; FLAG_SECURE
+        // blokuje jen screenshoty/recents, ne živý pohled). Fade zůstává jen na
+        // ODEMYKÁNÍ (exit) - tam už je obsah legitimně vidět, ať „odtaje".
         AnimatedVisibility(
             visible = needsUnlock,
-            enter = fadeIn(tween(200)),
+            enter = EnterTransition.None,
             exit = fadeOut(tween(220))
         ) {
             // Neprůhledný celoobrazovkový překryv, který navíc pohltí doteky,

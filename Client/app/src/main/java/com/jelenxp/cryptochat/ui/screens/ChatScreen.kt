@@ -316,6 +316,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             }
     }
 
+    val messageFailed = stringResource(R.string.chat_message_failed)
     fun sendCurrent() {
         val text = input.trim()
         if (text.isEmpty() || contact == null) return
@@ -327,6 +328,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         scope.launch {
             val msg = withContext(Dispatchers.IO) {
                 RelaySync.enqueue(context, contact, text, replyRef)
+            }
+            // Uložení do historie selhalo → NEODESÍLAT (jinak by zpráva odešla, ale
+            // u nás v historii nebyla). Vrať text do pole, ať jde zkusit znovu.
+            if (msg == null) {
+                input = text
+                Toast.makeText(context, messageFailed, Toast.LENGTH_LONG).show()
+                return@launch
             }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
