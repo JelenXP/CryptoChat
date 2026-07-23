@@ -212,6 +212,10 @@
     <string name="btn_verify_key">Verify key</string>
     <string name="verify_intro">Compare this code with %1$s over a different channel than the one you used for the key exchange. If it matches on both sides, you share the same key and nobody has swapped it.</string>
     <string name="verify_hint">The code is derived from your shared key and reveals nothing about it.</string>
+    <string name="verify_mark_verified">Mark as verified</string>
+    <string name="verify_status_verified">Verified — the code still matches.</string>
+    <string name="verify_status_changed">Warning: this code has changed since you last verified it. Only mark it verified again if you\'ve re-checked it over a trusted channel.</string>
+    <string name="chat_trust_changed">This contact\'s security code changed. Re-verify them before trusting this chat.</string>
     <string name="btn_done">Done</string>
 
     <!-- What\'s new (changelog) -->

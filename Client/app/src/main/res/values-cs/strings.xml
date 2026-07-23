@@ -212,6 +212,10 @@
     <string name="btn_verify_key">Ověřit klíč</string>
     <string name="verify_intro">Porovnej tento kód s %1$s jiným kanálem, než kterým proběhla výměna klíče. Když se na obou stranách shoduje, máte stejný klíč a nikdo ho nepodvrhl.</string>
     <string name="verify_hint">Kód je odvozený ze sdíleného klíče a nic o něm neprozrazuje.</string>
+    <string name="verify_mark_verified">Označit jako ověřené</string>
+    <string name="verify_status_verified">Ověřeno — kód pořád sedí.</string>
+    <string name="verify_status_changed">Pozor: tenhle kód se od posledního ověření změnil. Znovu ho označ jako ověřený, jen když sis ho ověřil důvěryhodným kanálem.</string>
+    <string name="chat_trust_changed">Bezpečnostní kód tohoto kontaktu se změnil. Než chatu budeš věřit, ověř ho znovu.</string>
     <string name="btn_done">Hotovo</string>
 
     <!-- Novinky (changelog) -->

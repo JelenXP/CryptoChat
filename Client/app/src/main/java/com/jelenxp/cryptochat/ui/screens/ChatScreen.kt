@@ -95,6 +95,9 @@ import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.DraftStore
+import com.jelenxp.cryptochat.crypto.CryptoManager
+import com.jelenxp.cryptochat.data.TrustState
+import com.jelenxp.cryptochat.data.TrustStore
 import com.jelenxp.cryptochat.chat.MediaTransfers
 import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RelaySync
@@ -224,6 +227,17 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // Stav kompatibility formátu s protějškem (WireCompat drží Compose stav,
     // takže se banner objeví hned, jak dorazí zpráva z jiné verze).
     val peerCompat = WireCompat.peerState(context, id)
+    // Trust pinning: změnil se ověřený otisk klíče? Pin je na STATICKÝ klíč M
+    // (otisk se re-keyem nemění), takže „změněno" = skutečná výměna klíče. Čte se
+    // mimo main (Keystore) a přepočítá při změně klíče kontaktu (obnova apod.).
+    var trustChanged by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id, contact?.keyBase64) {
+        val k = contact?.keyBase64
+        trustChanged = if (k == null) false else withContext(Dispatchers.IO) {
+            val stored = TrustStore(context).verifiedFingerprint(id)
+            TrustState.evaluate(stored, CryptoManager.fingerprint(k)) == TrustState.Level.CHANGED
+        }
+    }
     val hasKey = contact?.keyBase64 != null
     val canChat = hasKey && relayUrl.isNotBlank()
 
@@ -717,6 +731,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 WireCompat.Peer.CAPS_DIFFER ->
                     ChatNotice(stringResource(R.string.chat_peer_caps_differ))
                 WireCompat.Peer.OK -> {}
+            }
+            // Trust pinning: ověřený otisk klíče se změnil (podvržený / obnovený
+            // klíč) → varuj a odkaž na nové ověření. Nezávislé na kompatibilitě verzí.
+            if (trustChanged) {
+                ChatNotice(stringResource(R.string.chat_trust_changed))
             }
 
             if (visibleMessages.isEmpty()) {
