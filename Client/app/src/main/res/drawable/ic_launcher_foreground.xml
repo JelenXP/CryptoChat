@@ -2,21 +2,23 @@
      vyrez zamku). Bila bublina, zamek je evenOdd vyrez, takze skrz nej prosvita
      tyrkysove pozadi. minSdk 26 = adaptivni ikona se pouzije vzdy (legacy PNG
      mipmapy se neuplatni).
-     Centrovani: glyf ma ocasek vlevo DOLE, takze centrovani podle
-     bounding-boxu (translateY 12) posouvalo vizualni telo bubliny nahoru a cele
-     to pusobilo posunute. translateY 19 vystredi TELO bubliny (zaobleny
-     obdelnik, lokalni stred y=10) presne do stredu platna (y=54); ocasek visi
-     pod nim. Zamek se posune s bublinou, zustava vystredeny v tele. -->
+     Velikost: scale 3.5 (glyf ~70dp) vyplnoval celou masku launcheru (kruh i
+     zaobleny ctverec) az k okraji = vypadal jako bily pruh. scale 2.6 (glyf
+     ~52dp) necha kolem pohodlny okraj = vypada jako normalni ikona.
+     Centrovani: glyf ma ocasek vlevo DOLE, takze centruje se TELO bubliny
+     (zaobleny obdelnik, lokalni stred (12,10)) na stred platna (54,54):
+     translateX = 54 - 12*2.6 = 22.8; translateY = 54 - 10*2.6 = 28. Ocasek visi
+     pod telem, zamek se posune s bublinou a zustava v tele. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="3.5"
-        android:scaleY="3.5"
-        android:translateX="12"
-        android:translateY="19">
+        android:scaleX="2.6"
+        android:scaleY="2.6"
+        android:translateX="22.8"
+        android:translateY="28">
         <path
             android:fillColor="#FFFFFF"
             android:fillType="evenOdd"

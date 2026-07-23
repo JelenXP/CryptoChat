@@ -216,7 +216,7 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">Verze 2.0.1 — drobné opravy na 2.0. Nespěchá to a nemusí být na obou telefonech.\n\n• Ikona aplikace je teď správně vycentrovaná.\n• Když zprávu nejde uložit, aplikace to řekne a tiše ji nezahodí.\n• Zámek teď zakryje aplikaci okamžitě, bez krátkého záblesku obsahu za ním.\n• Opravy spolehlivosti doručování kolem půlnoci.</string>
+    <string name="changelog_body">Verze 2.0.2 — rychlá oprava na 2.0.1.\n\n• Ikona aplikace má teď správnou velikost (byla moc velká a vyplňovala celou dlaždici).\n\nZ 2.0.1 také: zprávy se tiše neztratí, když se nepodaří uložit; zámek zakryje aplikaci okamžitě; spolehlivější doručování kolem půlnoci.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->

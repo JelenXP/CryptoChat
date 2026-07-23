@@ -216,7 +216,7 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">Version 2.0.1 — small fixes on top of 2.0. No rush, and it doesn\'t need to be on both phones.\n\n• The app icon is now properly centered.\n• If a message can\'t be saved, the app tells you and doesn\'t quietly drop it.\n• The lock now covers the app instantly, with no brief glimpse of the content behind it.\n• Reliability fixes for message delivery around midnight.</string>
+    <string name="changelog_body">Version 2.0.2 — a quick follow-up to 2.0.1.\n\n• The app icon is now the right size (it was too large and filled the whole tile).\n\nAlso from 2.0.1: no silently dropped messages when saving fails, the lock covers the app instantly, and more reliable delivery around midnight.</string>
     <string name="btn_changelog_ok">Got it</string>
 
     <!-- About the app (Settings) -->
