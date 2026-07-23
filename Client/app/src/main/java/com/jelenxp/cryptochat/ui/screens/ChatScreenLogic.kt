@@ -143,6 +143,87 @@ object ChatScreenLogic {
     }
 
     /**
+     * Jeden řádek seznamu konverzace. Kromě zpráv nese i oddělovač dne a jednu
+     * čáru „Nové zprávy". Vytaženo z composable schválně (pravidlo projektu):
+     * skládání řádků je netriviální (přelom dne, pozice první nepřečtené) a musí
+     * jít otestovat bez Androidu.
+     */
+    sealed interface ChatRow {
+        /** Stabilní klíč pro `LazyColumn` (recyklace položek). */
+        val key: String
+
+        /** Hlavička dne (číslo dne v lokální zóně; překlad na „Dnes/Včera/datum" až v UI). */
+        data class DayHeader(val epochDay: Long) : ChatRow {
+            override val key: String get() = "day_$epochDay"
+        }
+
+        /** Čára „Nové zprávy" nad první nepřečtenou. */
+        data class UnreadDivider(val count: Int) : ChatRow {
+            override val key: String get() = "unread_divider"
+        }
+
+        /** Běžná zpráva. */
+        data class Msg(val message: ChatMessage) : ChatRow {
+            override val key: String get() = message.id
+        }
+    }
+
+    /**
+     * Poskládá zprávy do řádků s oddělovači dní a jednou čárou „Nové zprávy".
+     *
+     * @param dayOf převede timestamp na číslo dne v LOKÁLNÍ zóně - volající ho dodá
+     *   (`Instant…toLocalDate().toEpochDay()`), aby funkce zůstala čistá a
+     *   testovatelná bez Androidu i bez závislosti na aktuální časové zóně.
+     * @param unreadCount počet nepřečtených zpráv při otevření (0 = bez čáry). Čára
+     *   se vloží nad **první nepřečtenou PŘÍCHOZÍ** zprávu = `unreadCount`-tou
+     *   příchozí od konce (odchozí se nepočítají).
+     */
+    fun buildRows(
+        messages: List<ChatMessage>,
+        unreadCount: Int,
+        dayOf: (Long) -> Long
+    ): List<ChatRow> {
+        if (messages.isEmpty()) return emptyList()
+        // První nepřečtená = unreadCount-tá příchozí zpráva od konce. Když je
+        // nepřečtených víc než příchozích v historii (dorazily a byly smazané),
+        // čára se nevloží (firstUnreadId zůstane null) - lepší než ji dát špatně.
+        val firstUnreadId: String? = if (unreadCount <= 0) null else {
+            var seen = 0
+            var found: String? = null
+            for (i in messages.indices.reversed()) {
+                if (!messages[i].outgoing) {
+                    seen++
+                    if (seen == unreadCount) { found = messages[i].id; break }
+                }
+            }
+            found
+        }
+        val rows = ArrayList<ChatRow>(messages.size + 8)
+        var lastDay = Long.MIN_VALUE
+        for (m in messages) {
+            val day = dayOf(m.timestamp)
+            if (day != lastDay) {
+                rows.add(ChatRow.DayHeader(day))
+                lastDay = day
+            }
+            // Čára jde POD hlavičku dne, těsně nad první nepřečtenou zprávu.
+            if (m.id == firstUnreadId) rows.add(ChatRow.UnreadDivider(unreadCount))
+            rows.add(ChatRow.Msg(m))
+        }
+        return rows
+    }
+
+    /** Popisek hlavičky dne (překlad na text až v UI, ať `dayLabel` zůstane čistý). */
+    enum class DayLabel { TODAY, YESTERDAY, OLDER }
+
+    /** „Dnes" / „Včera" / starší (podle rozdílu dní vůči dnešku). */
+    fun dayLabel(epochDay: Long, todayEpochDay: Long): DayLabel = when (todayEpochDay - epochDay) {
+        0L -> DayLabel.TODAY
+        1L -> DayLabel.YESTERDAY
+        else -> DayLabel.OLDER
+    }
+
+    /**
      * Je seznam konverzace „u dna"? Rozhoduje, jestli se má při změně obsahu nebo
      * výšky viewportu (dekódování fotky, přidání reakce, otevření klávesnice)
      * ZNOVU přirolovat dolů, nebo ne.

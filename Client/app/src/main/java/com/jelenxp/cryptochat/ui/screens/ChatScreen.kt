@@ -135,7 +135,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // Historii NEnačítej v kompozici - `getMessages` dešifruje Keystorem a u delší
     // konverzace by to na hlavním vlákně znamenalo zamrznutí až ANR.
     var messages by remember(id) { mutableStateOf(emptyList<ChatMessage>()) }
+    // Počet nepřečtených při OTEVŘENÍ (pro čáru „Nové zprávy"). Zachytit DŘÍV, než
+    // RESUMED efekt níž zavolá markRead a vynuluje ho; drží se po dobu otevření
+    // (remember(id)). getUnreadCount je levný int z prefs, ne Keystore.
+    var unreadAtOpen by remember(id) { mutableStateOf(0) }
     LaunchedEffect(id) {
+        unreadAtOpen = withContext(Dispatchers.IO) { repo.getUnreadCount(id) }
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
     }
     var input by remember { mutableStateOf("") }
@@ -172,6 +177,16 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // (`messages`) i index citací zůstávají nad plnou historií - jen se jinak kreslí.
     val visibleMessages = remember(messages, searchMode, searchQuery) {
         if (searchMode) ChatScreenLogic.filterMessages(messages, searchQuery) else messages
+    }
+    // Řádky seznamu: mimo hledání s oddělovači dní a čárou „Nové zprávy", v hledání
+    // ploché (oddělovače by u filtrovaných výsledků napříč dny nedávaly smysl).
+    // `dayOf` počítá den v LOKÁLNÍ zóně; sama buildRows je čistá a testovaná.
+    val chatZone = remember { java.time.ZoneId.systemDefault() }
+    val rows = remember(visibleMessages, searchMode, unreadAtOpen) {
+        if (searchMode) visibleMessages.map { ChatScreenLogic.ChatRow.Msg(it) }
+        else ChatScreenLogic.buildRows(visibleMessages, unreadAtOpen) { ts ->
+            java.time.Instant.ofEpochMilli(ts).atZone(chatZone).toLocalDate().toEpochDay()
+        }
     }
 
     // Vybrané zprávy (dlouhý stisk vybere, klepnutí ve výběru přepíná) a zpráva,
@@ -279,13 +294,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // zprávy pak plynule animovaně. Offset SCROLL_BOTTOM_OFFSET tlačí na SKUTEČNÉ
     // dno - bez něj by se u vysoké poslední zprávy skončilo „skoro na konci".
     var initialScrollDone by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(visibleMessages.size) {
-        if (visibleMessages.isNotEmpty()) {
+    LaunchedEffect(rows.size) {
+        if (rows.isNotEmpty()) {
             if (!initialScrollDone) {
-                listState.scrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                listState.scrollToItem(rows.lastIndex, SCROLL_BOTTOM_OFFSET)
                 initialScrollDone = true
             } else {
-                listState.animateScrollToItem(visibleMessages.lastIndex, SCROLL_BOTTOM_OFFSET)
+                listState.animateScrollToItem(rows.lastIndex, SCROLL_BOTTOM_OFFSET)
             }
             // Nový příspěvek (odeslaný i přijatý) = jdeme k dnu a chceme tam zůstat.
             // Zachovává dosavadní chování „po odeslání to odscrolluje dopředu, i když
@@ -305,13 +320,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // se nerestartuje, takže by guard `isNotEmpty()` zůstal navždy false a
     // přerolování dolů by se nikdy nespustilo. `rememberUpdatedState` drží stabilní
     // referenci, jejíž `.value` se aktualizuje každou kompozicí (čte se živě).
-    val liveVisible by rememberUpdatedState(visibleMessages)
+    val liveRows by rememberUpdatedState(rows)
     LaunchedEffect(listState) {
         snapshotFlow { Triple(stickToBottom, atBottom, listState.isScrollInProgress) }
             .collect { (stick, bottom, scrolling) ->
-                val vm = liveVisible
-                if (stick && !bottom && !scrolling && vm.isNotEmpty()) {
-                    listState.scrollToItem(vm.lastIndex, SCROLL_BOTTOM_OFFSET)
+                val rs = liveRows
+                if (stick && !bottom && !scrolling && rs.isNotEmpty()) {
+                    listState.scrollToItem(rs.lastIndex, SCROLL_BOTTOM_OFFSET)
                 }
             }
     }
@@ -672,32 +687,39 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(visibleMessages, key = { it.id }) { m ->
-                        // Citovaná zpráva se hledá v UŽ NAČTENÉM seznamu - do
-                        // kompozice nesmí žádné čtení historie (Keystore = ANR).
-                        // Přes mapu, ne lineárním hledáním: u dlouhé konverzace
-                        // by se pro každou viditelnou bublinu procházelo všechno.
-                        val quote = ChatScreenLogic.resolveQuote(m, byWireRef)
-                        MessageRow(
-                            message = m,
-                            quoted = quote.message,
-                            quotedMissing = quote.missing,
-                            peerName = contact?.name.orEmpty(),
-                            // Při hledání podbarvit nalezenou část; jinak prázdné.
-                            highlightQuery = if (searchMode) searchQuery else "",
-                            selected = m.id in selectedIds,
-                            // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
-                            showReactionPicker = selectedIds == setOf(m.id),
-                            canReact = canChat && m.wireRef != null,
-                            selectionMode = selectedIds.isNotEmpty(),
-                            onSelect = { selectedIds = selectedIds + m.id },
-                            onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
-                            onReact = { emoji -> react(m, emoji) },
-                            onMore = { emojiPickerFor = m; selectedIds = emptySet() },
-                            onDoubleTapReact = { doubleTapReact(m) },
-                            onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
-                            onRetry = { retry(m) }
-                        )
+                    items(rows, key = { it.key }, contentType = { it::class }) { row ->
+                        when (row) {
+                            is ChatScreenLogic.ChatRow.DayHeader -> DayHeaderRow(row.epochDay)
+                            is ChatScreenLogic.ChatRow.UnreadDivider -> UnreadDividerRow()
+                            is ChatScreenLogic.ChatRow.Msg -> {
+                                val m = row.message
+                                // Citovaná zpráva se hledá v UŽ NAČTENÉM seznamu - do
+                                // kompozice nesmí žádné čtení historie (Keystore = ANR).
+                                // Přes mapu, ne lineárním hledáním: u dlouhé konverzace
+                                // by se pro každou viditelnou bublinu procházelo všechno.
+                                val quote = ChatScreenLogic.resolveQuote(m, byWireRef)
+                                MessageRow(
+                                    message = m,
+                                    quoted = quote.message,
+                                    quotedMissing = quote.missing,
+                                    peerName = contact?.name.orEmpty(),
+                                    // Při hledání podbarvit nalezenou část; jinak prázdné.
+                                    highlightQuery = if (searchMode) searchQuery else "",
+                                    selected = m.id in selectedIds,
+                                    // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
+                                    showReactionPicker = selectedIds == setOf(m.id),
+                                    canReact = canChat && m.wireRef != null,
+                                    selectionMode = selectedIds.isNotEmpty(),
+                                    onSelect = { selectedIds = selectedIds + m.id },
+                                    onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
+                                    onReact = { emoji -> react(m, emoji) },
+                                    onMore = { emojiPickerFor = m; selectedIds = emptySet() },
+                                    onDoubleTapReact = { doubleTapReact(m) },
+                                    onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
+                                    onRetry = { retry(m) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -833,6 +855,51 @@ private const val SWIPE_REPLY_THRESHOLD_PX = 180f
  * poslední zprávy nahoře = „skoro na konci".
  */
 private const val SCROLL_BOTTOM_OFFSET = 1_000_000
+
+/** Hlavička dne v proudu zpráv („Dnes" / „Včera" / datum). Vystředěný štítek. */
+@Composable
+private fun DayHeaderRow(epochDay: Long) {
+    val today = remember { java.time.LocalDate.now().toEpochDay() }
+    val label = when (ChatScreenLogic.dayLabel(epochDay, today)) {
+        ChatScreenLogic.DayLabel.TODAY -> stringResource(R.string.chat_day_today)
+        ChatScreenLogic.DayLabel.YESTERDAY -> stringResource(R.string.chat_day_yesterday)
+        ChatScreenLogic.DayLabel.OLDER -> remember(epochDay) {
+            java.time.LocalDate.ofEpochDay(epochDay).format(
+                java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM)
+            )
+        }
+    }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        Surface(
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            tonalElevation = 1.dp
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+/** Čára „Nové zprávy" nad první nepřečtenou zprávou (barva značky). */
+@Composable
+private fun UnreadDividerRow() {
+    val color = MaterialTheme.colorScheme.primary
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        HorizontalDivider(modifier = Modifier.weight(1f), color = color.copy(alpha = 0.5f))
+        Text(
+            text = stringResource(R.string.chat_unread_divider),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        HorizontalDivider(modifier = Modifier.weight(1f), color = color.copy(alpha = 0.5f))
+    }
+}
 
 /**
  * Jeden řádek konverzace: zvýraznění při výběru, pruh emoji, citace nad
