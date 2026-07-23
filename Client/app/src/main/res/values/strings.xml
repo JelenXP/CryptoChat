@@ -396,6 +396,7 @@
     <string name="chat_day_today">Today</string>
     <string name="chat_day_yesterday">Yesterday</string>
     <string name="chat_unread_divider">New messages</string>
+    <string name="chat_jump_to_bottom">Jump to the latest messages</string>
     <string name="chat_image_failed">Couldn\'t send the photo. It may be too large.</string>
     <string name="attach_file">File</string>
     <string name="chat_file_failed">Couldn\'t send the file. The maximum size is 25 MB.</string>

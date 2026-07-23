@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -197,6 +198,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var pendingDelete by remember(id) { mutableStateOf<List<ChatMessage>>(emptyList()) }
     // Zpráva, pro kterou je otevřený plný emoji picker (z „+" v paletě reakcí).
     var emojiPickerFor by remember(id) { mutableStateOf<ChatMessage?>(null) }
+    // Zpráva krátce zvýrazněná po skoku z citace (`onQuoteClick`).
+    var highlightedId by remember(id) { mutableStateOf<String?>(null) }
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
@@ -249,6 +252,16 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             .filter { !it }               // jen když scroll DOJEL (uživatelský i programový)
             .collect { stickToBottom = atBottom }
     }
+    // Počet nových zpráv od chvíle, co uživatel odscrolloval z konce - odznak na
+    // tlačítku „skočit dolů". Baseline se srovná s aktuální velikostí VŽDY, když
+    // je uživatel u dna (viděl vše); mimo dno se drží, takže ho nové zprávy
+    // přerostou. Odchozí zpráva rovnou vrací na dno (stickToBottom), takže se sem
+    // prakticky počítají jen příchozí.
+    var bottomAnchorSize by remember(id) { mutableStateOf(0) }
+    LaunchedEffect(atBottom, visibleMessages.size) {
+        if (atBottom) bottomAnchorSize = visibleMessages.size
+    }
+    val newSinceScroll = (visibleMessages.size - bottomAnchorSize).coerceAtLeast(0)
 
     // ChatScreen ZÁMĚRNĚ NEPOLLUJE. Relay je dead-drop - GET zprávu smaže, takže
     // dva nezávislí příjemci téže schránky by o každou zprávu závodili: jednou by
@@ -329,6 +342,21 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     listState.scrollToItem(rs.lastIndex, SCROLL_BOTTOM_OFFSET)
                 }
             }
+    }
+
+    // Skok na citovanou zprávu (klik na citaci): doroluj na její řádek a krátce ji
+    // zvýrazni. Index se hledá v UŽ SESTAVENÝCH `rows`, žádné čtení historie.
+    fun jumpToMessage(target: ChatMessage) {
+        val idx = rows.indexOfFirst {
+            it is ChatScreenLogic.ChatRow.Msg && it.message.id == target.id
+        }
+        if (idx < 0) return
+        scope.launch {
+            listState.animateScrollToItem(idx)
+            highlightedId = target.id
+            delay(1500)
+            if (highlightedId == target.id) highlightedId = null
+        }
     }
 
     val messageFailed = stringResource(R.string.chat_message_failed)
@@ -681,9 +709,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     )
                 }
             } else {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -716,11 +745,27 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                                     onMore = { emojiPickerFor = m; selectedIds = emptySet() },
                                     onDoubleTapReact = { doubleTapReact(m) },
                                     onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
-                                    onRetry = { retry(m) }
+                                    onRetry = { retry(m) },
+                                    onQuoteClick = { quote.message?.let { jumpToMessage(it) } },
+                                    highlighted = m.id == highlightedId
                                 )
                             }
                         }
                     }
+                }
+                // Tlačítko „skočit dolů" - jen když nejsme u dna; odznak = počet nových.
+                if (!atBottom) {
+                    JumpToBottomButton(
+                        count = newSinceScroll,
+                        onClick = {
+                            scope.launch {
+                                listState.animateScrollToItem(rows.lastIndex, SCROLL_BOTTOM_OFFSET)
+                                stickToBottom = true
+                            }
+                        },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
+                    )
+                }
                 }
             }
 
@@ -901,6 +946,26 @@ private fun UnreadDividerRow() {
     }
 }
 
+/** Malé plovoucí tlačítko „skočit na konec" s odznakem počtu nových zpráv. */
+@Composable
+private fun JumpToBottomButton(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier = modifier) {
+        SmallFloatingActionButton(
+            onClick = onClick,
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+        ) {
+            Icon(
+                Icons.Default.KeyboardArrowDown,
+                contentDescription = stringResource(R.string.chat_jump_to_bottom)
+            )
+        }
+        if (count > 0) {
+            Badge(modifier = Modifier.align(Alignment.TopEnd)) { Text(count.toString()) }
+        }
+    }
+}
+
 /**
  * Jeden řádek konverzace: zvýraznění při výběru, pruh emoji, citace nad
  * bublinou, reakce pod ní a tažení zleva doprava jako zkratka pro odpověď.
@@ -923,9 +988,18 @@ private fun MessageRow(
     onMore: () -> Unit,
     onDoubleTapReact: () -> Unit,
     onReplySwipe: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onQuoteClick: () -> Unit,
+    highlighted: Boolean
 ) {
     val haptics = LocalHapticFeedback.current
+    // Krátké zvýraznění po skoku z citace (fade dovnitř i ven). Když highlighted
+    // spadne (po prodlevě v ChatScreen), barva se plynule vytratí.
+    val highlightBg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        else androidx.compose.ui.graphics.Color.Transparent,
+        label = "quoteHighlight"
+    )
     // Během tahu se posun mění přímo (bez animace), po puštění se animuje zpět.
     // Animatable + snapTo v korutině by znamenalo spustit korutinu při každé
     // události prstu, tedy desítky za sekundu.
@@ -942,10 +1016,9 @@ private fun MessageRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .then(
-                if (selected) Modifier.background(
-                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
-                ) else Modifier
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                else highlightBg
             )
             .padding(vertical = 2.dp)
     ) {
@@ -996,7 +1069,8 @@ private fun MessageRow(
                 // Ve výběrovém režimu klepnutí přidává/odebírá zprávu z výběru.
                 onTap = if (selectionMode) onTapInSelection else null,
                 // Dvojklep = rychlá reakce; jen mimo výběr a když jde reagovat.
-                onDoubleTap = if (!selectionMode && canReact) onDoubleTapReact else null
+                onDoubleTap = if (!selectionMode && canReact) onDoubleTapReact else null,
+                onQuoteClick = onQuoteClick
             )
             // Pruh emoji jako plovoucí Popup NAD bublinou - nerezervuje místo a
             // klidně překryje zprávu nad ní (jako WhatsApp). Nefokusovatelný, ať
@@ -1154,13 +1228,18 @@ private fun QuotedBlock(
     missing: Boolean,
     peerName: String,
     accent: Color,
-    textColor: Color
+    textColor: Color,
+    onClick: (() -> Unit)? = null
 ) {
     if (quoted == null && !missing) return
+    // Klik skočí na originál - jen když cíl v historii pořád je (u „nedostupné"
+    // není kam skočit).
+    val clickable = onClick != null && quoted != null
     Row(
         modifier = Modifier
             .padding(bottom = 4.dp)
             .clip(RoundedCornerShape(6.dp))
+            .then(if (clickable) Modifier.clickable { onClick!!() } else Modifier)
             .background(textColor.copy(alpha = 0.10f))
             .height(IntrinsicSize.Min)
     ) {
@@ -1311,7 +1390,8 @@ private fun MessageBubble(
     onRetry: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     onTap: (() -> Unit)? = null,
-    onDoubleTap: (() -> Unit)? = null
+    onDoubleTap: (() -> Unit)? = null,
+    onQuoteClick: (() -> Unit)? = null
 ) {
     val outgoing = message.outgoing
     val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
@@ -1356,7 +1436,8 @@ private fun MessageBubble(
                 missing = quotedMissing,
                 peerName = peerName,
                 accent = accent,
-                textColor = textColor
+                textColor = textColor,
+                onClick = onQuoteClick
             )
             when (message.kind) {
                 ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)

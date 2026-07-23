@@ -396,6 +396,7 @@
     <string name="chat_day_today">Dnes</string>
     <string name="chat_day_yesterday">Včera</string>
     <string name="chat_unread_divider">Nové zprávy</string>
+    <string name="chat_jump_to_bottom">Skočit na nejnovější zprávy</string>
     <string name="chat_image_failed">Fotku se nepodařilo odeslat. Možná je moc velká.</string>
     <string name="attach_file">Soubor</string>
     <string name="chat_file_failed">Soubor se nepodařilo odeslat. Maximum je 25 MB.</string>
