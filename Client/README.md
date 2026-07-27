@@ -57,8 +57,13 @@ it, and if that person's security code ever changes later, the conversation warn
   lights up briefly.
 - **React** — hold a message and pick one of six emoji. Tapping the same one removes it.
   Both phones need a recent version; until then reactions simply aren't sent.
-- **Copy or delete** — holding a message also lets you copy its text or delete it from
-  this phone only. The other person keeps their copy.
+- **Edit** — hold one of your own text messages and pick Edit; fix it and send. The other
+  phone updates it too and the message is marked **"edited"**. Older versions keep the
+  original text.
+- **Copy or delete** — holding a message lets you copy its text or delete it; a deleted
+  message turns into a grey **"Deleted"** in place of the bubble. For your own messages you
+  can **Delete for everyone**, so it becomes "Deleted" on both phones; **Delete for me**
+  does the same just on this phone.
 - **Day separators** mark where each day starts (Today / Yesterday / date), and a
   **"New messages"** line shows where you left off.
 - Scroll up and a **jump-to-latest button** appears, with a count of messages that arrived
@@ -200,8 +205,12 @@ varuje.
   která se na chvíli rozsvítí.
 - **Reakce** — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zruší.
   Oba telefony potřebují novější verzi; do té doby se reakce prostě neposílají.
-- **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat
-  jen z tohohle telefonu. Protějšku jeho kopie zůstane.
+- **Úprava** — podrž svoji textovou zprávu a zvol Upravit; oprav ji a odešli. Druhý telefon
+  ji přepíše taky a zpráva se označí **„upraveno"**. Starší verze si nechá původní text.
+- **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat;
+  smazaná zpráva se místo bubliny změní na šedé **„Smazáno"**. U vlastních zpráv jde
+  **Smazat pro všechny**, takže „Smazáno" bude na obou telefonech; **Smazat u mě** udělá
+  totéž jen na tomhle telefonu.
 - **Oddělovače dnů** ukazují, kde začíná který den (Dnes / Včera / datum), a čára
   **„Nové zprávy"** označí, kde jsi skončil.
 - Když odroluješ nahoru, objeví se **tlačítko skoku na konec** s počtem zpráv, které mezitím
