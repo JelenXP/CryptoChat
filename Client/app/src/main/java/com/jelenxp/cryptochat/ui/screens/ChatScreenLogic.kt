@@ -180,9 +180,22 @@ object ChatScreenLogic {
         /** Stabilní klíč pro `LazyColumn` (recyklace položek). */
         val key: String
 
-        /** Hlavička dne (číslo dne v lokální zóně; překlad na „Dnes/Včera/datum" až v UI). */
-        data class DayHeader(val epochDay: Long) : ChatRow {
-            override val key: String get() = "day_$epochDay"
+        /**
+         * Hlavička dne (číslo dne v lokální zóně; překlad na „Dnes/Včera/datum"
+         * až v UI).
+         *
+         * [anchorId] = id PRVNÍ zprávy pod hlavičkou. Slouží jen ke [key] a MUSÍ
+         * tam být: zprávy nechodí nutně v pořadí podle času (příchozí nesou čas
+         * odesílatele → posun hodin mezi telefony; zpožděné doručení / catch-up
+         * přes relay), takže se stejný den může v seznamu objevit NESOUVISLE
+         * dvakrát. Kdyby byl klíč jen „day_$epochDay", obě hlavičky by ho sdílely
+         * a `LazyColumn` by na duplicitní klíč spadl („Key was already used") ve
+         * chvíli, kdy se druhá zarolováním dostane do měření - přesně ten pád při
+         * scrollu nahoru. Kotvením na unikátní id první zprávy je klíč unikátní
+         * i stabilní (append-only historie první zprávu skupiny nemění).
+         */
+        data class DayHeader(val epochDay: Long, val anchorId: String) : ChatRow {
+            override val key: String get() = "day_${epochDay}_$anchorId"
         }
 
         /** Čára „Nové zprávy" nad první nepřečtenou. */
@@ -231,7 +244,9 @@ object ChatScreenLogic {
         for (m in messages) {
             val day = dayOf(m.timestamp)
             if (day != lastDay) {
-                rows.add(ChatRow.DayHeader(day))
+                // Kotva = id téhle zprávy (první svého dne-bloku) → unikátní klíč
+                // i při nesouvislém opakování dne, viz [ChatRow.DayHeader].
+                rows.add(ChatRow.DayHeader(day, m.id))
                 lastDay = day
             }
             // Čára jde POD hlavičku dne, těsně nad první nepřečtenou zprávu.
