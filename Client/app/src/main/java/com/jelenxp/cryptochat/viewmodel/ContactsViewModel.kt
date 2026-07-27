@@ -10,6 +10,7 @@ import com.jelenxp.cryptochat.chat.BlobQuarantine
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.DraftStore
 import com.jelenxp.cryptochat.chat.MuteStore
+import com.jelenxp.cryptochat.chat.PendingMutations
 import com.jelenxp.cryptochat.chat.PendingReactions
 import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.chat.ReplayGuard
@@ -85,6 +86,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
             runCatching { WireCompat.clear(ctx, id) }
             runCatching { BlobQuarantine.clear(ctx, id) }
             runCatching { PendingReactions.clear(id) }
+            runCatching { PendingMutations.clear(id) }
             runCatching { MuteStore.clear(ctx, id) }
             // Ratchet klíče konverzace jsou CITLIVĚJŠÍ než replay otisky, které se
             // mazaly - bez tohohle by root/chain klíč zůstal na disku.

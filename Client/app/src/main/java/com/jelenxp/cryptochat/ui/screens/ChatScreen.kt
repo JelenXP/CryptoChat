@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
@@ -77,6 +78,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,6 +220,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var selectedIds by remember(id) { mutableStateOf<Set<String>>(emptySet()) }
     var replyTo by remember(id) { mutableStateOf<ChatMessage?>(null) }
     var pendingDelete by remember(id) { mutableStateOf<List<ChatMessage>>(emptyList()) }
+    // Zpráva, kterou právě upravuji (vstupní pole nese její nový text). null = píšu novou.
+    var editing by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Zpráva, pro kterou je otevřený plný emoji picker (z „+" v paletě reakcí).
     var emojiPickerFor by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Zpráva krátce zvýrazněná po skoku z citace (`onQuoteClick`).
@@ -393,9 +397,36 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
 
     val messageFailed = stringResource(R.string.chat_message_failed)
+    val editTooLong = stringResource(R.string.chat_edit_too_long)
     fun sendCurrent() {
         val text = input.trim()
         if (text.isEmpty() || contact == null) return
+        // Režim úpravy: přepiš text existující zprávy místo poslání nové.
+        val editTarget = editing
+        if (editTarget != null) {
+            val ref = editTarget.wireRef ?: run { editing = null; input = ""; return }
+            input = ""
+            editing = null
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    RelaySync.sendEdit(context, contact, ref, text)
+                }
+                messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+                when (result) {
+                    // Neuloženo - vrať text i režim úpravy, ať jde zkusit znovu / zkrátit.
+                    RelaySync.MutationSend.TOO_LONG -> {
+                        input = text; editing = editTarget
+                        Toast.makeText(context, editTooLong, Toast.LENGTH_LONG).show()
+                    }
+                    RelaySync.MutationSend.FAILED -> {
+                        input = text; editing = editTarget
+                        Toast.makeText(context, messageFailed, Toast.LENGTH_LONG).show()
+                    }
+                    RelaySync.MutationSend.SENT -> Unit
+                }
+            }
+            return
+        }
         input = ""
         // Odkaz vytáhni TEĎ a náhled zavři - kdyby se to dělalo až v korutině,
         // uživatel by mezitím mohl odpověď zrušit a zpráva by odešla s odkazem.
@@ -455,10 +486,33 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     fun deleteForMe(toDelete: List<ChatMessage>) {
         scope.launch {
             withContext(Dispatchers.IO) {
-                toDelete.forEach { repo.deleteMessage(context, id, it.id) }
+                toDelete.forEach { repo.deleteForMe(context, id, it.id) }
             }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
         }
+    }
+
+    /** Smaže vybrané MOJE zprávy pro všechny (náhrobek u mě i u protějšku). */
+    fun deleteForEveryone(toDelete: List<ChatMessage>) {
+        if (contact == null) return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                toDelete.forEach { m ->
+                    m.wireRef?.let { RelaySync.sendDeleteForEveryone(context, contact, it) }
+                }
+            }
+            messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+        }
+    }
+
+    /** Přepne vstupní pole do režimu úpravy dané (mojí) zprávy. */
+    fun startEditing(message: ChatMessage) {
+        editing = message
+        input = message.text
+        // Úprava a odpověď se vylučují; a vstupní pole je při hledání skryté.
+        replyTo = null
+        selectedIds = emptySet()
+        searchMode = false; searchQuery = ""
     }
 
     fun retry(message: ChatMessage) {
@@ -551,6 +605,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     LaunchedEffect(messages) {
         selectedIds = ChatScreenLogic.survivingIds(messages, selectedIds)
         replyTo = ChatScreenLogic.survivingReply(messages, replyTo)
+        // Upravovaná zpráva mezitím zmizela nebo ji někdo smazal (i pro všechny) -
+        // režim úpravy zruš a rozepsaný text zahoď, ať se neuloží do neexistujícího.
+        editing?.let { e ->
+            if (messages.none { it.id == e.id && !it.deleted }) {
+                editing = null
+                input = ""
+            }
+        }
     }
 
     // Systémové zpět nejdřív zavře výběr / hledání / rozepsanou odpověď, teprve
@@ -560,6 +622,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         searchMode = false; searchQuery = ""
     }
     BackHandler(enabled = selectedIds.isEmpty() && !searchMode && replyTo != null) { replyTo = null }
+    BackHandler(enabled = selectedIds.isEmpty() && !searchMode && editing != null) {
+        editing = null; input = ""
+    }
 
     Scaffold(
         topBar = {
@@ -589,6 +654,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                                 Icon(
                                     Icons.AutoMirrored.Filled.Reply,
                                     contentDescription = stringResource(R.string.chat_action_reply)
+                                )
+                            }
+                        }
+                        // Úprava jen u JEDNÉ mojí textové (nesmazané) zprávy.
+                        if (single != null && canChat && ChatScreenLogic.canEdit(single)) {
+                            IconButton(onClick = { startEditing(single) }) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = stringResource(R.string.chat_action_edit)
                                 )
                             }
                         }
@@ -778,14 +852,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                                     selected = m.id in selectedIds,
                                     // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
                                     showReactionPicker = selectedIds == setOf(m.id),
-                                    canReact = canChat && m.wireRef != null,
+                                    canReact = canChat && m.wireRef != null && !m.deleted,
                                     selectionMode = selectedIds.isNotEmpty(),
                                     onSelect = { selectedIds = selectedIds + m.id },
                                     onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
                                     onReact = { emoji -> react(m, emoji) },
                                     onMore = { emojiPickerFor = m; selectedIds = emptySet() },
                                     onDoubleTapReact = { doubleTapReact(m) },
-                                    onReplySwipe = { if (canChat && m.wireRef != null) replyTo = m },
+                                    onReplySwipe = { if (canChat && m.wireRef != null && !m.deleted) replyTo = m },
                                     onRetry = { retry(m) },
                                     onQuoteClick = { quote.message?.let { jumpToMessage(it) } },
                                     highlighted = m.id == highlightedId
@@ -813,6 +887,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             // Při hledání se dolní část (náhled odpovědi + psaní) skryje - lišta
             // teď hledá, ne píše, a seznam tak sedí celý nad klávesnicí.
             if (!searchMode) {
+            // Náhled právě upravované zprávy (nad vstupním polem, jako odpověď).
+            editing?.let { target ->
+                EditComposerPreview(
+                    message = target,
+                    onCancel = { editing = null; input = "" }
+                )
+            }
             // Náhled zprávy, na kterou se odpovídá.
             replyTo?.let { target ->
                 ReplyComposerPreview(
@@ -904,20 +985,37 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
 
     // Mazání se potvrzuje: je nevratné a u přijaté zprávy ji relay už smazal,
-    // takže se nedá získat zpátky.
+    // takže se nedá získat zpátky. U MOJICH zpráv nabídne i „smazat pro všechny".
     if (pendingDelete.isNotEmpty()) {
         val toDelete = pendingDelete
+        val everyone = ChatScreenLogic.canDeleteForEveryone(toDelete)
         val deletedLabel = stringResource(R.string.chat_deleted)
+        val deletedEveryoneLabel = stringResource(R.string.chat_deleted_everyone)
         AlertDialog(
             onDismissRequest = { pendingDelete = emptyList() },
             title = { Text(stringResource(R.string.chat_delete_title)) },
-            text = { Text(stringResource(R.string.chat_delete_body)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (everyone) R.string.chat_delete_choose_body else R.string.chat_delete_body
+                    )
+                )
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    pendingDelete = emptyList()
-                    deleteForMe(toDelete)
-                    Toast.makeText(context, deletedLabel, Toast.LENGTH_SHORT).show()
-                }) { Text(stringResource(R.string.btn_delete)) }
+                Column(horizontalAlignment = Alignment.End) {
+                    if (everyone) {
+                        TextButton(onClick = {
+                            pendingDelete = emptyList()
+                            deleteForEveryone(toDelete)
+                            Toast.makeText(context, deletedEveryoneLabel, Toast.LENGTH_SHORT).show()
+                        }) { Text(stringResource(R.string.chat_delete_for_everyone)) }
+                    }
+                    TextButton(onClick = {
+                        pendingDelete = emptyList()
+                        deleteForMe(toDelete)
+                        Toast.makeText(context, deletedLabel, Toast.LENGTH_SHORT).show()
+                    }) { Text(stringResource(R.string.chat_action_delete)) }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = emptyList() }) {
@@ -1374,6 +1472,48 @@ private fun ReplyComposerPreview(
     }
 }
 
+/** Pruh nad vstupním polem v režimu úpravy: ikona tužky, „Upravit zprávu" a náhled textu. */
+@Composable
+private fun EditComposerPreview(
+    message: ChatMessage,
+    onCancel: () -> Unit
+) {
+    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(
+                    stringResource(R.string.chat_editing_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+                Text(
+                    message.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = stringResource(R.string.content_desc_cancel_edit)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ChatNotice(text: String) {
     Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
@@ -1449,8 +1589,19 @@ private fun MessageBubble(
     onQuoteClick: (() -> Unit)? = null
 ) {
     val outgoing = message.outgoing
-    val bubbleColor = if (outgoing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val textColor = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val deleted = message.deleted
+    // Smazaná zpráva je vždy neutrální šedá (i moje odchozí), ať „Deleted" čte
+    // jako šedý text - ne bílý na tyrkysové bublině.
+    val bubbleColor = when {
+        deleted -> MaterialTheme.colorScheme.surfaceVariant
+        outgoing -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val textColor = when {
+        deleted -> MaterialTheme.colorScheme.onSurfaceVariant
+        outgoing -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     val accent = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(
         topStart = 16.dp, topEnd = 16.dp,
@@ -1486,49 +1637,74 @@ private fun MessageBubble(
                 )
                 .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            QuotedBlock(
-                quoted = quoted,
-                missing = quotedMissing,
-                peerName = peerName,
-                accent = accent,
-                textColor = textColor,
-                onClick = onQuoteClick
-            )
-            when (message.kind) {
-                ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
-                ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor, highlightQuery = highlightQuery)
-                else -> HighlightedText(
-                    text = message.text,
-                    query = highlightQuery,
-                    color = textColor
+            if (deleted) {
+                // Náhrobek: místo obsahu jen šedý kurzívní „Deleted" a čas.
+                Text(
+                    stringResource(R.string.chat_message_deleted),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                    color = textColor.copy(alpha = 0.85f)
                 )
-            }
-            Row(
-                modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
                 Text(
                     TIME_FORMAT.format(Date(message.timestamp)),
                     style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.7f)
+                    color = textColor.copy(alpha = 0.7f),
+                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp)
                 )
-                if (outgoing) StatusGlyph(message.status, textColor)
-            }
-            if (message.status == ChatMessage.Status.FAILED) {
-                Text(
-                    // Odchozí = „klepni pro opakování"; příchozí soubor se
-                    // opakovat nedá, tak jen „přijetí selhalo".
-                    stringResource(
-                        if (outgoing) R.string.chat_retry_hint else R.string.chat_receive_failed
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
+            } else {
+                QuotedBlock(
+                    quoted = quoted,
+                    missing = quotedMissing,
+                    peerName = peerName,
+                    accent = accent,
+                    textColor = textColor,
+                    onClick = onQuoteClick
                 )
+                when (message.kind) {
+                    ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
+                    ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor, highlightQuery = highlightQuery)
+                    else -> HighlightedText(
+                        text = message.text,
+                        query = highlightQuery,
+                        color = textColor
+                    )
+                }
+                Row(
+                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // „upraveno" u upravené zprávy, vedle času.
+                    if (message.editedAt != null) {
+                        Text(
+                            stringResource(R.string.chat_edited),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = 0.7f)
+                        )
+                    }
+                    Text(
+                        TIME_FORMAT.format(Date(message.timestamp)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor.copy(alpha = 0.7f)
+                    )
+                    if (outgoing) StatusGlyph(message.status, textColor)
+                }
+                if (message.status == ChatMessage.Status.FAILED) {
+                    Text(
+                        // Odchozí = „klepni pro opakování"; příchozí soubor se
+                        // opakovat nedá, tak jen „přijetí selhalo".
+                        stringResource(
+                            if (outgoing) R.string.chat_retry_hint else R.string.chat_receive_failed
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }
-    ReactionChips(reactions = message.visibleReactions, outgoing = outgoing)
+    // Reakce se u náhrobku vyprázdní, takže tady stejně nic nebude - ale ať je
+    // to explicitní, u smazané zprávy pruh reakcí nekreslíme.
+    if (!deleted) ReactionChips(reactions = message.visibleReactions, outgoing = outgoing)
     }
 }
 

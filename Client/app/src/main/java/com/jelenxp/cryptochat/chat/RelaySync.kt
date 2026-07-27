@@ -272,6 +272,137 @@ object RelaySync {
     }
 
     /**
+     * Upraví text NAŠÍ zprávy (podle [wireRef]) lokálně a pošle úpravu protějšku.
+     *
+     * Na rozdíl od reakce se úprava **vždy uloží u nás** (je to naše zpráva).
+     * Protějšku se pošle jen když umí řídicí zprávu bezpečně ZAHODIT (minor >= 2,
+     * jako reakci) - starší verzi by se nová zpráva jevila jako duplicitní text.
+     * Když poslat nejde, úprava zůstane jen lokálně (protějšek si nechá původní).
+     */
+    fun sendEdit(
+        context: Context,
+        contact: Contact,
+        wireRef: String,
+        newText: String
+    ): MutationSend {
+        val key = contact.keyBase64
+        val target = WireExt.fromHex(wireRef)
+        if (key.isNullOrBlank() || target == null) return MutationSend.FAILED
+        // Delší text edit nepřenese (vejde se jen do jedné TLV hodnoty). Odmítni
+        // PŘED lokálním zápisem, ať se u mě neobjeví text, který protějšku nepošlu.
+        if (newText.toByteArray(Charsets.UTF_8).size > WireExt.MAX_EDIT_TEXT_BYTES) {
+            return MutationSend.TOO_LONG
+        }
+        val now = System.currentTimeMillis()
+        val repo = repoFor(context)
+        val stored = repo.applyEdit(contact.id, wireRef, newText, now, outgoing = true)
+        if (stored != ChatRepository.MutationResult.APPLIED) {
+            DiagnosticsLog.warn(TAG, "úpravu se nepodařilo uložit ($stored)")
+            return MutationSend.FAILED
+        }
+        val delivered = deliverControl(
+            context, contact, key,
+            seal = { dir -> ChatEnvelope.sealEdit(target, newText, now, key, dir) },
+            ratchetPayload = { ChatEnvelope.buildEditPayload(target, newText, now) }
+        )
+        DiagnosticsLog.log(TAG, "odeslání úpravy: ${if (delivered) "doručeno" else "jen lokálně"}")
+        return MutationSend.SENT
+    }
+
+    /**
+     * Smaže NAŠI zprávu (podle [wireRef]) pro všechny: udělá z ní u nás náhrobek
+     * a pošle smazání protějšku (stejná pravidla doručení jako [sendEdit]). Když
+     * protějšek smazání nepřečte, degraduje to na „smazat u mě".
+     */
+    fun sendDeleteForEveryone(
+        context: Context,
+        contact: Contact,
+        wireRef: String
+    ): MutationSend {
+        val key = contact.keyBase64
+        val target = WireExt.fromHex(wireRef)
+        if (key.isNullOrBlank() || target == null) return MutationSend.FAILED
+        val repo = repoFor(context)
+        val stored = repo.deleteForBoth(context, contact.id, wireRef, outgoing = true)
+        if (stored != ChatRepository.MutationResult.APPLIED) {
+            DiagnosticsLog.warn(TAG, "smazání se nepodařilo uložit ($stored)")
+            return MutationSend.FAILED
+        }
+        val now = System.currentTimeMillis()
+        val delivered = deliverControl(
+            context, contact, key,
+            seal = { dir -> ChatEnvelope.sealDelete(target, now, key, dir) },
+            ratchetPayload = { ChatEnvelope.buildDeletePayload(target, now) }
+        )
+        DiagnosticsLog.log(TAG, "odeslání smazání: ${if (delivered) "doručeno" else "jen lokálně"}")
+        return MutationSend.SENT
+    }
+
+    /** Jak dopadl pokus o úpravu / smazání pro všechny. */
+    enum class MutationSend {
+        /** Uloženo u mě (a nejlépe i doručeno protějšku). */
+        SENT,
+
+        /** Nový text úpravy je nad limit - neuloženo ani neodesláno. */
+        TOO_LONG,
+
+        /** Uložení selhalo. */
+        FAILED
+    }
+
+    /**
+     * Odešle řídicí zprávu (edit/delete) protějšku BEST-EFFORT. Pošle jen když ji
+     * umí bezpečně zahodit (minor >= 2, jako reakci) a je nakonfigurovaný relay;
+     * jinak vrátí false (změna zůstane jen lokálně). Ratchet-aware jako
+     * [sendReaction]: [seal] pro legacy obálku, [ratchetPayload] pro ratchet.
+     */
+    private fun deliverControl(
+        context: Context,
+        contact: Contact,
+        key: String,
+        seal: (dir: Int) -> ByteArray,
+        ratchetPayload: () -> ByteArray
+    ): Boolean {
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank() ||
+            !WireCompat.peerKnownSupports(context, contact.id, WireCompat.MINOR_CONTROL_SAFE)
+        ) {
+            DiagnosticsLog.log(TAG, "protějšek řídicí zprávu nepřečte / bez relaye - jen lokálně")
+            return false
+        }
+        return try {
+            if (shouldSendRatchet(context, contact)) {
+                sendOneRatchet(context, contact, baseUrl, ratchetPayload)
+            } else {
+                val dir = sendDir(contact)
+                putFailover(context, RelayCrypto.mailboxId(key, dir, currentEpoch()), seal(dir))
+            }
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "odeslání řídicí zprávy selhalo (${e.javaClass.simpleName})")
+            false
+        }
+    }
+
+    /**
+     * Použije jednu odloženou úpravu/smazání ([PendingMutations]) na cílovou
+     * PŘÍCHOZÍ zprávu. Vrací true jen při APPLIED - jinak zůstane odložená.
+     */
+    private fun applyPendingMutation(
+        repo: ChatRepository,
+        context: Context,
+        contactId: String,
+        wireRef: String,
+        op: PendingMutations.Op
+    ): Boolean = when (op) {
+        is PendingMutations.Op.Edit ->
+            repo.applyEdit(contactId, wireRef, op.newText, op.timestamp, outgoing = false) ==
+                ChatRepository.MutationResult.APPLIED
+        is PendingMutations.Op.Delete ->
+            repo.deleteForBoth(context, contactId, wireRef, outgoing = false) ==
+                ChatRepository.MutationResult.APPLIED
+    }
+
+    /**
      * Zařadí odchozí fotku (uloží ji lokálně, přidá do historie se stavem SENDING)
      * a vrátí zprávu. Nedělá síť - doručení dokončí [deliver]. Vrací null, když se
      * fotku nepodařilo uložit.
@@ -1052,10 +1183,14 @@ object RelaySync {
                     ChatRepository.AppendResult.ADDED -> {
                         if (ActiveChat.currentId != contact.id) repo.incrementUnread(contact.id)
                         n++
-                        // Teprve teď může existovat cíl reakce, která dorazila dřív.
+                        // Teprve teď může existovat cíl reakce / úpravy / smazání,
+                        // které dorazily dřív než tahle zpráva.
                         PendingReactions.applyAll(contact.id) { ref, reactor, emoji, ts ->
                             repo.setReaction(contact.id, ref, reactor, emoji, ts) ==
                                 ChatRepository.ReactionResult.APPLIED
+                        }
+                        PendingMutations.applyAll(contact.id) { ref, op ->
+                            applyPendingMutation(repo, context, contact.id, ref, op)
                         }
                     }
                 }
@@ -1289,6 +1424,55 @@ object RelaySync {
                         }
                     }
 
+                    // Úprava textu: přepíše text cílové PŘÍCHOZÍ zprávy. Není to
+                    // zpráva do historie - schválně NEjde přes arrived() (nezvyšuje
+                    // nepřečtené ani nenotifikuje). outgoing = false: protějšek smí
+                    // upravit jen svoje zprávy, ne ty naše.
+                    is ChatEnvelope.Opened.Edit -> {
+                        when (
+                            repo.applyEdit(
+                                contact.id, opened.targetHex, opened.newText,
+                                opened.timestamp, outgoing = false
+                            )
+                        ) {
+                            ChatRepository.MutationResult.APPLIED -> Unit
+                            // Cíl zatím nedorazil - odlož, ať se úprava neztratí.
+                            ChatRepository.MutationResult.TARGET_MISSING -> {
+                                DiagnosticsLog.log(TAG, "úprava dorazila dřív než zpráva, odkládám")
+                                PendingMutations.remember(
+                                    contact.id, opened.targetHex,
+                                    PendingMutations.Op.Edit(opened.newText, opened.timestamp)
+                                )
+                            }
+                            // Zápis selhal - dávku nepotvrzuj, ať dorazí znovu.
+                            ChatRepository.MutationResult.FAILED -> {
+                                DiagnosticsLog.error(TAG, "uložení úpravy selhalo")
+                                allSafe = false
+                            }
+                        }
+                    }
+
+                    // Smazání pro všechny: z cílové PŘÍCHOZÍ zprávy udělá náhrobek.
+                    // Stejná pravidla jako u úpravy (mimo arrived(), outgoing = false).
+                    is ChatEnvelope.Opened.Delete -> {
+                        when (
+                            repo.deleteForBoth(context, contact.id, opened.targetHex, outgoing = false)
+                        ) {
+                            ChatRepository.MutationResult.APPLIED -> Unit
+                            ChatRepository.MutationResult.TARGET_MISSING -> {
+                                DiagnosticsLog.log(TAG, "smazání dorazilo dřív než zpráva, odkládám")
+                                PendingMutations.remember(
+                                    contact.id, opened.targetHex,
+                                    PendingMutations.Op.Delete(opened.timestamp)
+                                )
+                            }
+                            ChatRepository.MutationResult.FAILED -> {
+                                DiagnosticsLog.error(TAG, "uložení smazání selhalo")
+                                allSafe = false
+                            }
+                        }
+                    }
+
                     is ChatEnvelope.Opened.Image -> {
                         val path = ChatMediaStore.save(context, opened.bytes)
                         if (path == null) {
@@ -1363,10 +1547,14 @@ object RelaySync {
                                     repo.incrementUnread(contact.id)
                                 }
                                 n++
-                                // Cíl reakce na soubor může existovat až teď.
+                                // Cíl reakce / úpravy / smazání souboru může
+                                // existovat až teď.
                                 PendingReactions.applyAll(contact.id) { ref, reactor, emoji, ts ->
                                     repo.setReaction(contact.id, ref, reactor, emoji, ts) ==
                                         ChatRepository.ReactionResult.APPLIED
+                                }
+                                PendingMutations.applyAll(contact.id) { ref, op ->
+                                    applyPendingMutation(repo, context, contact.id, ref, op)
                                 }
                             }
                         }

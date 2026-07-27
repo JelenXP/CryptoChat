@@ -102,6 +102,8 @@ class ChatRepository(
                         mimeType = if (o.has("mime")) o.optString("mime") else null,
                         wireId = if (o.has("wid")) o.optString("wid") else null,
                         replyToWireId = if (o.has("rto")) o.optString("rto") else null,
+                        editedAt = if (o.has("ed")) o.optLong("ed") else null,
+                        deleted = o.optBoolean("del", false),
                         reactions = readReactions(o.optJSONObject("rx"))
                     )
                 )
@@ -338,6 +340,107 @@ class ChatRepository(
         FAILED
     }
 
+    /** Jak dopadla úprava nebo smazání existující zprávy (edit/delete pro všechny). */
+    enum class MutationResult {
+        /** Uloženo (nebo se nic měnit nemuselo - už upraveno / už náhrobek). */
+        APPLIED,
+
+        /** Cílová zpráva zatím není v historii - zkusit později. */
+        TARGET_MISSING,
+
+        /** Zápis selhal. */
+        FAILED
+    }
+
+    /**
+     * Upraví text existující zprávy podle jejího [ChatMessage.wireRef].
+     *
+     * [outgoing] říká, KTEROU stranu smíš upravit: `true` = NAŠI odchozí (lokální
+     * úprava vlastní zprávy), `false` = PŘÍCHOZÍ od protějšku (úprava dorazila po
+     * drátě). Protějšek smí upravovat **jen svoje** zprávy - bez téhle podmínky by
+     * stačilo, aby poslal úpravu s ID naší odchozí zprávy (to zná z traileru), a
+     * přepsal by nám vlastní text (stejná past jako u dedupu podle `wireId`).
+     *
+     * Pořadí a náhrobky řeší [MessageMutationMerge], ať jde otestovat.
+     */
+    fun applyEdit(
+        contactId: String,
+        wireRef: String,
+        newText: String,
+        timestamp: Long,
+        outgoing: Boolean
+    ): MutationResult = synchronized(lock) {
+        val current = loadForWriteLocked(contactId) ?: return MutationResult.FAILED
+        val index = current.indexOfFirst { it.wireRef == wireRef && it.outgoing == outgoing }
+        if (index < 0) return MutationResult.TARGET_MISSING
+        val updated = MessageMutationMerge.applyEdit(current[index], newText, timestamp)
+            ?: return MutationResult.APPLIED   // nic se nemění
+        val saved = saveLocked(contactId, current.toMutableList().also { it[index] = updated })
+        if (saved) MutationResult.APPLIED else MutationResult.FAILED
+    }
+
+    /**
+     * Udělá z existující zprávy náhrobek („Deleted") podle [ChatMessage.wireRef]
+     * a uklidí její soubor. Stejné pravidlo „kterou stranu smíš" jako [applyEdit]:
+     * protějšek smí smazat jen svoje (příchozí) zprávy, my při „smazat pro všechny"
+     * svoji odchozí ([outgoing] = `true`).
+     */
+    fun deleteForBoth(
+        context: Context,
+        contactId: String,
+        wireRef: String,
+        outgoing: Boolean
+    ): MutationResult = synchronized(lock) {
+        val current = loadForWriteLocked(contactId) ?: return MutationResult.FAILED
+        val index = current.indexOfFirst { it.wireRef == wireRef && it.outgoing == outgoing }
+        if (index < 0) return MutationResult.TARGET_MISSING
+        val target = current[index]
+        val updated = MessageMutationMerge.applyDelete(target)
+            ?: return MutationResult.APPLIED   // už náhrobek
+        if (!saveLocked(contactId, current.toMutableList().also { it[index] = updated }))
+            return MutationResult.FAILED
+        // Až po úspěšném zápisu - kdyby se neuložil, náhrobek nevznikl a soubor
+        // musí zůstat.
+        cleanupMedia(context, target)
+        MutationResult.APPLIED
+    }
+
+    /**
+     * Smaže zprávu **jen u mě** (podle lokálního [ChatMessage.id]): udělá z ní
+     * náhrobek („Deleted") a uklidí její soubor. Na rozdíl od [deleteForBoth]
+     * protějšku nic neposílá a hledá podle lokálního `id`, takže funguje i na
+     * zprávy bez `wireRef` (staré, nebo příchozí od protějška).
+     */
+    fun deleteForMe(context: Context, contactId: String, messageId: String): Boolean =
+        synchronized(lock) {
+            val current = loadForWriteLocked(contactId) ?: return false
+            val index = current.indexOfFirst { it.id == messageId }
+            if (index < 0) return false
+            val target = current[index]
+            val updated = MessageMutationMerge.applyDelete(target) ?: return true // už náhrobek
+            if (!saveLocked(contactId, current.toMutableList().also { it[index] = updated }))
+                return false
+            cleanupMedia(context, target)
+            true
+        }
+
+    /**
+     * Uklidí přiloženou fotku/soubor a rozpracovaný příjem po zprávě, ze které se
+     * stal náhrobek (stejně jako [deleteMessage]). Přijímaný soubor (`mediaPath`
+     * je ještě null) uklidí přes [MediaTransfers], ať po něm nezůstanou kousky.
+     */
+    private fun cleanupMedia(context: Context, target: ChatMessage) {
+        if (target.kind != ChatMessage.Kind.TEXT) {
+            target.mediaPath?.let { path -> runCatching { File(path).delete() } }
+        }
+        if (target.kind == ChatMessage.Kind.FILE) {
+            runCatching {
+                MediaTransfers.clearProgress(target.id)
+                MediaTransfers.cleanup(context, target.id)
+            }
+        }
+    }
+
     /** Zpráva podle [ChatMessage.wireRef] (pro náhled odpovědi). */
     fun findByWireRef(contactId: String, wireRef: String): ChatMessage? =
         synchronized(lock) { loadLocked(contactId).firstOrNull { it.wireRef == wireRef } }
@@ -431,6 +534,8 @@ class ChatRepository(
                             m.mimeType?.let { put("mime", it) }
                             m.wireId?.let { put("wid", it) }
                             m.replyToWireId?.let { put("rto", it) }
+                            m.editedAt?.let { put("ed", it) }
+                            if (m.deleted) put("del", true)
                             if (m.reactions.isNotEmpty()) put("rx", writeReactions(m.reactions))
                         }
                 )

@@ -59,6 +59,26 @@ object ChatScreenLogic {
     fun wireRefIndex(messages: List<ChatMessage>): Map<String, ChatMessage> =
         messages.mapNotNull { m -> m.wireRef?.let { it to m } }.toMap()
 
+    /**
+     * Smí se tahle zpráva UPRAVIT? Jen MOJE textová, ještě nesmazaná a s odkazem
+     * použitelným na obou zařízeních. Fotku/soubor upravit nejde (není co) a
+     * cizí zprávu upravovat nesmím. Vytaženo z composable, ať jde otestovat.
+     */
+    fun canEdit(message: ChatMessage): Boolean =
+        message.outgoing &&
+            message.kind == ChatMessage.Kind.TEXT &&
+            !message.deleted &&
+            message.wireRef != null
+
+    /**
+     * Smí se vybrané zprávy SMAZAT PRO VŠECHNY? Jen když jsou VŠECHNY moje, mají
+     * odkaz na obou zařízeních a ještě nejsou smazané. „Smazat u mě" jde vždycky,
+     * tohle je navíc. Prázdný výběr = ne.
+     */
+    fun canDeleteForEveryone(messages: List<ChatMessage>): Boolean =
+        messages.isNotEmpty() &&
+            messages.all { it.outgoing && it.wireRef != null && !it.deleted }
+
     /** Výsledek dohledání citované zprávy. */
     data class Quote(
         /** Nalezená původní zpráva, nebo `null`. */

@@ -100,6 +100,27 @@ object ChatEnvelope {
         ) : Opened
 
         /**
+         * Úprava textu zprávy. Není to zpráva pro historii - najde cílovou zprávu
+         * ([targetHex]) a přepíše jí text na [newText]. Nezvyšuje nepřečtené ani
+         * neposílá notifikaci.
+         */
+        data class Edit(
+            override val timestamp: Long,
+            val targetHex: String,
+            val newText: String
+        ) : Opened
+
+        /**
+         * Smazání zprávy pro všechny. Není to zpráva pro historii - z cílové
+         * zprávy ([targetHex]) udělá náhrobek („Deleted"). Nezvyšuje nepřečtené
+         * ani neposílá notifikaci.
+         */
+        data class Delete(
+            override val timestamp: Long,
+            val targetHex: String
+        ) : Opened
+
+        /**
          * Řídicí zpráva KEM re-key (Fáze 4, PCS). Není to zpráva pro historii -
          * [subtype] je [WireExt.REKEY_OFFER]/[WireExt.REKEY_ACCEPT]/[WireExt.REKEY_CONFIRM],
          * [rekeyIdHex] spojuje fáze, [kem] je ML-KEM materiál (pubkey / ciphertext).
@@ -261,6 +282,69 @@ object ChatEnvelope {
             .putCapabilities(WireExt.LOCAL_CAPABILITIES)
             .build()
         // Do koše jako text - na drátě vypadá jako krátká zpráva.
+        val padded = ByteArray(bucketFor(HEADER + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, 0)
+        System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
+        return padded
+    }
+
+    /** 3bajtová hodnota řídicího TLV: `[2B id funkce BE][1B příznaky=0]`. */
+    private fun controlBytes(featureId: Int): ByteArray = byteArrayOf(
+        ((featureId ushr 8) and 0xFF).toByte(),
+        (featureId and 0xFF).toByte(),
+        0 // příznaky, zatím žádné
+    )
+
+    /**
+     * Úprava textu zprávy jako **řídicí zpráva** (prázdné tělo, vše v traileru) -
+     * stejný kontrakt jako reakce (viz [WireExt.Control]): verze bez schopnosti
+     * [WireExt.CAP_EDIT_DELETE] ji podle prázdného těla bezpečně zahodí a nechá
+     * si původní text. [target] je 16bajtové ID cílové zprávy.
+     */
+    fun sealEdit(
+        target: ByteArray,
+        newText: String,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int
+    ): ByteArray = encrypt(buildEditPayload(target, newText, timestamp), keyBase64, dir)
+
+    /** Vnitřní plaintext úpravy (řídicí zpráva: prázdné tělo, vše v traileru). */
+    internal fun buildEditPayload(target: ByteArray, newText: String, timestamp: Long): ByteArray {
+        val trailer = WireExt.Builder()
+            .put(WireExt.TYPE_CONTROL, controlBytes(WireExt.FEATURE_EDIT))
+            .put(WireExt.TYPE_EDIT, WireExt.buildEdit(target, newText))
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
+            .putCapabilities(WireExt.LOCAL_CAPABILITIES)
+            .build()
+        // Do koše jako text - delší úprava spadne do stejného koše jako stejně
+        // dlouhá zpráva, takže relay z velikosti nepozná, že jde o úpravu.
+        val padded = ByteArray(bucketFor(HEADER + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, 0)
+        System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
+        return padded
+    }
+
+    /**
+     * Smazání zprávy pro všechny jako **řídicí zpráva** (prázdné tělo, vše
+     * v traileru) - stejný kontrakt jako [sealEdit]. [target] je 16bajtové ID
+     * cílové zprávy, ze které se u příjemce stane náhrobek („Deleted").
+     */
+    fun sealDelete(
+        target: ByteArray,
+        timestamp: Long,
+        keyBase64: String,
+        dir: Int
+    ): ByteArray = encrypt(buildDeletePayload(target, timestamp), keyBase64, dir)
+
+    /** Vnitřní plaintext smazání (řídicí zpráva: prázdné tělo, vše v traileru). */
+    internal fun buildDeletePayload(target: ByteArray, timestamp: Long): ByteArray {
+        val trailer = WireExt.Builder()
+            .put(WireExt.TYPE_CONTROL, controlBytes(WireExt.FEATURE_DELETE))
+            .put(WireExt.TYPE_DELETE, WireExt.buildDelete(target))
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
+            .putCapabilities(WireExt.LOCAL_CAPABILITIES)
+            .build()
         val padded = ByteArray(bucketFor(HEADER + trailer.size))
         writeHeader(padded, KIND_TEXT, timestamp, 0)
         System.arraycopy(trailer, 0, padded, HEADER, trailer.size)
@@ -506,6 +590,30 @@ object ChatEnvelope {
                         return Result.Ok(
                             senderMinor,
                             Opened.Delivery(timestamp, targets),
+                            trailer.msgIdHex,
+                            maxMajor = trailer.maxMajor,
+                            capabilities = trailer.capabilities
+                        )
+                    }
+                }
+                WireExt.FEATURE_EDIT -> {
+                    val e = trailer.edit
+                    if (e != null) {
+                        return Result.Ok(
+                            senderMinor,
+                            Opened.Edit(timestamp, e.targetHex, e.newText),
+                            trailer.msgIdHex,
+                            maxMajor = trailer.maxMajor,
+                            capabilities = trailer.capabilities
+                        )
+                    }
+                }
+                WireExt.FEATURE_DELETE -> {
+                    val t = trailer.deleteTarget
+                    if (t != null) {
+                        return Result.Ok(
+                            senderMinor,
+                            Opened.Delete(timestamp, t),
                             trailer.msgIdHex,
                             maxMajor = trailer.maxMajor,
                             capabilities = trailer.capabilities

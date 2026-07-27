@@ -45,7 +45,22 @@ data class ChatMessage(
      * Reakce na tuhle zprávu, klíčované [REACTOR_ME] / [REACTOR_PEER].
      * V konverzaci jsou právě dva účastníci, takže víc klíčů nikdy nevznikne.
      */
-    val reactions: Map<String, Reaction> = emptyMap()
+    val reactions: Map<String, Reaction> = emptyMap(),
+
+    /**
+     * Čas poslední úpravy textu ([Long] epoch millis), nebo `null` když zpráva
+     * upravená nebyla. Slouží k zobrazení „upraveno" a k řešení přeházeného
+     * pořadí úprav (novější vyhrává - viz [MessageMutationMerge]).
+     */
+    val editedAt: Long? = null,
+
+    /**
+     * Náhrobek: zpráva byla smazána (u mě, nebo pro všechny). V historii zůstává
+     * kvůli místu v konverzaci, ale místo obsahu se ukáže šedý text „Deleted".
+     * Text, média i reakce se přitom vyprázdní. Smazání je **terminální** -
+     * pozdější úprava ani reakce ho už nevzkřísí (viz [MessageMutationMerge]).
+     */
+    val deleted: Boolean = false
 ) {
     /**
      * Stavy odchozí zprávy: SENDING → SENT (doručeno na relay = jedna fajfka) →

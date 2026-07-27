@@ -54,6 +54,8 @@ import java.security.SecureRandom
  * |     |           |           | funkce nemusely zvyšovat WIRE_MINOR          |
  * | 7   | REKEY     | -         | KEM re-key metadata (PCS), tělo nese materiál |
  * | 8   | DELIVERY  | -         | potvrzení doručení: seznam ID doručených zpráv |
+ * | 9   | EDIT      | -         | úprava textu zprávy (cíl + nový text)          |
+ * | 10  | DELETE    | -         | smazání zprávy pro všechny (cíl)               |
  */
 object WireExt {
 
@@ -92,6 +94,21 @@ object WireExt {
      */
     const val TYPE_DELIVERY = 8
 
+    /**
+     * Úprava textu zprávy ([FEATURE_EDIT]). Hodnota TLV: `[16B cíl][2B délka BE][nový text UTF-8]`.
+     * Jede jako [TYPE_CONTROL] s prázdným tělem (jako reakce), takže verze bez
+     * schopnosti [CAP_EDIT_DELETE] ji podle prázdného těla bezpečně zahodí a
+     * ponechá si původní text.
+     */
+    const val TYPE_EDIT = 9
+
+    /**
+     * Smazání zprávy pro všechny ([FEATURE_DELETE]). Hodnota TLV: `[16B cíl]`.
+     * Také řídicí zpráva s prázdným tělem - starší verze ji zahodí a svou kopii
+     * si ponechá. U příjemce se z cílové zprávy stane náhrobek ("Deleted").
+     */
+    const val TYPE_DELETE = 10
+
     /** Fáze re-key handshake (subtype v [TYPE_REKEY]). Čísla se nerecyklují. */
     const val REKEY_OFFER = 0
     const val REKEY_ACCEPT = 1
@@ -120,12 +137,14 @@ object WireExt {
     // | 0   | REACTIONS | umí zobrazit reakce emoji       |
     // | 1   | REKEY     | umí KEM re-key (PCS, Fáze 4)    |
     // | 2   | RECEIPTS  | umí potvrzení doručení (2 fajfky) |
+    // | 3   | EDIT_DELETE | umí úpravu a mazání zpráv pro všechny |
     const val CAP_REACTIONS = 0
     const val CAP_REKEY = 1
     const val CAP_RECEIPTS = 2
+    const val CAP_EDIT_DELETE = 3
 
     /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
-    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS)
+    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS, CAP_EDIT_DELETE)
 
     /**
      * Zabalí množinu bitů do bitmapy (LSB-first): bit `i` leží v bajtu `i/8`,
@@ -170,6 +189,8 @@ object WireExt {
      * |----|----------|-----------|
      * | 1  | REACTION | 3         |
      * | 2  | DELIVERY | - (bit CAP_RECEIPTS) |
+     * | 3  | EDIT     | - (bit CAP_EDIT_DELETE) |
+     * | 4  | DELETE   | - (bit CAP_EDIT_DELETE) |
      */
     const val FEATURE_REACTION = 1
 
@@ -180,8 +201,21 @@ object WireExt {
      */
     const val FEATURE_DELIVERY = 2
 
+    /**
+     * Úprava textu zprávy (edit). Řídicí zpráva s prázdným tělem; cíl a nový text
+     * jedou v [TYPE_EDIT]. Gatuje se schopností [CAP_EDIT_DELETE] pro banner, ale
+     * ODESÍLÁ se i protějšku bez ní (bezpečně ji zahodí - viz [WireCompat]).
+     */
+    const val FEATURE_EDIT = 3
+
+    /**
+     * Smazání zprávy pro všechny (delete). Řídicí zpráva s prázdným tělem; cíl
+     * jede v [TYPE_DELETE]. Stejný degradační kontrakt jako [FEATURE_EDIT].
+     */
+    const val FEATURE_DELETE = 4
+
     /** Funkce, které TAHLE verze umí zpracovat jako řídicí zprávu. */
-    private val KNOWN_FEATURES = setOf(FEATURE_REACTION, FEATURE_DELIVERY)
+    private val KNOWN_FEATURES = setOf(FEATURE_REACTION, FEATURE_DELIVERY, FEATURE_EDIT, FEATURE_DELETE)
 
     /** Umí tahle verze danou řídicí funkci? */
     fun isKnownFeature(featureId: Int): Boolean = featureId in KNOWN_FEATURES
@@ -301,6 +335,40 @@ object WireExt {
         return out
     }
 
+    // --- Úprava a mazání zpráv (edit / delete) ---
+
+    /**
+     * Nejdelší nový text úpravy v bajtech. Vejde se do jedné TLV hodnoty (strop
+     * [MAX_TLV_VALUE_BYTES]) i s rezervou na cíl (16 B) a délkovou předponu (2 B).
+     * Delší zprávu edit nepřenese - odesílací cesta ji odmítne (viz `RelaySync`).
+     */
+    const val MAX_EDIT_TEXT_BYTES = MAX_TLV_VALUE_BYTES - MSG_ID_BYTES - 2
+
+    /** Úprava textu vytažená z traileru. */
+    data class EditData(val targetHex: String, val newText: String)
+
+    /**
+     * Hodnota TLV úpravy: `[16B cíl][2B délka BE][nový text UTF-8]`. Plníme MY,
+     * takže porušení stropů je chyba v kódu (spadne v testu, ne na drátě).
+     */
+    fun buildEdit(target: ByteArray, newText: String): ByteArray {
+        require(target.size == MSG_ID_BYTES) { "Cíl úpravy musí mít $MSG_ID_BYTES B" }
+        val t = newText.toByteArray(Charsets.UTF_8)
+        require(t.size <= MAX_EDIT_TEXT_BYTES) { "Nový text úpravy je přes limit" }
+        val out = ByteArray(MSG_ID_BYTES + 2 + t.size)
+        System.arraycopy(target, 0, out, 0, MSG_ID_BYTES)
+        out[MSG_ID_BYTES] = ((t.size ushr 8) and 0xFF).toByte()
+        out[MSG_ID_BYTES + 1] = (t.size and 0xFF).toByte()
+        System.arraycopy(t, 0, out, MSG_ID_BYTES + 2, t.size)
+        return out
+    }
+
+    /** Hodnota TLV smazání pro všechny: `[16B cíl]`. */
+    fun buildDelete(target: ByteArray): ByteArray {
+        require(target.size == MSG_ID_BYTES) { "Cíl smazání musí mít $MSG_ID_BYTES B" }
+        return target.copyOf()
+    }
+
     /**
      * Řídicí zpráva: nenese obsah pro uživatele, ale pokyn (reakce, potvrzení
      * o přečtení…). Hodnota TLV: `[2B id funkce BE][1B příznaky]`.
@@ -396,6 +464,31 @@ object WireExt {
                     toHex(v.copyOfRange(it * MSG_ID_BYTES, (it + 1) * MSG_ID_BYTES))
                 }
             }
+
+        /**
+         * Úprava textu zprávy, nebo null když ji trailer nenese nebo je vadná.
+         * Nový text plně řídí protějšek; zachází se s ním jako s běžným textem
+         * zprávy (bez zvláštní sanitizace - tu neprochází ani normální text).
+         */
+        val edit: EditData?
+            get() {
+                val v = first(TYPE_EDIT) ?: return null
+                if (v.size < MSG_ID_BYTES + 2) return null
+                val target = toHex(v.copyOfRange(0, MSG_ID_BYTES))
+                val len = ((v[MSG_ID_BYTES].toInt() and 0xFF) shl 8) or
+                    (v[MSG_ID_BYTES + 1].toInt() and 0xFF)
+                // Odečítáme, ať délka nemůže přetéct přes konec hodnoty.
+                if (len > v.size - MSG_ID_BYTES - 2) return null
+                val text = String(
+                    v.copyOfRange(MSG_ID_BYTES + 2, MSG_ID_BYTES + 2 + len),
+                    Charsets.UTF_8
+                )
+                return EditData(target, text)
+            }
+
+        /** Cíl smazání pro všechny (hex), nebo null když ho trailer nenese / má špatnou délku. */
+        val deleteTarget: String?
+            get() = first(TYPE_DELETE)?.takeIf { it.size == MSG_ID_BYTES }?.let { toHex(it) }
 
         /** Řídicí pokyn, nebo null když zpráva žádný nenese. */
         val control: Control?
