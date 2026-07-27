@@ -152,6 +152,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
     }
     var input by remember { mutableStateOf("") }
+    // Zpráva, kterou právě upravuji (vstupní pole nese její nový text). null = píšu novou.
+    // Deklarované tady nahoře schválně: ukládací efekt draftu níž ho musí vidět, aby se
+    // během úpravy rozepsaný koncept konverzace nepřepisoval textem upravované zprávy.
+    var editing by remember(id) { mutableStateOf<ChatMessage?>(null) }
+    // Rozepsaný koncept z doby PŘED vstupem do úpravy - po zrušení/dokončení se vrátí,
+    // ať se uživateli neztratí, co měl načaté, když sáhl na úpravu starší zprávy.
+    var draftBeforeEdit by remember(id) { mutableStateOf<String?>(null) }
     var menuOpen by remember { mutableStateOf(false) }
 
     // Trvalý rozepsaný text (draft): přežije odchod z konverzace i restart.
@@ -168,6 +175,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     LaunchedEffect(input, id, draftLoaded) {
         if (!draftLoaded) return@LaunchedEffect
         delay(400)
+        // Během úpravy nese `input` text upravované zprávy, ne rozepsaný koncept -
+        // ten se v tu dobu nesmí přepsat (viz `draftBeforeEdit`).
+        if (editing != null) return@LaunchedEffect
         withContext(Dispatchers.IO) { DraftStore(context).set(id, input) }
     }
 
@@ -220,8 +230,6 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var selectedIds by remember(id) { mutableStateOf<Set<String>>(emptySet()) }
     var replyTo by remember(id) { mutableStateOf<ChatMessage?>(null) }
     var pendingDelete by remember(id) { mutableStateOf<List<ChatMessage>>(emptyList()) }
-    // Zpráva, kterou právě upravuji (vstupní pole nese její nový text). null = píšu novou.
-    var editing by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Zpráva, pro kterou je otevřený plný emoji picker (z „+" v paletě reakcí).
     var emojiPickerFor by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Zpráva krátce zvýrazněná po skoku z citace (`onQuoteClick`).
@@ -398,28 +406,36 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     val messageFailed = stringResource(R.string.chat_message_failed)
     val editTooLong = stringResource(R.string.chat_edit_too_long)
+    /** Vrátí vstupní pole z režimu úpravy zpět k rozepsanému konceptu. */
+    fun cancelEditing() {
+        input = draftBeforeEdit ?: ""
+        draftBeforeEdit = null
+        editing = null
+    }
     fun sendCurrent() {
         val text = input.trim()
         if (text.isEmpty() || contact == null) return
         // Režim úpravy: přepiš text existující zprávy místo poslání nové.
         val editTarget = editing
         if (editTarget != null) {
-            val ref = editTarget.wireRef ?: run { editing = null; input = ""; return }
-            input = ""
-            editing = null
+            val ref = editTarget.wireRef ?: run { cancelEditing(); return }
+            val savedDraft = draftBeforeEdit
+            // Optimisticky ukonči úpravu a vrať rozepsaný koncept.
+            cancelEditing()
             scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     RelaySync.sendEdit(context, contact, ref, text)
                 }
                 messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
                 when (result) {
-                    // Neuloženo - vrať text i režim úpravy, ať jde zkusit znovu / zkrátit.
+                    // Neuloženo - vrať se do úpravy (i se snapshotem draftu), ať jde
+                    // text zkrátit / zkusit znovu.
                     RelaySync.MutationSend.TOO_LONG -> {
-                        input = text; editing = editTarget
+                        draftBeforeEdit = savedDraft; editing = editTarget; input = text
                         Toast.makeText(context, editTooLong, Toast.LENGTH_LONG).show()
                     }
                     RelaySync.MutationSend.FAILED -> {
-                        input = text; editing = editTarget
+                        draftBeforeEdit = savedDraft; editing = editTarget; input = text
                         Toast.makeText(context, messageFailed, Toast.LENGTH_LONG).show()
                     }
                     RelaySync.MutationSend.SENT -> Unit
@@ -507,6 +523,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     /** Přepne vstupní pole do režimu úpravy dané (mojí) zprávy. */
     fun startEditing(message: ChatMessage) {
+        // Rozepsaný koncept ulož a po úpravě ho vrať; při přepnutí z úpravy na jinou
+        // zprávu ho nepřepisuj (drž ten původní).
+        if (editing == null) draftBeforeEdit = input
         editing = message
         input = message.text
         // Úprava a odpověď se vylučují; a vstupní pole je při hledání skryté.
@@ -608,10 +627,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         // Upravovaná zpráva mezitím zmizela nebo ji někdo smazal (i pro všechny) -
         // režim úpravy zruš a rozepsaný text zahoď, ať se neuloží do neexistujícího.
         editing?.let { e ->
-            if (messages.none { it.id == e.id && !it.deleted }) {
-                editing = null
-                input = ""
-            }
+            if (messages.none { it.id == e.id && !it.deleted }) cancelEditing()
         }
     }
 
@@ -622,9 +638,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         searchMode = false; searchQuery = ""
     }
     BackHandler(enabled = selectedIds.isEmpty() && !searchMode && replyTo != null) { replyTo = null }
-    BackHandler(enabled = selectedIds.isEmpty() && !searchMode && editing != null) {
-        editing = null; input = ""
-    }
+    BackHandler(enabled = selectedIds.isEmpty() && !searchMode && editing != null) { cancelEditing() }
 
     Scaffold(
         topBar = {
@@ -891,7 +905,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             editing?.let { target ->
                 EditComposerPreview(
                     message = target,
-                    onCancel = { editing = null; input = "" }
+                    onCancel = { cancelEditing() }
                 )
             }
             // Náhled zprávy, na kterou se odpovídá.
