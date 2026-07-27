@@ -93,10 +93,13 @@ object ChatScreenLogic {
      * Rozlišuje tři stavy: není to odpověď (`missing = false`, `message = null`),
      * odpověď s nalezenou zprávou, a odpověď na zprávu, která už není
      * (`missing = true`) - tehdy UI ukáže „původní zpráva není dostupná".
+     *
+     * **Smazaná zpráva (náhrobek) se bere jako nedostupná** - citovat prázdný text
+     * „Deleted" by vypadalo jako rozbitá odpověď, líp je stejné „není dostupná".
      */
     fun resolveQuote(message: ChatMessage, index: Map<String, ChatMessage>): Quote {
         val ref = message.replyToWireId ?: return Quote(null, missing = false)
-        val found = index[ref]
+        val found = index[ref]?.takeIf { !it.deleted }
         return Quote(found, missing = found == null)
     }
 
