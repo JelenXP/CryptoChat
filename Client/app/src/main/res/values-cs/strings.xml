@@ -220,7 +220,7 @@
 
     <!-- Novinky (changelog) -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">Verze 2.1.1 — rychlá oprava na 2.1.0.\n\n• Opraven pád při scrollování nahoru v konverzaci. Nastával, když zprávy nebyly přesně v pořadí podle času (rozdíl hodin mezi telefony nebo zpráva, která dorazila později), a s délkou konverzace byl pravděpodobnější.\n\nCelé 2.1.0 je součástí: oddělovače dnů a čára „Nové zprávy“, skok na citovanou zprávu, tlačítko skoku na konec, uchování rozepsaného textu, ověření kontaktu s varováním při změně bezpečnostního kódu, párování jen pozvánkou s QR, záložní servery a obrazovka diagnostiky připojení.</string>
+    <string name="changelog_body">Verze 2.2.0 — úprava a mazání zpráv.\n\n• Úprava odeslané zprávy — podrž ji, zvol Upravit, oprav text a odešli. Přepíše se i na druhém telefonu a označí se „upraveno“.\n\n• Smazat pro všechny — podrž svoji zprávu a zvol Smazat pro všechny; na obou telefonech se z ní stane šedé „Smazáno“. Smazat u mě udělá totéž jen na tomhle telefonu.\n\n• Pro synchronizaci úprav a mazání potřebují novou verzi oba telefony; starší telefon si prostě nechá původní zprávu.\n\n• Opravy scrollování — čtení starších zpráv už tě při příchodu nové zprávy neshodí zpět dolů a odznak skoku na konec ukazuje správný počet.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->

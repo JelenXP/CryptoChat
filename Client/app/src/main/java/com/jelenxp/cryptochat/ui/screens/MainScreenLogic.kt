@@ -50,6 +50,12 @@ object MainScreenLogic {
         /** Rozepsaný neodeslaný text (má přednost před poslední zprávou). */
         data class Draft(val text: String) : Subtitle
 
+        /**
+         * Poslední zpráva je smazaná (náhrobek) - v seznamu se ukáže šedé
+         * „Deleted" místo prázdna. [fromMe] = odchozí (prefix „Ty:").
+         */
+        data class Deleted(val fromMe: Boolean) : Subtitle
+
         /** Náhled poslední zprávy. [fromMe] = odchozí (prefix „Ty:"). */
         data class Last(
             val kind: ChatMessage.Kind,
@@ -73,6 +79,7 @@ object MainScreenLogic {
     ): Subtitle = when {
         !hasKey -> Subtitle.NoKey
         !draft.isNullOrBlank() -> Subtitle.Draft(draft)
+        lastMessage != null && lastMessage.deleted -> Subtitle.Deleted(lastMessage.outgoing)
         lastMessage != null -> Subtitle.Last(
             kind = lastMessage.kind,
             text = lastMessage.text,

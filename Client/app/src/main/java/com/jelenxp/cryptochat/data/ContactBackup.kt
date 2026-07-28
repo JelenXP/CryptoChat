@@ -88,6 +88,11 @@ object ContactBackup {
                     // fungovat odkazy na zprávu (odpovědi, reakce).
                     m.wireId?.let { mo.put("wid", it) }
                     m.replyToWireId?.let { mo.put("rto", it) }
+                    // Značka úpravy a náhrobek smazané zprávy - bez nich by se
+                    // po obnově z „upraveno" ztratila značka a náhrobek by ožil
+                    // jako prázdná nesmazaná bublina (viz ChatRepository.saveLocked).
+                    m.editedAt?.let { mo.put("ed", it) }
+                    if (m.deleted) mo.put("del", true)
                     if (m.reactions.isNotEmpty()) {
                         val rx = JSONObject()
                         m.reactions.forEach { (reactor, r) ->
@@ -251,6 +256,8 @@ object ContactBackup {
                             mimeType = if (mo.has("mime")) mo.optString("mime") else null,
                             wireId = if (mo.has("wid")) mo.optString("wid") else null,
                             replyToWireId = if (mo.has("rto")) mo.optString("rto") else null,
+                            editedAt = if (mo.has("ed")) mo.optLong("ed") else null,
+                            deleted = mo.optBoolean("del", false),
                             reactions = readBackupReactions(mo.optJSONObject("rx"))
                         )
                     )

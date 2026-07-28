@@ -291,7 +291,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // „Chceme být u dna": drží se, dokud uživatel neodroluje pryč. Přehodnocuje se AŽ
     // po dojetí scrollu, NE při změně výšky viewportu od klávesnice - jinak by
     // otevření klávesnice u dna flag shodilo a poslední zpráva by zůstala za lištou.
-    var stickToBottom by remember(id) { mutableStateOf(true) }
+    // rememberSaveable: přežije otočení displeje i zabití procesu. `listState` se
+    // taky obnoví (rememberSaveable uvnitř), takže bez uchování těchhle příznaků by
+    // se po návratu zahodila pozice v historii a skočilo by to na dno (viz initialScrollDone).
+    var stickToBottom by rememberSaveable(id) { mutableStateOf(true) }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .filter { !it }               // jen když scroll DOJEL (uživatelský i programový)
@@ -302,9 +305,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // je uživatel u dna (viděl vše); mimo dno se drží, takže ho nové zprávy
     // přerostou. Odchozí zpráva rovnou vrací na dno (stickToBottom), takže se sem
     // prakticky počítají jen příchozí.
-    var bottomAnchorSize by remember(id) { mutableStateOf(0) }
-    LaunchedEffect(atBottom, visibleMessages.size) {
-        if (atBottom) bottomAnchorSize = visibleMessages.size
+    var bottomAnchorSize by rememberSaveable(id) { mutableStateOf(0) }
+    LaunchedEffect(atBottom, visibleMessages.size, searchMode) {
+        // V hledání je `visibleMessages` FILTROVANÝ - kotvu z něj neaktualizuj,
+        // jinak by po zavření hledání odznak ukázal (plný − filtrovaný) = nesmysl.
+        if (atBottom && !searchMode) bottomAnchorSize = visibleMessages.size
     }
     val newSinceScroll = (visibleMessages.size - bottomAnchorSize).coerceAtLeast(0)
 
@@ -351,7 +356,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // příchodu na obrazovku neprobliká animovaným rolováním odshora; další nové
     // zprávy pak plynule animovaně. Offset SCROLL_BOTTOM_OFFSET tlačí na SKUTEČNÉ
     // dno - bez něj by se u vysoké poslední zprávy skončilo „skoro na konci".
-    var initialScrollDone by remember(id) { mutableStateOf(false) }
+    // rememberSaveable: po otočení / obnově procesu už NEscrollovat na dno (jinak
+    // by se přebila obnovená pozice v historii z `listState`).
+    var initialScrollDone by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(rows.size) {
         if (rows.isNotEmpty()) {
             if (!initialScrollDone) {
@@ -401,6 +408,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             it is ChatScreenLogic.ChatRow.Msg && it.message.id == target.id
         }
         if (idx < 0) return
+        // Skok na citaci míří do historie = nedržet dno, jinak by keeper-smyčka
+        // (drží u dna) po dojetí animace zprávu hned strhla zpět dolů (race dvou
+        // snapshotFlow kolektorů). Nastav TEĎ, ať keeper ani jednou nevidí stick=true.
+        stickToBottom = false
         scope.launch {
             listState.animateScrollToItem(idx)
             highlightedId = target.id
@@ -506,25 +517,33 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     fun doubleTapReact(message: ChatMessage) =
         applyReaction(message, ChatScreenLogic.doubleTapReaction(message.reactionOf(ChatMessage.REACTOR_ME)))
 
+    // Toast se ukáže AŽ podle výsledku (v korutině), ne bezpodmínečně v onClick -
+    // jinak by uživatel viděl „smazáno", i když zápis selhal a zpráva zůstala.
+    val deletedLabel = stringResource(R.string.chat_deleted)
+    val deletedEveryoneLabel = stringResource(R.string.chat_deleted_everyone)
     fun deleteForMe(toDelete: List<ChatMessage>) {
         scope.launch {
-            withContext(Dispatchers.IO) {
-                toDelete.forEach { repo.deleteForMe(context, id, it.id) }
+            val ok = withContext(Dispatchers.IO) {
+                toDelete.all { repo.deleteForMe(context, id, it.id) }
             }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+            Toast.makeText(context, if (ok) deletedLabel else messageFailed, Toast.LENGTH_SHORT).show()
         }
     }
 
     /** Smaže vybrané MOJE zprávy pro všechny (náhrobek u mě i u protějšku). */
     fun deleteForEveryone(toDelete: List<ChatMessage>) {
-        if (contact == null) return
+        val c = contact ?: return
         scope.launch {
-            withContext(Dispatchers.IO) {
-                toDelete.forEach { m ->
-                    m.wireRef?.let { RelaySync.sendDeleteForEveryone(context, contact, it) }
+            val ok = withContext(Dispatchers.IO) {
+                toDelete.all { m ->
+                    m.wireRef?.let {
+                        RelaySync.sendDeleteForEveryone(context, c, it) == RelaySync.MutationSend.SENT
+                    } ?: false
                 }
             }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+            Toast.makeText(context, if (ok) deletedEveryoneLabel else messageFailed, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -557,6 +576,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val imageFailed = stringResource(R.string.chat_image_failed)
     fun sendImage(uri: Uri) {
         if (contact == null) return
+        cancelEditing()   // poslání fotky opustí režim úpravy (a vrátí rozepsaný koncept)
         scope.launch {
             val jpeg = withContext(Dispatchers.IO) { ChatMediaStore.compress(context, uri) }
             if (jpeg == null) {
@@ -603,6 +623,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val fileFailed = stringResource(R.string.chat_file_failed)
     fun sendFile(uri: Uri) {
         if (contact == null) return
+        cancelEditing()   // poslání souboru opustí režim úpravy (a vrátí rozepsaný koncept)
         scope.launch {
             val msg = withContext(Dispatchers.IO) { RelaySync.enqueueFile(context, contact, uri) }
             if (msg == null) {
@@ -666,9 +687,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                         }
                     },
                     actions = {
-                        // Odpověď a reakce dávají smysl jen u JEDNÉ zprávy.
-                        if (single != null && canChat && single.wireRef != null) {
+                        // Odpověď a reakce dávají smysl jen u JEDNÉ zprávy; na
+                        // náhrobek ne (konzistence se swipe-reply, které má !deleted).
+                        if (single != null && canChat && single.wireRef != null && !single.deleted) {
                             IconButton(onClick = {
+                                // Odpověď a úprava se vylučují - zruš rozepsanou úpravu
+                                // (jinak by nad vstupem visely dva náhledy a odpověď by
+                                // se při odeslání tiše zahodila, protože edit má přednost).
+                                cancelEditing()
                                 replyTo = single; selectedIds = emptySet()
                                 // Odpověď potřebuje vstupní řádek, který je při hledání
                                 // skrytý - tak hledání zavři, ať se náhled i pole ukážou.
@@ -892,7 +918,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     }
                 }
                 // Tlačítko „skočit dolů" - jen když nejsme u dna; odznak = počet nových.
-                if (!atBottom) {
+                // V hledání se tlačítko „skočit dolů" nezobrazuje - počet nových
+                // zpráv nad filtrovaným seznamem nedává smysl.
+                if (!atBottom && !searchMode) {
                     JumpToBottomButton(
                         count = newSinceScroll,
                         onClick = {
@@ -1012,8 +1040,6 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     if (pendingDelete.isNotEmpty()) {
         val toDelete = pendingDelete
         val everyone = ChatScreenLogic.canDeleteForEveryone(toDelete)
-        val deletedLabel = stringResource(R.string.chat_deleted)
-        val deletedEveryoneLabel = stringResource(R.string.chat_deleted_everyone)
         AlertDialog(
             onDismissRequest = { pendingDelete = emptyList() },
             title = { Text(stringResource(R.string.chat_delete_title)) },
@@ -1029,14 +1055,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     if (everyone) {
                         TextButton(onClick = {
                             pendingDelete = emptyList()
-                            deleteForEveryone(toDelete)
-                            Toast.makeText(context, deletedEveryoneLabel, Toast.LENGTH_SHORT).show()
+                            deleteForEveryone(toDelete)   // toast až podle výsledku
                         }) { Text(stringResource(R.string.chat_delete_for_everyone)) }
                     }
                     TextButton(onClick = {
                         pendingDelete = emptyList()
-                        deleteForMe(toDelete)
-                        Toast.makeText(context, deletedLabel, Toast.LENGTH_SHORT).show()
+                        deleteForMe(toDelete)             // toast až podle výsledku
                     }) { Text(stringResource(R.string.chat_action_delete)) }
                 }
             },

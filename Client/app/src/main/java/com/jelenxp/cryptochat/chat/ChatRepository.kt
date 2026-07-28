@@ -319,6 +319,11 @@ class ChatRepository(
         // ji odloží a zkusí to znovu, až něco přijde.
         if (index < 0) return ReactionResult.TARGET_MISSING
         val message = current[index]
+        // Náhrobek (smazaná zpráva) reakce NEpřijímá - smazání je terminální, ať
+        // se emoji neobjeví na „Deleted" bublině (opožděná reakce z karantény).
+        // APPLIED = zahoď a potvrď (cíl existuje, jen se na něj reagovat nedá) -
+        // NE TARGET_MISSING, to by reakci znovu odložilo do fronty.
+        if (message.deleted) return ReactionResult.APPLIED
         // Rozhodování o pořadí a náhrobcích je v ReactionMerge, ať jde otestovat.
         val updated = ReactionMerge.apply(message.reactions, reactor, emoji, timestamp)
             ?: return ReactionResult.APPLIED   // nic se nemění

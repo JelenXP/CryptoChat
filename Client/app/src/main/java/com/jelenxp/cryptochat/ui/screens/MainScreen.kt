@@ -367,6 +367,10 @@ private fun ContactCard(
                     MainScreenLogic.Subtitle.NoKey -> stringResource(R.string.key_not_set)
                     MainScreenLogic.Subtitle.NoMessages -> stringResource(R.string.chat_preview_none)
                     is MainScreenLogic.Subtitle.Draft -> stringResource(R.string.chat_preview_draft, s.text)
+                    is MainScreenLogic.Subtitle.Deleted -> {
+                        val body = stringResource(R.string.chat_message_deleted)
+                        if (s.fromMe) stringResource(R.string.chat_last_you, body) else body
+                    }
                     is MainScreenLogic.Subtitle.Last -> {
                         val body = when (s.kind) {
                             ChatMessage.Kind.IMAGE -> stringResource(R.string.chat_preview_photo)

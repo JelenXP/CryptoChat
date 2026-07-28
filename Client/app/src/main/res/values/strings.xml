@@ -220,7 +220,7 @@
 
     <!-- What\'s new (changelog) -->
     <string name="changelog_title">What\'s new in %1$s</string>
-    <string name="changelog_body">Version 2.1.1 — a quick fix on top of 2.1.0.\n\n• Fixed a crash when scrolling up in a conversation. It could happen when messages weren’t in strict time order (a clock difference between the two phones, or a message that arrived late), and got more likely the longer the conversation.\n\nAll of 2.1.0 is included: day separators and a “New messages” line, tap a quote to jump to the original, a jump-to-latest button, drafts that survive a restart, contact verification with a security-code warning, invite-only pairing with QR, backup servers, and a connection diagnostics screen.</string>
+    <string name="changelog_body">Version 2.2.0 — edit and delete messages.\n\n• Edit a message you sent — hold it, pick Edit, fix the text and send. It updates on the other phone too and is marked “edited”.\n\n• Delete for everyone — hold your own message and pick Delete for everyone; it turns into a grey “Deleted” on both phones. Delete for me does the same only on this phone.\n\n• Both phones need this version for edits and deletes to reach the other side; an older phone simply keeps the original.\n\n• Scrolling fixes — reading older messages no longer jumps you back to the bottom when a new one arrives, and the jump-to-latest badge now shows the right count.</string>
     <string name="btn_changelog_ok">Got it</string>
 
     <!-- About the app (Settings) -->
