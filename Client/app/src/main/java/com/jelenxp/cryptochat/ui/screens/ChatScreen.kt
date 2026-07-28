@@ -357,13 +357,18 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             if (!initialScrollDone) {
                 listState.scrollToItem(rows.lastIndex, SCROLL_BOTTOM_OFFSET)
                 initialScrollDone = true
-            } else {
+                // Při otevření jsme dole = všechno načtené je „viděné". Bez tohohle
+                // by odznak „skočit dolů" chvíli ukazoval počet CELÉ historie
+                // (baseline 0), než ho srovná efekt výš.
+                bottomAnchorSize = visibleMessages.size
+            } else if (stickToBottom) {
+                // Nová zpráva scrolluje na dno JEN když už tam uživatel je. Když čte
+                // historii (stickToBottom == false), zůstane, kde je, a přírůstek se
+                // ukáže na odznaku „skočit dolů" - jinak by ho příchozí zpráva strhla
+                // dolů. Vlastní odeslání si `stickToBottom = true` nastaví samo (viz
+                // sendCurrent / sendImage / sendFile), takže u něj se na dno skočí vždy.
                 listState.animateScrollToItem(rows.lastIndex, SCROLL_BOTTOM_OFFSET)
             }
-            // Nový příspěvek (odeslaný i přijatý) = jdeme k dnu a chceme tam zůstat.
-            // Zachovává dosavadní chování „po odeslání to odscrolluje dopředu, i když
-            // jsem byl vzadu v konverzaci".
-            stickToBottom = true
         }
     }
 
@@ -444,6 +449,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             return
         }
         input = ""
+        // Vlastní odeslání = chci vidět svou zprávu dole, i když jsem byl v historii.
+        stickToBottom = true
         // Odkaz vytáhni TEĎ a náhled zavři - kdyby se to dělalo až v korutině,
         // uživatel by mezitím mohl odpověď zrušit a zpráva by odešla s odkazem.
         val replyRef = replyTo?.wireRef
@@ -561,6 +568,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 Toast.makeText(context, imageFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }
+            stickToBottom = true   // vlastní odeslání = skoč na dno k nové zprávě
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
@@ -601,6 +609,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 Toast.makeText(context, fileFailed, Toast.LENGTH_LONG).show()
                 return@launch
             }
+            stickToBottom = true   // vlastní odeslání = skoč na dno k nové zprávě
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
             withContext(Dispatchers.IO) { RelaySync.deliver(context, contact, msg) }
             messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
