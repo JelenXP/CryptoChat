@@ -55,4 +55,21 @@ object ChatNotificationLogic {
         message.kind == ChatMessage.Kind.FILE -> file
         else -> fallback
     }
+
+    /**
+     * Nejdelší náhled zprávy (znaků) v notifikaci o reakci; delší se uřízne „…".
+     * Krátce, ať se notifikace nenafoukne - jde jen o připomenutí, na kterou
+     * zprávu reakce přišla.
+     */
+    const val REACTION_SNIPPET_MAX = 40
+
+    /**
+     * Náhled zprávy, na kterou dorazila reakce, do notifikace „X reagoval na …".
+     * Dlouhý text se uřízne a doplní „…". [display] je už hotový popisek (u
+     * fotky/souboru zástupné slovo, viz [lineText]). Čistá funkce - testovatelná.
+     */
+    fun reactionSnippet(display: String, maxChars: Int = REACTION_SNIPPET_MAX): String {
+        val t = display.trim()
+        return if (t.length <= maxChars) t else t.take(maxChars).trimEnd() + "…"
+    }
 }

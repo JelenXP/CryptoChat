@@ -33,6 +33,8 @@ object ChatNotifications {
     const val SERVICE_NOTIFICATION_ID = 1001
     private const val MESSAGE_NOTIFICATION_BASE = 2000
     private const val UPDATE_NOTIFICATION_ID = 3001
+    // Vlastní pásmo pro notifikace o reakcích, ať nepřepisují notifikaci zpráv.
+    private const val REACTION_NOTIFICATION_BASE = 4000
 
     /**
      * Context s jazykem zvoleným uživatelem. Notifikace vznikají mimo Compose,
@@ -175,6 +177,62 @@ object ChatNotifications {
             // Povolení mezitím odebráno - ignorovat.
         }
     }
+
+    /**
+     * Notifikace, že protějšek [contactName] reagoval [emoji] na NAŠI zprávu
+     * [target]. Ukáže, na KTEROU zprávu (v uvozovkách; dlouhá se uřízne „…").
+     * Volá se jen pro reakci na naši odchozí zprávu (viz [RelaySync]).
+     *
+     * Respektuje ztlumení kontaktu. Obsah je jen lokální (na zařízení) - na server
+     * ani do žádného pushe nic neteče. Vlastní ID pásmo, takže nepřepíše notifikaci
+     * nepřečtených zpráv; per-kontakt, takže novější reakce nahradí starší.
+     */
+    fun notifyReaction(
+        context: Context,
+        contactId: String,
+        contactName: String,
+        emoji: String,
+        target: ChatMessage
+    ) {
+        val nm = NotificationManagerCompat.from(context)
+        if (!nm.areNotificationsEnabled()) return
+        // Ztlumený kontakt: reakci zpracujeme (přilepí se ke zprávě), ale
+        // notifikaci nezobrazíme - stejné pravidlo jako u zpráv.
+        if (MuteStore.isMuted(context, contactId)) return
+        val ctx = local(context)
+        val display = ChatNotificationLogic.lineText(
+            target,
+            ctx.getString(R.string.notif_photo),
+            ctx.getString(R.string.notif_file),
+            ctx.getString(R.string.notif_new_message)
+        )
+        val snippet = ChatNotificationLogic.reactionSnippet(display)
+        val open = PendingIntent.getActivity(
+            context, contactId.hashCode(),
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN_CHAT, contactId),
+            pendingFlags()
+        )
+        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_relay)
+            .setContentTitle(contactName)
+            .setContentText(ctx.getString(R.string.notif_reaction, emoji, snippet))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            // Obsah se na zamčené obrazovce skryje; po odemčení je vidět (jako zprávy).
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(open)
+        try {
+            nm.notify(reactionNotificationId(contactId), builder.build())
+        } catch (e: SecurityException) {
+            // Povolení mezitím odebráno - ignorovat.
+        }
+    }
+
+    /** Stabilní ID notifikace o reakci (per-kontakt, vlastní pásmo). */
+    private fun reactionNotificationId(contactId: String): Int =
+        REACTION_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF)
 
     /** Akce „Odpovědět" s inline RemoteInput - odešle NORMÁLNÍ zprávu. */
     private fun replyAction(context: Context, contactId: String): NotificationCompat.Action {

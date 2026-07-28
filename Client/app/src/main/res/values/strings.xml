@@ -500,6 +500,7 @@
     <string name="notif_connecting">Connecting to the chat server…</string>
     <string name="notif_connected">Connected to the chat server</string>
     <string name="notif_new_message">New message</string>
+    <string name="notif_reaction">Reacted %1$s to “%2$s”</string>
     <string name="notif_you">You</string>
     <string name="notif_photo">📷 Photo</string>
     <string name="notif_file">📎 File</string>

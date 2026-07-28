@@ -111,6 +111,26 @@ object RelaySync {
     private const val OUTBOX_STALE_MS = 60_000L
 
     /**
+     * Za jak dlouho po odeslání (ms) bez potvrzení doručení začít zprávu posílat
+     * ZNOVU. Relay může blob ztratit (restart serveru, eviction pod tlakem paměti,
+     * vypršení TTL), pak doručenka nikdy nepřijde a zpráva by uvázla na jedné
+     * fajfce. Dej doručence rozumný čas, ať se neposílá zbytečně.
+     */
+    private const val RESEND_AFTER_MS = 5L * 60 * 1000
+
+    /** Nejčastěji jednou za tolik ms na zprávu (throttle), ať se nehameruje síť. */
+    private const val RESEND_INTERVAL_MS = 30L * 60 * 1000
+
+    /**
+     * Po jak dlouhé době to vzdát: příjemce je nejspíš dlouho offline a blob na
+     * relayi stejně vypršel (TTL). Tlouct do nekonečna by jen pálilo baterii.
+     */
+    private const val RESEND_GIVE_UP_MS = 3L * 60 * 60 * 1000
+
+    /** Kdy (ms) se naposledy zkusilo znovuodeslání SENT zprávy bez doručenky (klíč = contactId:messageId). */
+    private val receiptResendAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
      * Velikost jednoho kousku souboru. Kousek i s obálkou se MUSÍ vejít pod
      * per-blob limit relaye ([ChatMediaStore.RELAY_BLOB_LIMIT]) - jinak server
      * odmítne každý `put` a přenos souboru tiše selže. Rezervu hlídá
@@ -148,6 +168,7 @@ object RelaySync {
         prevEpochCheckedAt.clear()
         legacyGraceCheckedAt.clear()
         secondarySweptAt.clear()
+        receiptResendAt.clear()
     }
 
     /**
@@ -875,10 +896,51 @@ object RelaySync {
      */
     fun flushOutbox(context: Context, contact: Contact) {
         val now = System.currentTimeMillis()
-        val pending = repoFor(context).getMessages(contact.id).filter {
-            outboxNeedsSend(it.outgoing, it.status, now - it.timestamp, OUTBOX_STALE_MS)
+        val messages = repoFor(context).getMessages(contact.id)
+        // 1) Zaseklé zprávy: FAILED (relay byl nedostupný) a staré SENDING.
+        for (message in messages) {
+            if (outboxNeedsSend(message.outgoing, message.status, now - message.timestamp, OUTBOX_STALE_MS)) {
+                deliver(context, contact, message)
+            }
         }
-        for (message in pending) {
+        // 2) SENT bez potvrzení doručení: relay mohl blob ztratit → pošli znovu.
+        resendUndelivered(context, contact, messages, now)
+    }
+
+    /**
+     * (Znovu) pošle odchozí zprávy ve stavu SENT (na relayi), které dosud nedostaly
+     * potvrzení doručení - relay je totiž mohl ztratit (restart, eviction pod tlakem
+     * paměti, vypršení TTL). Bez toho by uvázly na jedné fajfce a příjemci nikdy
+     * nedošly (nejhorší třída chyby v messengeru: tichá ztráta).
+     *
+     * Střídmě a bezpečně:
+     *  - JEN když protějšek umí doručenky ([WireExt.CAP_RECEIPTS]) - jinak by
+     *    DELIVERED nikdy nepřišlo a posílali bychom donekonečna (SUPPRESS).
+     *  - jen v okně [RESEND_AFTER_MS]..[RESEND_GIVE_UP_MS] a nanejvýš jednou za
+     *    [RESEND_INTERVAL_MS] na zprávu (in-memory throttle) - ať se nehameruje síť.
+     *  - opakuje se stejný `wireId`, takže příjemce duplicitu zahodí
+     *    (`appendIfAbsentByWireId` / [ReplayGuard]).
+     * Volá se jen po ÚSPĚŠNÉM pollu (viz [flushOutbox]) - přes výpadek relaye by se
+     * neopakovalo (u ratchetu by každý pokus zbytečně posunul `msgNo`).
+     */
+    private fun resendUndelivered(
+        context: Context,
+        contact: Contact,
+        messages: List<ChatMessage>,
+        now: Long
+    ) {
+        val peerSupportsReceipts = WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_RECEIPTS)
+        if (!peerSupportsReceipts) return
+        for (message in messages) {
+            if (!receiptResendDue(
+                    message.status, now - message.timestamp, peerSupportsReceipts,
+                    RESEND_AFTER_MS, RESEND_GIVE_UP_MS
+                )
+            ) continue
+            val key = "${contact.id}:${message.id}"
+            if (!resendThrottleOk(now, receiptResendAt[key], RESEND_INTERVAL_MS)) continue
+            receiptResendAt[key] = now
+            DiagnosticsLog.log(TAG, "SENT bez doručenky, posílám znovu (${message.kind})")
             deliver(context, contact, message)
         }
     }
@@ -1389,7 +1451,22 @@ object RelaySync {
                                 emoji, opened.timestamp
                             )
                         ) {
-                            ChatRepository.ReactionResult.APPLIED -> Unit
+                            ChatRepository.ReactionResult.APPLIED -> {
+                                // Notifikace: protějšek reagoval na NAŠI zprávu. Jen
+                                // přidání (ne zrušení), jen na naši odchozí zprávu a
+                                // jen když konverzaci nemáme otevřenou (tam si reakci
+                                // zobrazí obrazovka sama).
+                                if (!opened.remove && ActiveChat.currentId != contact.id) {
+                                    val target = repo.getMessages(contact.id).firstOrNull {
+                                        it.wireRef == opened.targetHex && it.outgoing && !it.deleted
+                                    }
+                                    if (target != null) {
+                                        ChatNotifications.notifyReaction(
+                                            context, contact.id, contact.name, opened.emoji, target
+                                        )
+                                    }
+                                }
+                            }
                             // Cíl zatím nedorazil - odlož, ať se reakce neztratí.
                             // Dávku klidně potvrdíme: reakci si držíme my.
                             ChatRepository.ReactionResult.TARGET_MISSING -> {
@@ -1963,6 +2040,37 @@ internal fun outboxNeedsSend(
     ChatMessage.Status.SENDING -> ageMs > staleMs
     else -> false
 }
+
+/**
+ * Má se zpráva ve stavu SENT (na relayi, ale bez potvrzení doručení) poslat
+ * ZNOVU? Čistá funkce (testovatelná bez sítě).
+ *
+ * Podmínky (VŠECHNY musí platit):
+ *  - stav SENT (DELIVERED už dorazilo, FAILED/SENDING řeší [outboxNeedsSend]),
+ *  - protějšek umí doručenky ([peerSupportsReceipts]) - jinak by DELIVERED nikdy
+ *    nepřišlo a posílali bychom donekonečna,
+ *  - stáří v okně `[resendAfterMs, giveUpAfterMs)` - před prahem dej doručence
+ *    čas, po stropu to vzdej (příjemce je dlouho offline, blob stejně vypršel).
+ */
+internal fun receiptResendDue(
+    status: ChatMessage.Status,
+    ageMs: Long,
+    peerSupportsReceipts: Boolean,
+    resendAfterMs: Long,
+    giveUpAfterMs: Long
+): Boolean =
+    status == ChatMessage.Status.SENT &&
+        peerSupportsReceipts &&
+        ageMs >= resendAfterMs &&
+        ageMs < giveUpAfterMs
+
+/**
+ * Smí se teď zpráva znovuodeslat, nebo je moc brzy od minulého pokusu? Throttle
+ * proti hameru sítě: `null` (ještě nikdy) → ano, jinak až po [intervalMs].
+ * Čistá funkce.
+ */
+internal fun resendThrottleOk(now: Long, lastResendAt: Long?, intervalMs: Long): Boolean =
+    lastResendAt == null || now - lastResendAt >= intervalMs
 
 /**
  * Směr schránky, na který strana POSÍLÁ, podle role při párování ([Contact.initiator]).

@@ -5,6 +5,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -24,6 +26,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -60,11 +64,50 @@ class TorForegroundService : Service() {
      */
     @Volatile private var lastNotificationText: String? = null
 
+    /**
+     * „Generace" konektivity - roste při každém návratu sítě (konec výpadku,
+     * přepnutí Wi-Fi↔data). Poll smyčky na ni čekají BĚHEM backoffu (viz
+     * [sleepBackoff]), aby po návratu sítě nezůstaly viset na dlouhé pauze a příjem
+     * se chytl hned. `StateFlow`, ať jednu změnu zachytí všechny čekající smyčky.
+     */
+    private val networkGeneration = MutableStateFlow(0)
+
+    /** Registrovaný callback změn sítě (odregistruje se v [onDestroy]). */
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         ChatNotifications.ensureChannels(this)
+        registerNetworkCallback()
+    }
+
+    /**
+     * Zaregistruje sledování výchozí sítě. Když se síť VRÁTÍ (`onAvailable` - konec
+     * výpadku, přepnutí Wi-Fi↔data), probudí poll smyčky z backoffu a popožene
+     * hlídač, ať se příjem chytne okamžitě místo čekání na (až 5min) backoff.
+     *
+     * Záměrně řešíme jen NÁVRAT sítě: je bezpečný (nanejvýš probudí smyčku, která
+     * pak zase selže a zpomalí). Výpadek explicitně neřešíme - to už dělá povinný
+     * backoff; pauzovat smyčky na `onLost` by hrozilo, že se příjem omylem zastaví.
+     */
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                networkGeneration.value = networkGeneration.value + 1
+                wake.trySend(Unit)
+                DiagnosticsLog.log(TAG, "síť dostupná, probouzím příjem")
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(cb)
+            networkCallback = cb
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "registrace síťového callbacku selhala (${e.javaClass.simpleName})")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -428,8 +471,15 @@ class TorForegroundService : Service() {
      */
     private suspend fun sleepBackoff(current: Long): Long {
         val max = maxBackoffMs()
-        delay(current.coerceAtMost(max))
-        return (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_MS)
+        val startGen = networkGeneration.value
+        // Spí max podle backoffu, ale probudí se HNED, jakmile se vrátí síť -
+        // jinak by po výpadku zpráva čekala celý (až 5min) backoff, i když je síť
+        // dávno zpět. `first { … }` se vrátí null jen když vyprší timeout.
+        val wokenByNetwork = withTimeoutOrNull(current.coerceAtMost(max)) {
+            networkGeneration.first { it != startGen }
+        } != null
+        // Návrat sítě = rozumný důvod zkusit hned od začátku, ne dál zdvojnásobovat.
+        return if (wokenByNetwork) BACKOFF_START_MS else (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_MS)
     }
 
     /**
@@ -477,6 +527,10 @@ class TorForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        networkCallback?.let { cb ->
+            runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) }
+        }
+        networkCallback = null
         scope.cancel()
     }
 

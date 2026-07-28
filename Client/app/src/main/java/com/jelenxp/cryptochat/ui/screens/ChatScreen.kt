@@ -82,7 +82,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -1851,7 +1854,8 @@ private fun MessageBubble(
                     else -> HighlightedText(
                         text = message.text,
                         query = highlightQuery,
-                        color = textColor
+                        color = textColor,
+                        format = true
                     )
                 }
                 Row(
@@ -1910,19 +1914,47 @@ private fun HighlightedText(
     color: Color,
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyLarge,
     maxLines: Int = Int.MAX_VALUE,
-    overflow: TextOverflow = TextOverflow.Clip
+    overflow: TextOverflow = TextOverflow.Clip,
+    format: Boolean = false
 ) {
-    val ranges = if (query.isNotBlank()) ChatScreenLogic.highlightRanges(text, query) else emptyList()
-    if (ranges.isEmpty()) {
+    // Režim hledání (neprázdný dotaz): syrový text + zvýraznění výskytů, ale BEZ
+    // formátování - indexy zvýraznění míří do syrového textu se značkami, míchat
+    // je s odstraněním značek by je rozhodilo.
+    if (query.isNotBlank()) {
+        val ranges = ChatScreenLogic.highlightRanges(text, query)
+        if (ranges.isEmpty()) {
+            Text(text, color = color, style = style, maxLines = maxLines, overflow = overflow)
+        } else {
+            val annotated = buildAnnotatedString {
+                append(text)
+                val hl = SpanStyle(background = Color.White, color = Color.Black.copy(alpha = 0.87f))
+                ranges.forEach { r -> addStyle(hl, r.first, r.last + 1) }
+            }
+            Text(annotated, color = color, style = style, maxLines = maxLines, overflow = overflow)
+        }
+        return
+    }
+    // Normální režim: lehké formátování (*tučně* _kurzíva_ ~škrtnuté~ `mono`),
+    // značky se skryjí. Jen pro text zprávy ([format] = true) - u názvu souboru
+    // by odstranění znaků vypadalo jako přejmenování.
+    val parsed = if (format) MessageFormat.parse(text) else null
+    if (parsed == null || parsed.spans.isEmpty()) {
         Text(text, color = color, style = style, maxLines = maxLines, overflow = overflow)
         return
     }
     val annotated = buildAnnotatedString {
-        append(text)
-        val hl = SpanStyle(background = Color.White, color = Color.Black.copy(alpha = 0.87f))
-        ranges.forEach { r -> addStyle(hl, r.first, r.last + 1) }
+        append(parsed.plain)
+        parsed.spans.forEach { s -> addStyle(spanStyleFor(s.style), s.start, s.end) }
     }
     Text(annotated, color = color, style = style, maxLines = maxLines, overflow = overflow)
+}
+
+/** Compose styl pro daný [MessageFormat.Style]. Mimo composable - jen mapování. */
+private fun spanStyleFor(style: MessageFormat.Style): SpanStyle = when (style) {
+    MessageFormat.Style.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
+    MessageFormat.Style.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
+    MessageFormat.Style.STRIKE -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+    MessageFormat.Style.CODE -> SpanStyle(fontFamily = FontFamily.Monospace)
 }
 
 /** Fotka v bublině - načte se ze souboru mimo hlavní vlákno a zobrazí dekódovaná. */
