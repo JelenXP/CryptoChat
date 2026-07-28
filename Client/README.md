@@ -1,15 +1,15 @@
-# CryptoChatServer
+# CryptoChat
 
 **English** | [Čeština](#cryptochatserver-česky)
 
-CryptoChatServer is an Android messenger for **end-to-end encrypted** chat between two
+CryptoChat is an Android messenger for **end-to-end encrypted** chat between two
 people — with **no accounts, no phone numbers and no e-mail**. Messages and photos travel
 through a "dead-drop" relay server that **never learns what you write, nor who is talking
 to whom**. Tor is **built into the app**, so there is nothing extra to install.
 
 ## Download & install
 
-1. Open [**Releases**](https://github.com/JelenXP/CryptoChatOnline/releases) and download
+1. Open [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases) and download
    the latest `app-release.apk`.
 2. Open the file on your Android phone.
 3. If prompted, allow installation from unknown sources.
@@ -145,19 +145,19 @@ The app follows your phone's language automatically; you can also force
 
 ---
 
-# CryptoChatServer (česky)
+# CryptoChat (česky)
 <a name="cryptochatserver-česky"></a>
 
 [English](#cryptochatserver) | **Čeština**
 
-CryptoChatServer je Android messenger pro **end-to-end šifrovaný** chat mezi dvěma lidmi —
+CryptoChat je Android messenger pro **end-to-end šifrovaný** chat mezi dvěma lidmi —
 **bez účtů, telefonních čísel a e-mailů**. Zprávy i fotky chodí přes „slepou schránku"
 (relay server), který **nikdy nezná obsah ani to, kdo komu píše**. Tor je **zabudovaný
 přímo v aplikaci**, takže není potřeba nic dalšího instalovat.
 
 ## Stažení a instalace
 
-1. Otevři [**Releases**](https://github.com/JelenXP/CryptoChatOnline/releases) a stáhni
+1. Otevři [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases) a stáhni
    poslední `app-release.apk`.
 2. Soubor otevři na Android telefonu.
 3. Případně povol instalaci z neznámých zdrojů.

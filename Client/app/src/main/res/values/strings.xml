@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CryptoChatServer</string>
+    <string name="app_name">CryptoChat</string>
 
     <!-- Common -->
     <string name="content_desc_copy">Copy</string>
@@ -84,7 +84,7 @@
     <string name="lock_screen_title">App is locked</string>
     <string name="lock_screen_subtitle">Authenticate to continue.</string>
     <string name="btn_unlock">Unlock</string>
-    <string name="biometric_prompt_title">Unlock CryptoChatServer</string>
+    <string name="biometric_prompt_title">Unlock CryptoChat</string>
     <string name="error_cannot_show_auth">Could not show authentication.</string>
     <string name="error_auth_failed_generic">Authentication failed.</string>
 
@@ -197,7 +197,7 @@
     <string name="toast_import_done">Imported %1$d contacts.</string>
     <!-- Update available -->
     <string name="update_title">New version available</string>
-    <string name="update_intro">A newer version of CryptoChatServer is available. Updating gets you the latest fixes and keeps you compatible with the people you message.</string>
+    <string name="update_intro">A newer version of CryptoChat is available. Updating gets you the latest fixes and keeps you compatible with the people you message.</string>
     <string name="update_versions">Installed: %1$s  ·  Latest: %2$s</string>
     <string name="update_important_warning">This is an important update. Until you install it, some features may not work correctly.</string>
     <string name="btn_update_get">Get the latest version</string>
@@ -407,7 +407,7 @@
     <string name="chat_preview_none">No messages yet</string>
     <string name="chat_preview_draft">Draft: %1$s</string>
     <string name="chat_peer_major_outdated">This contact is using an older version of the app. Your messages can\'t reach each other until they update.</string>
-    <string name="chat_peer_major_newer">This contact is using a newer version of the app. Update CryptoChatServer to exchange messages again.</string>
+    <string name="chat_peer_major_newer">This contact is using a newer version of the app. Update CryptoChat to exchange messages again.</string>
     <string name="chat_peer_minor_outdated">This contact is using a slightly older version. Messages work, but some newer features may not.</string>
     <string name="chat_peer_minor_newer">This contact is using a newer version. Messages work, but they may use features your app doesn\'t know yet.</string>
     <string name="chat_peer_caps_differ">Your app versions differ. Messages work, but some features may not work on both sides.</string>
@@ -498,11 +498,11 @@
     <!-- Background permissions onboarding -->
     <string name="onb_step_counter">Step %1$d of %2$d</string>
     <string name="onb_notif_title">Allow notifications</string>
-    <string name="onb_notif_why">CryptoChatServer delivers messages as notifications — even when the app is closed. Without this you won\'t know about new messages.</string>
+    <string name="onb_notif_why">CryptoChat delivers messages as notifications — even when the app is closed. Without this you won\'t know about new messages.</string>
     <string name="onb_battery_title">Don\'t restrict the battery</string>
     <string name="onb_battery_why">To receive messages in the background, the system must not put the app to sleep. Allow it to run without battery restrictions.</string>
     <string name="onb_autostart_title">Run in the background</string>
-    <string name="onb_autostart_why">Some phones stop apps from starting on their own, which would cut off your messages. Allow CryptoChatServer to auto-start and run in the background. If you don\'t see the option, turn on \"Allow background activity\" in the app info.</string>
+    <string name="onb_autostart_why">Some phones stop apps from starting on their own, which would cut off your messages. Allow CryptoChat to auto-start and run in the background. If you don\'t see the option, turn on \"Allow background activity\" in the app info.</string>
     <string name="onb_allow">Allow</string>
     <string name="onb_open_settings">Open settings</string>
     <string name="onb_next">Next</string>

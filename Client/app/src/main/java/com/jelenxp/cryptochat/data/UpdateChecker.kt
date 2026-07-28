@@ -25,10 +25,19 @@ import java.net.URL
  */
 object UpdateChecker {
 
-    // Veřejný repozitář, kam se nahrávají jen vydaná APK chat appky (kód zůstává
-    // privátní v JelenXP/CryptoChatOnline).
-    private const val RELEASES_URL =
-        "https://api.github.com/repos/JelenXP/CryptoChatServer-releases/releases"
+    // Veřejné repozitáře s vydanými APK. Zkouší se VŠECHNY a bere se nejnovější
+    // verze napříč nimi - kvůli plynulému přechodu při přejmenování / opensourcingu:
+    //  - CryptoChatServer-releases: současný zdroj (releases repo se ZATÍM
+    //    nepřejmenovává, ať se nerozbije updator už nainstalovaných verzí),
+    //  - CryptoChat-releases: budoucí vyhrazený releases repo,
+    //  - CryptoChat: samotný (časem opensource) repo chat appky, kdyby releasy
+    //    šly rovnou tam.
+    // Kód chat appky je zatím privátní v JelenXP/CryptoChat (dřív CryptoChatOnline).
+    private val RELEASES_URLS = listOf(
+        "https://api.github.com/repos/JelenXP/CryptoChatServer-releases/releases",
+        "https://api.github.com/repos/JelenXP/CryptoChat-releases/releases",
+        "https://api.github.com/repos/JelenXP/CryptoChat/releases"
+    )
     private const val IMPORTANT_MARKER = "[important]"
 
     // Přes Tor je latence vyšší než napřímo, takže velkorysejší timeouty.
@@ -73,27 +82,35 @@ object UpdateChecker {
      */
     fun checkDetailed(currentVersion: String): Result {
         return try {
-            val json = fetch(RELEASES_URL) ?: return Result.Failed
-            val array = JSONArray(json)
+            var reachedAny = false
             var latest: Release? = null
             var importantNewer = false
-            for (i in 0 until array.length()) {
-                val obj = array.optJSONObject(i) ?: continue
-                if (obj.optBoolean("draft") || obj.optBoolean("prerelease")) continue
-                val version = obj.optString("tag_name").removePrefix("v").trim()
-                if (version.isEmpty()) continue
-                val body = obj.optString("body")
-                val release = Release(version, obj.optString("html_url"), body)
-                if (latest == null || compareVersions(release.version, latest.version) > 0) {
-                    latest = release
-                }
-                if (compareVersions(release.version, currentVersion) > 0 &&
-                    body.contains(IMPORTANT_MARKER, ignoreCase = true)
-                ) {
-                    importantNewer = true
+            for (url in RELEASES_URLS) {
+                // null = zdroj nedosažitelný (síť / neexistující repo → 404).
+                // Přeskoč ho; nejnovější verzi hledáme napříč zbylými.
+                val json = fetch(url) ?: continue
+                reachedAny = true
+                val array = try { JSONArray(json) } catch (e: Exception) { continue }
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    if (obj.optBoolean("draft") || obj.optBoolean("prerelease")) continue
+                    val version = obj.optString("tag_name").removePrefix("v").trim()
+                    if (version.isEmpty()) continue
+                    val body = obj.optString("body")
+                    val release = Release(version, obj.optString("html_url"), body)
+                    if (latest == null || compareVersions(release.version, latest.version) > 0) {
+                        latest = release
+                    }
+                    if (compareVersions(release.version, currentVersion) > 0 &&
+                        body.contains(IMPORTANT_MARKER, ignoreCase = true)
+                    ) {
+                        importantNewer = true
+                    }
                 }
             }
-            // Fetch prošel, ale nenašla se žádná platná verze → nic novějšího.
+            // Žádný zdroj neodpověděl (offline / všechny 404) → jako selhání.
+            if (!reachedAny) return Result.Failed
+            // Zdroj(e) odpověděly, ale žádná platná verze → nic novějšího.
             val newest = latest ?: return Result.UpToDate
             if (compareVersions(newest.version, currentVersion) <= 0) return Result.UpToDate
             Result.UpdateAvailable(UpdateInfo(newest.version, newest.url, importantNewer))

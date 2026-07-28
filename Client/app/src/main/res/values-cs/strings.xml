@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">CryptoChatServer</string>
+    <string name="app_name">CryptoChat</string>
 
     <!-- Common -->
     <string name="content_desc_copy">Zkopírovat</string>
@@ -84,7 +84,7 @@
     <string name="lock_screen_title">Aplikace je uzamčena</string>
     <string name="lock_screen_subtitle">Pro pokračování se ověřte.</string>
     <string name="btn_unlock">Odemknout</string>
-    <string name="biometric_prompt_title">Odemknout CryptoChatServer</string>
+    <string name="biometric_prompt_title">Odemknout CryptoChat</string>
     <string name="error_cannot_show_auth">Nelze zobrazit ověření.</string>
     <string name="error_auth_failed_generic">Ověření se nezdařilo.</string>
 
@@ -197,7 +197,7 @@
     <string name="toast_import_done">Naimportováno %1$d kontaktů.</string>
     <!-- Dostupná aktualizace -->
     <string name="update_title">Dostupná nová verze</string>
-    <string name="update_intro">Je k dispozici novější verze CryptoChatServeru. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
+    <string name="update_intro">Je k dispozici novější verze CryptoChatu. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
     <string name="update_versions">Nainstalováno: %1$s  ·  Nejnovější: %2$s</string>
     <string name="update_important_warning">Tohle je důležitá aktualizace. Dokud ji nenainstaluješ, některé funkce nemusí fungovat správně.</string>
     <string name="btn_update_get">Získat nejnovější verzi</string>
@@ -407,7 +407,7 @@
     <string name="chat_preview_none">Zatím žádné zprávy</string>
     <string name="chat_preview_draft">Rozepsáno: %1$s</string>
     <string name="chat_peer_major_outdated">Protějšek má starší verzi aplikace. Zprávy si navzájem nepřečtete, dokud si ji neaktualizuje.</string>
-    <string name="chat_peer_major_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChatServer, aby si šlo zase psát.</string>
+    <string name="chat_peer_major_newer">Protějšek má novější verzi aplikace. Aktualizujte si CryptoChat, aby si šlo zase psát.</string>
     <string name="chat_peer_minor_outdated">Protějšek má o něco starší verzi. Zprávy chodí, ale některé novější funkce nemusí fungovat.</string>
     <string name="chat_peer_minor_newer">Protějšek má novější verzi. Zprávy chodí, ale může používat funkce, které vaše aplikace zatím nezná.</string>
     <string name="chat_peer_caps_differ">Vaše verze aplikace se liší. Zprávy chodí, ale některé funkce nemusí fungovat na obou stranách.</string>
@@ -498,11 +498,11 @@
     <!-- Průvodce povoleními pro pozadí -->
     <string name="onb_step_counter">Krok %1$d z %2$d</string>
     <string name="onb_notif_title">Povol oznámení</string>
-    <string name="onb_notif_why">CryptoChatServer doručuje zprávy jako oznámení — i když je appka zavřená. Bez toho se o nových zprávách nedozvíš.</string>
+    <string name="onb_notif_why">CryptoChat doručuje zprávy jako oznámení — i když je appka zavřená. Bez toho se o nových zprávách nedozvíš.</string>
     <string name="onb_battery_title">Neomezuj baterií</string>
     <string name="onb_battery_why">Aby zprávy chodily i na pozadí, systém nesmí appku uspávat. Povol jí běh bez omezení baterie.</string>
     <string name="onb_autostart_title">Běh na pozadí</string>
-    <string name="onb_autostart_why">Některé telefony brání appkám ve spuštění na pozadí, což by přerušilo doručování zpráv. Povol CryptoChatServeru automatické spuštění a běh na pozadí. Pokud volbu nevidíš, zapni v detailu aplikace „Povolit aktivitu na pozadí".</string>
+    <string name="onb_autostart_why">Některé telefony brání appkám ve spuštění na pozadí, což by přerušilo doručování zpráv. Povol CryptoChatu automatické spuštění a běh na pozadí. Pokud volbu nevidíš, zapni v detailu aplikace „Povolit aktivitu na pozadí".</string>
     <string name="onb_allow">Povolit</string>
     <string name="onb_open_settings">Otevřít nastavení</string>
     <string name="onb_next">Další</string>
