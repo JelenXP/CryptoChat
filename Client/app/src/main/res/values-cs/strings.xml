@@ -236,7 +236,7 @@
     <string name="settings_section_about">O aplikaci</string>
     <string name="about_version">Verze %1$s</string>
     <string name="about_changelog_label">Novinky</string>
-    <string name="about_changelog_desc">Co se změnilo v této verzi</string>
+    <string name="about_changelog_desc">Co se změnilo v posledních verzích</string>
     <string name="about_check_updates_label">Zkontrolovat aktualizace</string>
     <string name="about_check_updates_desc">Podívat se hned na GitHub po novější verzi</string>
     <string name="about_github_label">Vydané verze na GitHubu</string>

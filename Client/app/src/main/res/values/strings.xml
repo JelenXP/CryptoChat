@@ -236,7 +236,7 @@
     <string name="settings_section_about">About</string>
     <string name="about_version">Version %1$s</string>
     <string name="about_changelog_label">What\'s new</string>
-    <string name="about_changelog_desc">See what changed in this version</string>
+    <string name="about_changelog_desc">See what changed in recent versions</string>
     <string name="about_check_updates_label">Check for updates</string>
     <string name="about_check_updates_desc">Look on GitHub for a newer version now</string>
     <string name="about_github_label">Releases on GitHub</string>
