@@ -17,12 +17,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -55,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
@@ -66,6 +68,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -79,7 +83,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -105,6 +108,7 @@ import com.jelenxp.cryptochat.chat.MediaTransfers
 import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RelaySync
 import com.jelenxp.cryptochat.chat.isMutedAt
+import com.jelenxp.cryptochat.ui.components.IncognitoTextField
 import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
@@ -234,6 +238,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var emojiPickerFor by remember(id) { mutableStateOf<ChatMessage?>(null) }
     // Zpráva krátce zvýrazněná po skoku z citace (`onQuoteClick`).
     var highlightedId by remember(id) { mutableStateOf<String?>(null) }
+    // Cesta k fotce otevřené přes celou obrazovku (fullscreen prohlížeč se zoomem).
+    var fullscreenImagePath by remember(id) { mutableStateOf<String?>(null) }
 
     // Čte SharedPreferences, takže ne při každé rekompozici.
     val relayUrl = remember { settings.getRelayUrl() }
@@ -251,8 +257,15 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             TrustState.evaluate(stored, CryptoManager.fingerprint(k)) == TrustState.Level.CHANGED
         }
     }
+    // Uživatel vědomě potvrdil změněný bezpečnostní kód (a přesto chce psát).
+    // Reset při jiném kontaktu i při JINÉM klíči - nový podvržený / obnovený klíč
+    // vyžaduje čerstvé potvrzení, ne zděděné z minula.
+    var trustAcknowledged by remember(id, contact?.keyBase64) { mutableStateOf(false) }
     val hasKey = contact?.keyBase64 != null
     val canChat = hasKey && relayUrl.isNotBlank()
+    // Odesílání (text i příloha) se blokuje, dokud se změna bezpečnostního kódu
+    // vědomě nepotvrdí nebo kontakt znovu neověří.
+    val sendBlocked = ChatScreenLogic.sendBlockedByTrust(trustChanged, trustAcknowledged)
 
     // Předehřátí ODESÍLACÍHO Tor okruhu: jakmile uživatel začne psát (vstup přestane
     // být prázdný), postav dopředu okruh pro odesílací schránku, ať první PUT nečeká
@@ -857,9 +870,14 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 WireCompat.Peer.OK -> {}
             }
             // Trust pinning: ověřený otisk klíče se změnil (podvržený / obnovený
-            // klíč) → varuj a odkaž na nové ověření. Nezávislé na kompatibilitě verzí.
+            // klíč) → varuj, ZABLOKUJ odesílání a odkaž na nové ověření, dokud to
+            // uživatel vědomě nepotvrdí. Nezávislé na kompatibilitě verzí.
             if (trustChanged) {
-                ChatNotice(stringResource(R.string.chat_trust_changed))
+                ChatTrustChangedNotice(
+                    acknowledged = trustAcknowledged,
+                    onReverify = { navController.navigate("verify/$id") },
+                    onAcknowledge = { trustAcknowledged = true }
+                )
             }
 
             if (visibleMessages.isEmpty()) {
@@ -911,6 +929,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                                     onReplySwipe = { if (canChat && m.wireRef != null && !m.deleted) replyTo = m },
                                     onRetry = { retry(m) },
                                     onQuoteClick = { quote.message?.let { jumpToMessage(it) } },
+                                    onImageClick = { m.mediaPath?.let { fullscreenImagePath = it } },
                                     highlighted = m.id == highlightedId
                                 )
                             }
@@ -962,7 +981,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Box {
-                        IconButton(onClick = { attachMenu = true }, enabled = canChat) {
+                        IconButton(onClick = { attachMenu = true }, enabled = canChat && !sendBlocked) {
                             Icon(
                                 Icons.Default.AddPhotoAlternate,
                                 contentDescription = stringResource(R.string.content_desc_attach)
@@ -991,19 +1010,19 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             )
                         }
                     }
-                    OutlinedTextField(
+                    // Incognito vstup: platformní EditText s vypnutým učením
+                    // klávesnice (viz IncognitoTextField) - napsané zprávy se
+                    // neukládají do slovníku ani nesynchronizují do cloudu.
+                    IncognitoTextField(
                         value = input,
                         onValueChange = { input = it },
-                        placeholder = { Text(stringResource(R.string.chat_input_hint)) },
+                        hint = stringResource(R.string.chat_input_hint),
                         enabled = canChat,
-                        maxLines = 5,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        modifier = Modifier
-                            .weight(1f)
+                        modifier = Modifier.weight(1f)
                     )
                     FilledIconButton(
                         onClick = { sendCurrent() },
-                        enabled = canChat && input.isNotBlank()
+                        enabled = canChat && input.isNotBlank() && !sendBlocked
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.content_desc_send))
                     }
@@ -1019,6 +1038,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             onPick = { emoji -> applyReaction(target, emoji); emojiPickerFor = null },
             onDismiss = { emojiPickerFor = null }
         )
+    }
+
+    // Fullscreen prohlížeč fotky se zoomem (otevřený klepnutím na fotku v bublině).
+    fullscreenImagePath?.let { path ->
+        FullscreenImageViewer(path = path, onDismiss = { fullscreenImagePath = null })
     }
 
     // Výběr délky ztlumení.
@@ -1176,6 +1200,7 @@ private fun MessageRow(
     onReplySwipe: () -> Unit,
     onRetry: () -> Unit,
     onQuoteClick: () -> Unit,
+    onImageClick: () -> Unit,
     highlighted: Boolean
 ) {
     val haptics = LocalHapticFeedback.current
@@ -1256,7 +1281,8 @@ private fun MessageRow(
                 onTap = if (selectionMode) onTapInSelection else null,
                 // Dvojklep = rychlá reakce; jen mimo výběr a když jde reagovat.
                 onDoubleTap = if (!selectionMode && canReact) onDoubleTapReact else null,
-                onQuoteClick = onQuoteClick
+                onQuoteClick = onQuoteClick,
+                onImageClick = onImageClick
             )
             // Pruh emoji jako plovoucí Popup NAD bublinou - nerezervuje místo a
             // klidně překryje zprávu nad ní (jako WhatsApp). Nefokusovatelný, ať
@@ -1574,6 +1600,115 @@ private fun ChatNotice(text: String) {
 }
 
 /**
+ * Baner o změně bezpečnostního kódu s akcemi. Dokud [acknowledged] není true, je
+ * odesílání zablokované (viz [ChatScreenLogic.sendBlockedByTrust]) a baner nabízí
+ * „Znovu ověřit" ([onReverify]) i „Přesto psát" ([onAcknowledge]). Po potvrzení
+ * zůstane jen tiché varování, ať uživatel dál ví, že se kód změnil. Barvy
+ * `errorContainer`, ať je to zřetelně naléhavější než běžný `ChatNotice`.
+ */
+@Composable
+private fun ChatTrustChangedNotice(
+    acknowledged: Boolean,
+    onReverify: () -> Unit,
+    onAcknowledge: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Text(
+                text = stringResource(R.string.chat_trust_changed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            if (!acknowledged) {
+                Row(
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val buttonColors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    TextButton(onClick = onReverify, colors = buttonColors) {
+                        Text(stringResource(R.string.chat_trust_reverify))
+                    }
+                    TextButton(onClick = onAcknowledge, colors = buttonColors) {
+                        Text(stringResource(R.string.chat_trust_ack))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Fotka přes celou obrazovku se zoomem (pinch) a posunem (drag), otevřená
+ * klepnutím na fotku v bublině. Dekóduje se mimo hlavní vlákno (stejně jako
+ * [ChatImage]); klepnutí nebo šipka zpět zavře, dvojklep přepíná přiblížení.
+ * FLAG_SECURE dál platí - screenshoty jsou blokované.
+ */
+@Composable
+private fun FullscreenImageViewer(path: String, onDismiss: () -> Unit) {
+    var bmp by remember(path) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(path) {
+        bmp = withContext(Dispatchers.IO) { ChatMediaStore.decodeForDisplay(path)?.asImageBitmap() }
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.97f)),
+            contentAlignment = Alignment.Center
+        ) {
+            val b = bmp
+            if (b != null) {
+                var scale by remember { mutableFloatStateOf(1f) }
+                var offset by remember { mutableStateOf(Offset.Zero) }
+                Image(
+                    bitmap = b,
+                    contentDescription = stringResource(R.string.content_desc_image),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // Klepnutí zavře, dvojklep přepíná mezi 1× a 2,5× (a vynuluje posun).
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { onDismiss() },
+                                onDoubleTap = {
+                                    if (scale > 1f) { scale = 1f; offset = Offset.Zero }
+                                    else scale = 2.5f
+                                }
+                            )
+                        }
+                        // Pinch zoom (1×–5×) + posun; při nezoomnutém obrázku se posun drží na nule.
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                offset = if (scale <= 1f) Offset.Zero else offset + pan
+                            }
+                        }
+                        .graphicsLayer(
+                            scaleX = scale, scaleY = scale,
+                            translationX = offset.x, translationY = offset.y
+                        )
+                )
+            } else {
+                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = stringResource(R.string.content_desc_close),
+                    tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+/**
  * Horní lišta v režimu hledání: šipka zpět (zruší hledání, jako ve výchozí
  * liště), uprostřed textové pole s šedým placeholderem „Hledat". Klávesnice se
  * otevře sama, jakmile se lišta objeví ([FocusRequester]).
@@ -1633,7 +1768,8 @@ private fun MessageBubble(
     onLongPress: (() -> Unit)? = null,
     onTap: (() -> Unit)? = null,
     onDoubleTap: (() -> Unit)? = null,
-    onQuoteClick: (() -> Unit)? = null
+    onQuoteClick: (() -> Unit)? = null,
+    onImageClick: (() -> Unit)? = null
 ) {
     val outgoing = message.outgoing
     val deleted = message.deleted
@@ -1675,7 +1811,10 @@ private fun MessageBubble(
                         onDoubleClick = onDoubleTap,
                         onClick = {
                             when {
+                                // Ve výběrovém režimu má přednost přepnutí označení.
                                 onTap != null -> onTap()
+                                // Klepnutí na fotku (mimo výběr) ji otevře přes celou obrazovku.
+                                message.kind == ChatMessage.Kind.IMAGE && !deleted && onImageClick != null -> onImageClick()
                                 message.status == ChatMessage.Status.FAILED && outgoing -> onRetry()
                             }
                         }

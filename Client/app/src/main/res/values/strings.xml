@@ -218,6 +218,9 @@
     <string name="verify_status_verified">Verified — the code still matches.</string>
     <string name="verify_status_changed">Warning: this code has changed since you last verified it. Only mark it verified again if you\'ve re-checked it over a trusted channel.</string>
     <string name="chat_trust_changed">This contact\'s security code changed. Re-verify them before trusting this chat.</string>
+    <string name="chat_trust_reverify">Re-verify</string>
+    <string name="chat_trust_ack">Write anyway</string>
+    <string name="content_desc_close">Close</string>
     <string name="btn_done">Done</string>
 
     <!-- What\'s new (changelog). Keep the last 5 versions here, newest first. On each

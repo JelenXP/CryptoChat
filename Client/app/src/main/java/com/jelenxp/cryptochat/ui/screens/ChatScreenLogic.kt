@@ -79,6 +79,20 @@ object ChatScreenLogic {
         messages.isNotEmpty() &&
             messages.all { it.outgoing && it.wireRef != null && !it.deleted }
 
+    /**
+     * Smí se do tohohle chatu ODESÍLAT? Když se dřív ověřenému kontaktu změnil
+     * bezpečnostní kód ([trustChanged] = otisk statického klíče se liší od
+     * uloženého), odesílání se ZABLOKUJE, dokud to uživatel vědomě nepotvrdí
+     * ([acknowledged]) nebo kontakt znovu neověří.
+     *
+     * Dřív se změna klíče jen ohlásila banerem, ale odeslání nezastavila - u
+     * podvrženého / obnoveného klíče tak šlo bez povšimnutí psát potenciálně
+     * útočníkovi. Vytaženo z composable schválně (pravidlo projektu), ať jde
+     * otestovat bez Androidu.
+     */
+    fun sendBlockedByTrust(trustChanged: Boolean, acknowledged: Boolean): Boolean =
+        trustChanged && !acknowledged
+
     /** Výsledek dohledání citované zprávy. */
     data class Quote(
         /** Nalezená původní zpráva, nebo `null`. */
