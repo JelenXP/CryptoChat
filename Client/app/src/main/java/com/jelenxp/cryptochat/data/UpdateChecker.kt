@@ -52,10 +52,25 @@ object UpdateChecker {
      *   „important" byla některá starší mezi tím).
      * @param important je mezi verzemi novějšími než ta nainstalovaná některá
      *   označená jako důležitá?
+     * @param notes novinky VŠECH verzí novějších než nainstalovaná (nejnovější
+     *   první). Díky tomu člověk, který přeskočí verzi (např. 2.2.0 → rovnou
+     *   3.0.1 bez 3.0.0), uvidí i novinky té přeskočené - ne jen poslední verze.
      */
     data class UpdateInfo(
         val latestVersion: String,
         val latestUrl: String,
+        val important: Boolean,
+        val notes: List<ReleaseNote> = emptyList()
+    )
+
+    /**
+     * Novinky jedné novejší verze (z release body na GitHubu). [important] je
+     * odvozeno z [IMPORTANT_MARKER] v těle; ze zobrazeného [body] je marker
+     * odstraněn (je určený jen appce, ne ke čtení).
+     */
+    data class ReleaseNote(
+        val version: String,
+        val body: String,
         val important: Boolean
     )
 
@@ -83,11 +98,10 @@ object UpdateChecker {
     fun checkDetailed(currentVersion: String): Result {
         return try {
             var reachedAny = false
-            var latest: Release? = null
-            var importantNewer = false
+            val releases = mutableListOf<Release>()
             for (url in RELEASES_URLS) {
                 // null = zdroj nedosažitelný (síť / neexistující repo → 404).
-                // Přeskoč ho; nejnovější verzi hledáme napříč zbylými.
+                // Přeskoč ho; verze sbíráme napříč zbylými.
                 val json = fetch(url) ?: continue
                 reachedAny = true
                 val array = try { JSONArray(json) } catch (e: Exception) { continue }
@@ -96,30 +110,59 @@ object UpdateChecker {
                     if (obj.optBoolean("draft") || obj.optBoolean("prerelease")) continue
                     val version = obj.optString("tag_name").removePrefix("v").trim()
                     if (version.isEmpty()) continue
-                    val body = obj.optString("body")
-                    val release = Release(version, obj.optString("html_url"), body)
-                    if (latest == null || compareVersions(release.version, latest.version) > 0) {
-                        latest = release
-                    }
-                    if (compareVersions(release.version, currentVersion) > 0 &&
-                        body.contains(IMPORTANT_MARKER, ignoreCase = true)
-                    ) {
-                        importantNewer = true
-                    }
+                    releases.add(Release(version, obj.optString("html_url"), obj.optString("body")))
                 }
             }
             // Žádný zdroj neodpověděl (offline / všechny 404) → jako selhání.
             if (!reachedAny) return Result.Failed
-            // Zdroj(e) odpověděly, ale žádná platná verze → nic novějšího.
-            val newest = latest ?: return Result.UpToDate
-            if (compareVersions(newest.version, currentVersion) <= 0) return Result.UpToDate
-            Result.UpdateAvailable(UpdateInfo(newest.version, newest.url, importantNewer))
+            // Zdroj(e) odpověděly, ale nic novějšího → jste aktuální.
+            val info = buildUpdateInfo(releases, currentVersion) ?: return Result.UpToDate
+            Result.UpdateAvailable(info)
         } catch (e: Exception) {
             Result.Failed
         }
     }
 
-    private data class Release(val version: String, val url: String, val body: String)
+    /**
+     * Z posbíraných vydání (napříč všemi repos) poskládá [UpdateInfo]: jen verze
+     * novejší než [currentVersion], odshora nejnovější. Stejná verze z víc repos
+     * se sloučí (přednost má neprázdné tělo). Vrátí `null`, když nic novejšího
+     * není. Čistá funkce (bez sítě) - proto testovatelná.
+     */
+    internal fun buildUpdateInfo(releases: List<Release>, currentVersion: String): UpdateInfo? {
+        // Dedup podle verze (stejné vydání může být ve víc repos); prefer neprázdné tělo.
+        val byVersion = LinkedHashMap<String, Release>()
+        for (r in releases) {
+            if (compareVersions(r.version, currentVersion) <= 0) continue
+            val existing = byVersion[r.version]
+            if (existing == null || (existing.body.isBlank() && r.body.isNotBlank())) {
+                byVersion[r.version] = r
+            }
+        }
+        if (byVersion.isEmpty()) return null
+        // Nejnovější první.
+        val sorted = byVersion.values.sortedWith { a, b -> compareVersions(b.version, a.version) }
+        val notes = sorted.map { r ->
+            ReleaseNote(
+                version = r.version,
+                body = stripImportantMarker(r.body),
+                important = r.body.contains(IMPORTANT_MARKER, ignoreCase = true)
+            )
+        }
+        val latest = sorted.first()
+        return UpdateInfo(
+            latestVersion = latest.version,
+            latestUrl = latest.url,
+            important = notes.any { it.important },
+            notes = notes
+        )
+    }
+
+    /** Odebere [IMPORTANT_MARKER] z těla novinek (marker je jen pro appku, ne ke čtení). */
+    internal fun stripImportantMarker(body: String): String =
+        body.replace(Regex(Regex.escape(IMPORTANT_MARKER), RegexOption.IGNORE_CASE), "").trim()
+
+    internal data class Release(val version: String, val url: String, val body: String)
 
     private fun fetch(urlString: String): String? {
         // Bez běžícího Toru se nekontroluje vůbec - radši žádná kontrola než

@@ -405,6 +405,32 @@ private fun UpdateCheckDialog(
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
+                        // Novinky všech novějších verzí (ne jen té poslední), scrollovatelné.
+                        val notesToShow = result.info.notes.filter { it.body.isNotBlank() }
+                        if (notesToShow.isNotEmpty()) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                stringResource(R.string.update_whats_new),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                notesToShow.forEach { note ->
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        stringResource(R.string.changelog_version_header, note.version),
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        note.body,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
                     }
                 },
                 confirmButton = {

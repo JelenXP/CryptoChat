@@ -199,6 +199,8 @@
     <string name="update_title">Dostupná nová verze</string>
     <string name="update_intro">Je k dispozici novější verze CryptoChatu. Aktualizací získáš nejnovější opravy a zůstaneš kompatibilní s lidmi, kterým píšeš.</string>
     <string name="update_versions">Nainstalováno: %1$s  ·  Nejnovější: %2$s</string>
+    <string name="update_whats_new">Co je nového</string>
+    <string name="changelog_version_header">Verze %1$s</string>
     <string name="update_important_warning">Tohle je důležitá aktualizace. Dokud ji nenainstaluješ, některé funkce nemusí fungovat správně.</string>
     <string name="btn_update_get">Získat nejnovější verzi</string>
     <string name="btn_update_later">Později</string>
@@ -218,9 +220,16 @@
     <string name="chat_trust_changed">Bezpečnostní kód tohoto kontaktu se změnil. Než chatu budeš věřit, ověř ho znovu.</string>
     <string name="btn_done">Hotovo</string>
 
-    <!-- Novinky (changelog) -->
+    <!-- Novinky (changelog). Drž tu posledních 5 verzí, nejnovější první. Při každém
+         vydání: přidej nový changelog_<ver>, dej ho na začátek AppChangelog.ENTRIES
+         a nejstarší (šestý) odeber. -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
-    <string name="changelog_body">Verze 2.2.0 — úprava a mazání zpráv.\n\n• Úprava odeslané zprávy — podrž ji, zvol Upravit, oprav text a odešli. Přepíše se i na druhém telefonu a označí se „upraveno“.\n\n• Smazat pro všechny — podrž svoji zprávu a zvol Smazat pro všechny; na obou telefonech se z ní stane šedé „Smazáno“. Smazat u mě udělá totéž jen na tomhle telefonu.\n\n• Pro synchronizaci úprav a mazání potřebují novou verzi oba telefony; starší telefon si prostě nechá původní zprávu.\n\n• Opravy scrollování — čtení starších zpráv už tě při příchodu nové zprávy neshodí zpět dolů a odznak skoku na konec ukazuje správný počet.</string>
+    <string name="changelog_title_multi">Novinky</string>
+    <string name="changelog_2_2_0">Verze 2.2.0 — úprava a mazání zpráv.\n\n• Úprava odeslané zprávy — podrž ji, zvol Upravit, oprav text a odešli. Přepíše se i na druhém telefonu a označí se „upraveno“.\n\n• Smazat pro všechny — podrž svoji zprávu a zvol Smazat pro všechny; na obou telefonech se z ní stane šedé „Smazáno“. Smazat u mě udělá totéž jen na tomhle telefonu.\n\n• Pro synchronizaci úprav a mazání potřebují novou verzi oba telefony; starší telefon si prostě nechá původní zprávu.\n\n• Opravy scrollování — čtení starších zpráv už tě při příchodu nové zprávy neshodí zpět dolů a odznak skoku na konec ukazuje správný počet.</string>
+    <string name="changelog_2_1_1">Verze 2.1.1 — rychlá oprava na 2.1.0.\n\n• Opraven pád při scrollování nahoru v konverzaci. Nastával, když zprávy nebyly přesně v pořadí podle času (rozdíl hodin mezi telefony nebo zpráva, která dorazila později), a s délkou konverzace byl pravděpodobnější.\n\nCelé 2.1.0 je součástí: oddělovače dnů a čára „Nové zprávy“, skok na citovanou zprávu, tlačítko skoku na konec, uchování rozepsaného textu, ověření kontaktu s varováním při změně bezpečnostního kódu, párování jen pozvánkou s QR, záložní servery a obrazovka diagnostiky připojení.</string>
+    <string name="changelog_2_1_0">Verze 2.1.0 — velká, hlavně kolem konverzací, důvěry a spolehlivosti.\n\nV konverzaci:\n• Oddělovače dnů (Dnes / Včera / datum) a čára „Nové zprávy“ nad první nepřečtenou.\n• Klepnutím na citovanou zprávu skočíte na původní, která se na chvíli rozsvítí.\n• Když odrolujete nahoru, objeví se tlačítko skoku na konec s počtem nových zpráv.\n• Rozepsaný text se uchová — přežije odchod z konverzace i restart aplikace a v seznamu kontaktů se ukáže „Rozepsáno“.\n\nDůvěra a bezpečnost:\n• Kontakt jde označit jako ověřený a ověření vydrží. Když se jeho bezpečnostní kód někdy změní, konverzace vás varuje.\n• Přidání kontaktu je jednodušší: páruje se jen pozvánkou a tu jde ukázat i naskenovat jako QR kód.\n\nPřipojení:\n• Můžete nastavit záložní servery. Když hlavní neběží, zprávy odejdou přes záložní a odtamtud se i vyzvednou.\n• Nová obrazovka „Diagnostika připojení“ v Nastavení ukáže, jak se rozjíždí Tor a jak odpovídá server.\n\nOpravy:\n• Na pomalejších telefonech se už neztrácejí klepnutí — lišta s reakcemi mohla zůstat neviditelná a přesto je zachytávat.\n• Smazání kontaktu teď opravdu smaže úplně všechno, co k němu patří.\n• Zopakovaná výměna klíče se teď skutečně přepne na nový klíč.\n• Méně ztracených zpráv, když je ve hře záložní server.</string>
+    <string name="changelog_2_0_2">Verze 2.0.2 — rychlá oprava na 2.0.1.\n\n• Ikona aplikace má teď správnou velikost (byla moc velká a vyplňovala celou dlaždici).\n\nZ 2.0.1 také: zprávy se tiše neztratí, když se nepodaří uložit; zámek zakryje aplikaci okamžitě; spolehlivější doručování kolem půlnoci.</string>
+    <string name="changelog_2_0_1">Verze 2.0.1 — drobné opravy na 2.0. Nespěchá to a nemusí být na obou telefonech.\n\n• Ikona aplikace je teď správně vycentrovaná.\n• Když zprávu nejde uložit, aplikace to řekne a tiše ji nezahodí.\n• Zámek teď zakryje aplikaci okamžitě, bez krátkého záblesku obsahu za ním.\n• Opravy spolehlivosti doručování kolem půlnoci.</string>
     <string name="btn_changelog_ok">Rozumím</string>
 
     <!-- O aplikaci (Nastavení) -->

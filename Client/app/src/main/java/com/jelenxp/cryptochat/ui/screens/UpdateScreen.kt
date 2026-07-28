@@ -15,18 +15,24 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.components.InfoCard
 
 /**
  * Celoobrazovkové upozornění na novější verzi appky. Dvě tlačítka: získat
  * nejnovější verzi (otevře GitHub Release) a Později (zavře). U důležité verze
  * navíc varování, že některé funkce nemusí fungovat správně.
+ *
+ * @param notes novinky VŠECH verzí novějších než nainstalovaná (nejnovější
+ *   první). Ukáže se tak i to, co přinesla přeskočená mezilehlá verze - ne jen
+ *   ta poslední.
  */
 @Composable
 fun UpdateScreen(
     currentVersion: String,
     latestVersion: String,
     important: Boolean,
+    notes: List<UpdateChecker.ReleaseNote> = emptyList(),
     onGetLatest: () -> Unit,
     onLater: () -> Unit
 ) {
@@ -88,6 +94,38 @@ fun UpdateScreen(
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer
                 )
+            }
+
+            // Novinky všech novějších verzí (nejnovější první), každá ve své kartě.
+            val notesToShow = notes.filter { it.body.isNotBlank() }
+            if (notesToShow.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = stringResource(R.string.update_whats_new),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.align(Alignment.Start)
+                )
+                notesToShow.forEach { note ->
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Text(
+                                text = stringResource(R.string.changelog_version_header, note.version),
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = note.body,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(28.dp))

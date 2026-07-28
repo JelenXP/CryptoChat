@@ -56,6 +56,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.data.AnimStyle
+import com.jelenxp.cryptochat.data.AppChangelog
 import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
@@ -344,9 +345,19 @@ private fun StartupGate(content: @Composable () -> Unit) {
     val currentVersionCode = remember { currentVersionCode(context) }
 
     // Novinky: dřív viděná verze byla nižší než aktuální = právě se aktualizovalo.
-    var showChangelog by remember {
-        mutableStateOf(settings.getLastSeenVersionCode() in 1 until currentVersionCode)
+    // Ukážeme novinky VŠECH verzí novějších než ta naposledy viděná (ne jen té
+    // poslední) - kdo přeskočí verzi (např. 2.2.0 → rovnou bugfix 3.0.1 bez 3.0.0),
+    // o novinky přeskočené verze nepřijde. Řadí se podle versionCode, který o
+    // naposledy viděné verzi držíme i pro existující instalace.
+    val lastSeenCode = remember { settings.getLastSeenVersionCode() }
+    val changelogEntries = remember {
+        if (lastSeenCode in 1 until currentVersionCode) {
+            AppChangelog.entriesNewerThanCode(lastSeenCode)
+        } else {
+            emptyList()
+        }
     }
+    var showChangelog by remember { mutableStateOf(changelogEntries.isNotEmpty()) }
     LaunchedEffect(Unit) { settings.setLastSeenVersionCode(currentVersionCode) }
 
     // Kontrola nové verze na pozadí.
@@ -391,13 +402,14 @@ private fun StartupGate(content: @Composable () -> Unit) {
         when {
             // Novinky mají přednost; teprve po jejich zavření se případně ukáže update.
             showChangelog -> BlockingOverlay {
-                ChangelogScreen(version = currentVersion, onDismiss = { showChangelog = false })
+                ChangelogScreen(entries = changelogEntries, onDismiss = { showChangelog = false })
             }
             updateEligible && info != null -> BlockingOverlay {
                 UpdateScreen(
                     currentVersion = currentVersion,
                     latestVersion = info.latestVersion,
                     important = info.important,
+                    notes = info.notes,
                     onGetLatest = {
                         openUrl(context, info.latestUrl)
                         updateEligible = false
@@ -601,7 +613,7 @@ fun CryptoChatApp(
 
         composable("changelog") {
             ChangelogScreen(
-                version = currentVersionName(LocalContext.current),
+                entries = AppChangelog.ENTRIES,
                 onDismiss = { navController.popBackStack() }
             )
         }
