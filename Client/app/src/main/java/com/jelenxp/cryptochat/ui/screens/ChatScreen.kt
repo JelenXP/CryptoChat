@@ -101,6 +101,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import android.widget.Toast
@@ -294,6 +295,22 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    // BEZPEČNOST: fotku na celé obrazovce zavři při odchodu appky na pozadí, pokud
+    // je zapnutý zámek. Fullscreen je Dialog (samostatné OKNO nad oknem Activity),
+    // takže ho celoobrazovkový zámek (leží UVNITŘ okna Activity) NEpřekryje - bez
+    // tohohle by se po návratu ukázala fotka DŘÍV než zámek, tedy jeho obejití
+    // (přesně to, před čím zámek chrání - viz AppLockGate). Zavřením na ON_STOP na
+    // návrat žádné okno s fotkou nezůstane a zámek naskočí čistě, bez probliknutí.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && settings.isAppLockEnabled()) {
+                fullscreenImagePath = null
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // --- Držení konverzace „u dna" (řeší tři UI bugy: fotka neotevře úplně dole,
     // psaní odscrollované zprávy skočí na konec, reakce zaskočí konec pod lištu) ---
