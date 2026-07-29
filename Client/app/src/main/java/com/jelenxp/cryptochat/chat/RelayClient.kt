@@ -374,7 +374,10 @@ object RelayClient {
             when (val code = conn.responseCode) {
                 204 -> Fetched(emptyList(), -1)
                 200 -> Fetched(
-                    unframe(conn.inputStream.readBytes()),
+                    // readCapped, ne readBytes(): přímá (clearnet) cesta má stejnou
+                    // hranici důvěry jako onion (nedůvěryhodný relay/MITM). Bez stropu
+                    // by odpověď o stovkách MB shodila FGS na OOM (A9).
+                    unframe(readCapped(conn.inputStream)),
                     conn.getHeaderField("X-CC-Seq")?.toLongOrNull() ?: -1
                 )
                 else -> throw IOException("Relay GET vrátil HTTP $code")
@@ -511,14 +514,15 @@ object RelayClient {
      * relay poslal stovky MB a shodil foreground service na `OutOfMemoryError` -
      * tedy trvalý výpadek příjmu zpráv.
      */
-    private fun readCapped(input: InputStream): ByteArray {
+    // internal + parametr limitu kvůli levnému testu (malý limit, malý vstup).
+    internal fun readCapped(input: InputStream, limit: Int = MAX_RESPONSE_BYTES): ByteArray {
         val out = ByteArrayOutputStream()
         val buffer = ByteArray(16 * 1024)
         while (true) {
             val read = input.read(buffer)
             if (read < 0) break
-            if (out.size() + read > MAX_RESPONSE_BYTES) {
-                throw IOException("Odpověď relaye je přes limit ($MAX_RESPONSE_BYTES B)")
+            if (out.size() + read > limit) {
+                throw IOException("Odpověď relaye je přes limit ($limit B)")
             }
             out.write(buffer, 0, read)
         }

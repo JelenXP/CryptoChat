@@ -290,9 +290,17 @@ object ContactBackup {
         return count
     }
 
-    /** Přijme jen jednoduchý segment do navigační trasy (UUID i starší formáty id). */
-    private fun isSafeRouteId(id: String): Boolean =
-        id.isNotEmpty() && id.length <= 64 && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+    /**
+     * Přijme jen jednoduchý ASCII segment do navigační trasy `chat/$id` (UUID
+     * i starší formáty id). Kontrakt je ASCII-only `[A-Za-z0-9_-]{1,64}`:
+     * `isLetterOrDigit` je Unicode-aware a pustil by i ne-ASCII písmena/číslice
+     * (arabské číslice, cyrilici), které do trasy nepatří. Reálná id kontaktů jsou
+     * UUID; podvržená záloha s id obsahujícím `/ ? #`, prázdné nebo přes 64 znaků
+     * se odmítne a nahradí čerstvým UUID (viz volající). `internal` kvůli testu.
+     */
+    internal fun isSafeRouteId(id: String): Boolean =
+        id.isNotEmpty() && id.length <= 64 &&
+            id.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '-' || it == '_' }
 
     /**
      * Reakce ze zálohy. Záloha může přijít odkudkoli, takže se poškozený záznam

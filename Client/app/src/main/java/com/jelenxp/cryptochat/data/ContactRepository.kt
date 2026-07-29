@@ -42,8 +42,8 @@ class ContactRepository(
      * seznam místo pádu appky. Pokud je poškozený jen jeden konkrétní záznam,
      * přeskočí se jen ten a ostatní se načtou normálně.
      */
-    fun getContacts(): List<Contact> {
-        return try {
+    fun getContacts(): List<Contact> = synchronized(lock) {
+        try {
             val json = prefs.getString(KEY_LIST, "[]") ?: "[]"
             val array = JSONArray(json)
             val result = mutableListOf<Contact>()
@@ -83,8 +83,8 @@ class ContactRepository(
     }
 
     /** Vrátí true, pokud se uložení povedlo. Nikdy nevyhodí výjimku. */
-    fun addOrUpdate(contact: Contact): Boolean {
-        return try {
+    fun addOrUpdate(contact: Contact): Boolean = synchronized(lock) {
+        try {
             val array = readArray()
             upsert(array, contact)
             writeArray(array)
@@ -100,8 +100,8 @@ class ContactRepository(
      * importu zálohy, kde by opakované volání [addOrUpdate] bylo kvadratické.
      * Vrátí počet zpracovaných kontaktů, nebo 0 při selhání (zápis je atomický).
      */
-    fun addOrUpdateAll(contacts: List<Contact>): Int {
-        return try {
+    fun addOrUpdateAll(contacts: List<Contact>): Int = synchronized(lock) {
+        try {
             val array = readArray()
             contacts.forEach { upsert(array, it) }
             writeArray(array)
@@ -113,8 +113,8 @@ class ContactRepository(
     }
 
     /** Vrátí true, pokud se smazání povedlo. Nikdy nevyhodí výjimku. */
-    fun delete(id: String): Boolean {
-        return try {
+    fun delete(id: String): Boolean = synchronized(lock) {
+        try {
             val array = readArray()
             val kept = JSONArray()
             for (i in 0 until array.length()) {
@@ -155,8 +155,18 @@ class ContactRepository(
         val index = indexOfId(array, contact.id)
         val obj = JSONObject()
         obj.put("id", contact.id)
-        // Jméno i klíč se ukládají zašifrované (stejný Keystore klíč).
-        obj.put("name", crypto.encrypt(contact.name))
+        // Jméno se ukládá zašifrované, ale POZOR na dvojité šifrování (nález A7):
+        // když Keystore při čtení přechodně selže, getContacts vrátí do Contact.name
+        // surový ciphertext (fallback). Následné bezpodmínečné `encrypt(name)` by
+        // vyrobilo E(E(name)) a po zotavení Keystore by se jméno navždy zobrazovalo
+        // jako nečitelný base64. Rozpoznáme to podle shody s uloženým zašifrovaným
+        // jménem: když se in-memory jméno rovná tomu na disku, je to ten
+        // nedešifrovaný fallback → ulož beze změny (klíč níž má stejnou ochranu,
+        // jen díky nullable typu). Nezměněné legacy-plaintext jméno tím zůstane
+        // plaintext, což je přijatelné (nekazí se data, jen se nemigruje).
+        val storedName = if (index >= 0)
+            array.optJSONObject(index)?.optString("name")?.takeIf { it.isNotEmpty() } else null
+        obj.put("name", if (contact.name == storedName) storedName else crypto.encrypt(contact.name))
         // Cesta k fotce (necitlivá) - plaintext; null = fotku nemá (pole se vynechá).
         contact.avatarPath?.takeIf { it.isNotEmpty() }?.let { obj.put("avatar", it) }
         // Role při online párování (necitlivá); null = pole se vynechá.
@@ -184,5 +194,12 @@ class ContactRepository(
         private const val PREFS_NAME = "crypto_chat_prefs"
         private const val KEY_LIST = "contacts_json"
         private const val TAG = "ContactRepository"
+
+        // Procesový (statický) zámek: read-modify-write nad polem kontaktů běží
+        // z UI i z importu zálohy (Dispatchers.Default) přes RŮZNÉ instance nad
+        // týmž prefs souborem; bez sdíleného zámku si zápisy last-writer-wins
+        // přepíší a úprava kontaktu se ztratí (nález A16). Stejný vzor jako
+        // ChatRepository. Statický, aby platil napříč instancemi.
+        private val lock = Any()
     }
 }
