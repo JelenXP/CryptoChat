@@ -143,8 +143,34 @@ object ChatMediaStore {
         }
     }
 
+    /**
+     * Malá LRU cache dekódovaných fotek (klíč = cesta@maxPx). Sdílí bitmapu mezi
+     * náhledem v bublině a fullscreen prohlížečem, takže druhé zobrazení téže fotky
+     * je OKAMŽITÉ - nedekóduje se znovu z disku a neproblikne spinner. Strop podle
+     * paměti procesu (1/8, v rozsahu 4-32 MB). Bitmapy jsou jen ke čtení a nikde se
+     * nerecyklují, takže je bezpečné je sdílet.
+     */
+    private val displayCache = object : android.util.LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 8)
+            .coerceIn(4L * 1024 * 1024, 32L * 1024 * 1024).toInt()
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
+    private fun displayKey(path: String, maxPx: Int) = "$path@$maxPx"
+
+    /**
+     * Vrátí už dekódovanou fotku JEN pokud je v cache (BEZ čtení z disku), jinak
+     * `null`. Fullscreen prohlížeč si tím vezme bitmapu, kterou bublina právě
+     * dekódovala, a otevře se bez prodlevy.
+     */
+    fun cachedForDisplay(path: String, maxPx: Int = 1080): Bitmap? =
+        displayCache.get(displayKey(path, maxPx))
+
     /** Načte fotku ze souboru podvzorkovanou na [maxPx] (pro zobrazení v bublině). */
     fun decodeForDisplay(path: String, maxPx: Int = 1080): Bitmap? {
+        val key = displayKey(path, maxPx)
+        displayCache.get(key)?.let { return it }
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(path, bounds)
@@ -152,7 +178,7 @@ object ChatMediaStore {
             val opts = BitmapFactory.Options().apply {
                 inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, maxPx)
             }
-            BitmapFactory.decodeFile(path, opts)
+            BitmapFactory.decodeFile(path, opts)?.also { displayCache.put(key, it) }
         } catch (e: Throwable) {
             Log.e(TAG, "Načtení obrázku selhalo (${e.javaClass.simpleName})")
             null

@@ -7,6 +7,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
@@ -116,9 +124,11 @@ import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.emoji.EmojiPickerSheet
+import com.jelenxp.cryptochat.ui.theme.LocalDesign
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -1650,62 +1660,95 @@ private fun ChatTrustChangedNotice(
  */
 @Composable
 private fun FullscreenImageViewer(path: String, onDismiss: () -> Unit) {
-    var bmp by remember(path) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(path) {
-        bmp = withContext(Dispatchers.IO) { ChatMediaStore.decodeForDisplay(path)?.asImageBitmap() }
+    // Bitmapu ber PRIMÁRNĚ z cache - bublina ji právě dekódovala, takže fullscreen
+    // se otevře OKAMŽITĚ, bez probliknutí spinneru. Když v cache není (vzácné),
+    // dodekóduj mimo hlavní vlákno.
+    var bmp by remember(path) {
+        mutableStateOf(ChatMediaStore.cachedForDisplay(path)?.asImageBitmap())
     }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.97f)),
-            contentAlignment = Alignment.Center
-        ) {
-            val b = bmp
-            if (b != null) {
-                var scale by remember { mutableFloatStateOf(1f) }
-                var offset by remember { mutableStateOf(Offset.Zero) }
-                Image(
-                    bitmap = b,
-                    contentDescription = stringResource(R.string.content_desc_image),
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        // Klepnutí zavře, dvojklep přepíná mezi 1× a 2,5× (a vynuluje posun).
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = { onDismiss() },
-                                onDoubleTap = {
-                                    if (scale > 1f) { scale = 1f; offset = Offset.Zero }
-                                    else scale = 2.5f
-                                }
-                            )
-                        }
-                        // Pinch zoom (1×–5×) + posun; při nezoomnutém obrázku se posun drží na nule.
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                scale = (scale * zoom).coerceIn(1f, 5f)
-                                offset = if (scale <= 1f) Offset.Zero else offset + pan
-                            }
-                        }
-                        .graphicsLayer(
-                            scaleX = scale, scaleY = scale,
-                            translationX = offset.x, translationY = offset.y
-                        )
-                )
-            } else {
-                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
-            }
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(8.dp)
+    LaunchedEffect(path) {
+        if (bmp == null) {
+            bmp = withContext(Dispatchers.IO) { ChatMediaStore.decodeForDisplay(path)?.asImageBitmap() }
+        }
+    }
+
+    // Enter/exit animace podle nastavení appky (styl + rychlost z DesignScreen), ať
+    // fullscreen působí jako součást appky, ne jako cizí okno. NONE = bez animace.
+    val design = LocalDesign.current
+    val d = design.animSpeed.millis
+    val enter: EnterTransition
+    val exit: ExitTransition
+    when (design.animStyle) {
+        AnimStyle.NONE -> { enter = EnterTransition.None; exit = ExitTransition.None }
+        AnimStyle.FADE -> { enter = fadeIn(tween(d)); exit = fadeOut(tween(d)) }
+        // SLIDE i SCALE → jemné „rozevření" fotky (zoom + prolnutí), sedí k obrázku.
+        else -> {
+            enter = fadeIn(tween(d)) + scaleIn(tween(d), initialScale = 0.92f)
+            exit = fadeOut(tween(d)) + scaleOut(tween(d), targetScale = 0.92f)
+        }
+    }
+    // Drží dialog namontovaný i během ODCHODOVÉ animace: zavření spustí exit a
+    // teprve až dojede, odmountuje se (onDismiss). Bez toho by fotka jen zmizela.
+    val visibleState = remember { MutableTransitionState(false).apply { targetState = true } }
+    LaunchedEffect(visibleState.isIdle) {
+        if (visibleState.isIdle && !visibleState.targetState) onDismiss()
+    }
+    val startClose = { visibleState.targetState = false }
+
+    Dialog(onDismissRequest = startClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        AnimatedVisibility(visibleState = visibleState, enter = enter, exit = exit) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.97f)),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = stringResource(R.string.content_desc_close),
-                    tint = Color.White
-                )
+                val b = bmp
+                if (b != null) {
+                    var scale by remember { mutableFloatStateOf(1f) }
+                    var offset by remember { mutableStateOf(Offset.Zero) }
+                    Image(
+                        bitmap = b,
+                        contentDescription = stringResource(R.string.content_desc_image),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Klepnutí zavře, dvojklep přepíná mezi 1× a 2,5× (a vynuluje posun).
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = { startClose() },
+                                    onDoubleTap = {
+                                        if (scale > 1f) { scale = 1f; offset = Offset.Zero }
+                                        else scale = 2.5f
+                                    }
+                                )
+                            }
+                            // Pinch zoom (1×–5×) + posun; při nezoomnutém obrázku se posun drží na nule.
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 5f)
+                                    offset = if (scale <= 1f) Offset.Zero else offset + pan
+                                }
+                            }
+                            .graphicsLayer(
+                                scaleX = scale, scaleY = scale,
+                                translationX = offset.x, translationY = offset.y
+                            )
+                    )
+                } else {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
+                }
+                IconButton(
+                    onClick = startClose,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = stringResource(R.string.content_desc_close),
+                        tint = Color.White
+                    )
+                }
             }
         }
     }
