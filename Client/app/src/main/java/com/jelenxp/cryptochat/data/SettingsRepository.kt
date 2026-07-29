@@ -18,6 +18,14 @@ class SettingsRepository(context: Context) {
     }
 
     /**
+     * Za jak dlouho po odchodu na pozadí se zámek zamkne (grace period). Výchozí
+     * [LockDelay.SEC_10] = původní pevné chování (10 s). Čte se čerstvě při každém
+     * návratu do appky, takže se změna projeví hned.
+     */
+    fun getLockDelay(): LockDelay = readEnum(KEY_LOCK_DELAY, LockDelay.SEC_10)
+    fun setLockDelay(v: LockDelay) = writeEnum(KEY_LOCK_DELAY, v)
+
+    /**
      * Povoleno kopírování tajného klíče do schránky? Záměrně výchozí `false` -
      * schránka je riziková (můžou ji číst jiné aplikace), bezpečnější je sdílet
      * klíč QR kódem. Netýká se ostatních (necitlivých) věcí - ty jdou kopírovat
@@ -226,6 +234,7 @@ class SettingsRepository(context: Context) {
     companion object {
         private const val PREFS_NAME = "crypto_chat_settings"
         private const val KEY_APP_LOCK = "app_lock_enabled"
+        private const val KEY_LOCK_DELAY = "app_lock_delay"
         private const val KEY_KEY_COPY = "key_copy_allowed"
         private const val KEY_THEME = "design_theme"
         private const val KEY_ACCENT = "design_accent"

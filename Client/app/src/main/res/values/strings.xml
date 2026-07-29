@@ -75,6 +75,12 @@
     <string name="settings_app_lock_label">App lock</string>
     <string name="settings_app_lock_description">Require PIN/fingerprint when opening the app.</string>
     <string name="settings_app_lock_unavailable">Not available: your device has no screen lock (PIN, pattern, or fingerprint) set up.</string>
+    <string name="settings_lock_delay_label">Lock after</string>
+    <string name="lock_delay_immediately">Immediately</string>
+    <string name="lock_delay_10s">10 seconds</string>
+    <string name="lock_delay_30s">30 seconds</string>
+    <string name="lock_delay_1m">1 minute</string>
+    <string name="lock_delay_5m">5 minutes</string>
     <string name="error_app_lock_unavailable">Your device has no PIN, pattern, or fingerprint set up - app lock can\'t be enabled.</string>
 
     <string name="settings_key_copy_label">Allow copying the key to clipboard</string>

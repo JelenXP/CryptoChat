@@ -75,6 +75,12 @@
     <string name="settings_app_lock_label">Zámek aplikace</string>
     <string name="settings_app_lock_description">Při spuštění appky vyžadovat PIN/otisk prstu.</string>
     <string name="settings_app_lock_unavailable">Nedostupné: zařízení nemá nastavený zámek obrazovky (PIN, vzor ani otisk prstu).</string>
+    <string name="settings_lock_delay_label">Zamknout po</string>
+    <string name="lock_delay_immediately">Ihned</string>
+    <string name="lock_delay_10s">10 sekundách</string>
+    <string name="lock_delay_30s">30 sekundách</string>
+    <string name="lock_delay_1m">1 minutě</string>
+    <string name="lock_delay_5m">5 minutách</string>
     <string name="error_app_lock_unavailable">Zařízení nemá nastavený PIN, vzor ani otisk prstu - zámek nelze zapnout.</string>
 
     <string name="settings_key_copy_label">Povolit kopírování klíče do schránky</string>

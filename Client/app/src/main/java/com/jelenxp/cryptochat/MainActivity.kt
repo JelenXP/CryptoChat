@@ -244,8 +244,6 @@ private fun extractSharedText(intent: Intent?): String? {
     return intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() }
 }
 
-private const val LOCK_GRACE_PERIOD_MS = 10_000L
-
 @Composable
 private fun AppLockGate(content: @Composable () -> Unit) {
     val context = LocalContext.current
@@ -266,7 +264,8 @@ private fun AppLockGate(content: @Composable () -> Unit) {
                 Lifecycle.Event.ON_START -> {
                     if (settingsRepository.isAppLockEnabled() && !needsUnlock && backgroundedAt != 0L) {
                         val elapsed = System.currentTimeMillis() - backgroundedAt
-                        if (elapsed >= LOCK_GRACE_PERIOD_MS) needsUnlock = true
+                        // Prodlevu čti čerstvě - uživatel ji mohl v nastavení změnit.
+                        if (elapsed >= settingsRepository.getLockDelay().millis) needsUnlock = true
                         backgroundedAt = 0L
                     }
                 }

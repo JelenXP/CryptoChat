@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.FeatureFlags
+import com.jelenxp.cryptochat.data.LockDelay
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.components.AppCard
@@ -78,6 +79,7 @@ fun SettingsScreen(navController: NavController) {
 
     var selectedLanguage by remember { mutableStateOf(currentLanguageChoice()) }
     var appLockEnabled by remember { mutableStateOf(settingsRepository.isAppLockEnabled()) }
+    var lockDelay by remember { mutableStateOf(settingsRepository.getLockDelay()) }
     var keyCopyAllowed by remember { mutableStateOf(settingsRepository.isKeyCopyAllowed()) }
     var updateCheckEnabled by remember { mutableStateOf(settingsRepository.isUpdateCheckEnabled()) }
     var updateSnoozeActive by remember {
@@ -190,6 +192,45 @@ fun SettingsScreen(navController: NavController) {
                 enabled = lockAvailable,
                 onCheckedChange = { changeAppLock(it) }
             )
+            // Prodleva zámku - za jak dlouho po odchodu na pozadí zamknout. Jen když
+            // je zámek zapnutý.
+            if (appLockEnabled) {
+                AppCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            stringResource(R.string.settings_lock_delay_label),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                        val delayOptions = listOf(
+                            LockDelay.IMMEDIATELY to stringResource(R.string.lock_delay_immediately),
+                            LockDelay.SEC_10 to stringResource(R.string.lock_delay_10s),
+                            LockDelay.SEC_30 to stringResource(R.string.lock_delay_30s),
+                            LockDelay.MIN_1 to stringResource(R.string.lock_delay_1m),
+                            LockDelay.MIN_5 to stringResource(R.string.lock_delay_5m)
+                        )
+                        delayOptions.forEach { (value, label) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .selectable(
+                                        selected = lockDelay == value,
+                                        onClick = { lockDelay = value; settingsRepository.setLockDelay(value) }
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = lockDelay == value,
+                                    onClick = { lockDelay = value; settingsRepository.setLockDelay(value) }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+            }
             ToggleSettingCard(
                 title = stringResource(R.string.settings_key_copy_label),
                 description = stringResource(R.string.settings_key_copy_description),
