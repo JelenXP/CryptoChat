@@ -79,11 +79,14 @@
             android:name=".chat.BootReceiver"
             android:enabled="true"
             android:exported="true">
+            <!-- Jen CHRÁNĚNÉ broadcasty (doručuje výhradně systém). QUICKBOOT_POWERON
+                 a com.htc.…QUICKBOOT_POWERON chráněné NEJSOU - libovolná appka je
+                 mohla poslat explicitním intentem a nastartovat Tor FGS (žrout
+                 baterie / prozrazení, že messenger běží). Proto odebrány; start po
+                 restartu zajistí BOOT_COMPLETED, po aktualizaci MY_PACKAGE_REPLACED. -->
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 

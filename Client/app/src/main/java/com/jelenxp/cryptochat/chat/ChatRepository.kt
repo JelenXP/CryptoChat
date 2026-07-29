@@ -470,7 +470,10 @@ class ChatRepository(
     }
 
     /** Nastaví počítadlo nepřečtených (použije se při obnově ze zálohy). */
-    fun setUnread(contactId: String, count: Int) {
+    fun setUnread(contactId: String, count: Int) = synchronized(lock) {
+        // Pod zámkem jako incrementUnread/markRead: obnova ze zálohy může běžet
+        // souběžně s incrementUnread z poll smyčky a bez zámku by si zápisy
+        // read-modify-write počítadla přepsaly (odznak by ukázal špatné číslo).
         prefs.edit().putInt(unreadKey(contactId), count.coerceAtLeast(0)).apply()
     }
 

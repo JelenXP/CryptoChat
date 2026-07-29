@@ -72,6 +72,14 @@ MAX_TOTAL_BYTES = int(os.environ.get("CC_MAX_TOTAL_BYTES", str(512 * 1024 * 1024
 # kontakt a rezervu: 512 vlaken notebook v pohode unese.
 MAX_CONNECTIONS = int(os.environ.get("CC_MAX_CONNECTIONS", "512"))
 
+# Strop SOUBEZNE blokujicich long-pollu. Long-poll GET drzi spojeni (a tim slot z
+# MAX_CONNECTIONS) az LONGPOLL_MAX sekund. Bez zvlastniho stropu by jediny klient
+# 512 soubeznymi ?wait GETy (nebo trickle PUT) obsadil VSECHNY sloty a odriznul
+# ostatni uzivatele. Proto se blokujici long-polly drzi pod timhle mensim stropem
+# (default polovina spojeni); zbyle sloty zustavaji volne pro rychle PUT/GET. Nad
+# strop se long-poll degraduje na neblokujici cteni (viz do_GET).
+MAX_LONGPOLL = int(os.environ.get("CC_MAX_LONGPOLL", str(max(1, MAX_CONNECTIONS // 2))))
+
 # Jednoduchy rate limit na klienta (pocet pozadavku za okno). Za Torem prichazi
 # vsichni z 127.0.0.1, takze je to ve skutecnosti JEDEN SPOLECNY kbelik pro
 # vsechny uzivatele - proti utocnikovi nechrani (ten ho jen vycerpa) a pri nizke
@@ -340,6 +348,21 @@ class RateLimiter:
             dq.append(now)
             return True
 
+    def prune(self):
+        """Odstrani klice s prazdnou (vyprsenou) frontou.
+
+        `allow` klic (IP) nikdy nemaze, jen orezava timestampy uvnitr fronty. Za
+        Torem je klic jediny (127.0.0.1), ale pri primem vystaveni (CC_HOST=0.0.0.0)
+        by _hits rostl s kazdou videnou IP donekonecna (botnet / velky IPv6 blok)
+        az k vycerpani pameti. Vola se periodicky z _purge_loop.
+        """
+        now = time.monotonic()
+        with self._lock:
+            dead = [k for k, dq in self._hits.items()
+                    if not dq or dq[-1] <= now - self._window]
+            for k in dead:
+                del self._hits[k]
+
 
 LIMITER = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
 
@@ -522,6 +545,22 @@ class RelayHandler(BaseHTTPRequestHandler):
         # Long-poll: s ?wait=<s> pockame, nez dorazi zprava (jinak hned vyzvedneme).
         wait_s = self._longpoll_seconds()
 
+        # Long-poll blokuje spojeni (a tim slot z MAX_CONNECTIONS) az wait_s sekund.
+        # Aby jediny klient zablokovanymi ?wait GETy neobsadil VSECHNY sloty a
+        # neodriznul ostatni, drzi se soubezne blokujici long-polly pod samostatnym
+        # mensim stropem (MAX_LONGPOLL). Kdyz je vycerpany, degradujeme na
+        # neblokujici cteni (wait=0): klient dostane hned prazdno a zkusi znovu,
+        # misto aby drzel slot 90 s. Rychle PUT/GET tak maji vzdy volny slot.
+        holding_longpoll = wait_s > 0 and self.server.acquire_longpoll_slot()
+        if wait_s > 0 and not holding_longpoll:
+            wait_s = 0
+        try:
+            self._serve_get(mid, wait_s)
+        finally:
+            if holding_longpoll:
+                self.server.release_longpoll_slot()
+
+    def _serve_get(self, mid, wait_s):
         # Rezim potvrzovaneho cteni (?ack=1): bloby se NEMAZOU, jen se vrati i s
         # poradovym cislem. Klient je smaze az potvrzenim (DELETE ...?upto=N),
         # tedy AZ kdyz je ma bezpecne ulozene. Bez toho by kazde spojeni prerusene
@@ -632,6 +671,13 @@ class RelayHandler(BaseHTTPRequestHandler):
             return
 
         blob = self.rfile.read(length)
+        if len(blob) != length:
+            # Klient slibil Content-Length, ale poslal min a zavrel spojeni. Bez
+            # kontroly by se ulozil USEKNUTY blob (zabral by slot v MAX_MAILBOX_BLOBS
+            # i misto az do TTL a prijemci by se nerozsifroval). _handle_report ma
+            # tuhle kontrolu taky.
+            self._send(400, b"short body\n", "text/plain", close=True)
+            return
         result = STORE.put(mid, blob)
         if result == "ok":
             self._send(204)
@@ -688,6 +734,7 @@ def _purge_loop(stop_event: threading.Event):
     while not stop_event.wait(30):
         try:
             STORE.purge_expired()
+            LIMITER.prune()
         except Exception:
             # Zamlcet a zkusit za 30 s znovu - dulezite je, ze vlakno zije dal.
             pass
@@ -707,6 +754,20 @@ class RelayServer(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+        # Samostatny, mensi strop na soubezne BLOKUJICI long-polly (viz do_GET a
+        # MAX_LONGPOLL) - aby jediny klient zablokovanymi ?wait GETy neobsadil
+        # vsechny sloty spojeni a neodriznul ostatni uzivatele.
+        self._longpoll_slots = threading.BoundedSemaphore(MAX_LONGPOLL)
+
+    def acquire_longpoll_slot(self) -> bool:
+        """Neblokujici pokus o slot pro blokujici long-poll. False = pool plny."""
+        return self._longpoll_slots.acquire(blocking=False)
+
+    def release_longpoll_slot(self):
+        try:
+            self._longpoll_slots.release()
+        except ValueError:
+            pass
 
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):

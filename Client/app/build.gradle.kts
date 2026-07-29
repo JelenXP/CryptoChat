@@ -73,10 +73,15 @@ android {
             // lze zvážit návrat na true.
             isMinifyEnabled = false
             isShrinkResources = false
-            // Podepisuje se vždy ostrým klíčem. Když keystore.properties chybí,
-            // build spadl už výš (viz signingConfigs) - žádný tichý fallback na
-            // debug podpis tady schválně není.
-            signingConfig = signingConfigs.getByName("release")
+            // Podepisuje se ostrým klíčem, KDYŽ existuje. `findByName` (ne
+            // `getByName`) schválně: `getByName` házelo výjimku i pro debug/test
+            // tasky (konfigurační fáze běží pro všechny tasky), takže `gradle
+            // testDebugUnitTest`/`assembleDebug` bez keystoru padaly v konfiguraci
+            // na "SigningConfig 'release' not found" - rozbité CI i čistý klon.
+            // Release BEZ keystoru pořád zastaví dřívější GradleException výše;
+            // sem se s chybějícím keystorem dostane jen debug/test, kde podpis
+            // nepotřebujeme a config prostě zůstane nenastavený.
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

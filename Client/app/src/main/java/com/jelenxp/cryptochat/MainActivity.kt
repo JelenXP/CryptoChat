@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
@@ -40,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.jelenxp.cryptochat.ui.components.LocalUiBlocked
+import com.jelenxp.cryptochat.ui.lock.LockGateLogic
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -258,16 +260,24 @@ private fun AppLockGate(content: @Composable () -> Unit) {
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
                     if (settingsRepository.isAppLockEnabled() && !needsUnlock) {
-                        backgroundedAt = System.currentTimeMillis()
+                        // Monotonní čas (nejde ovlivnit posunem hodin) - viz LockGateLogic.
+                        backgroundedAt = SystemClock.elapsedRealtime()
                     }
                 }
                 Lifecycle.Event.ON_START -> {
-                    if (settingsRepository.isAppLockEnabled() && !needsUnlock && backgroundedAt != 0L) {
-                        val elapsed = System.currentTimeMillis() - backgroundedAt
-                        // Prodlevu čti čerstvě - uživatel ji mohl v nastavení změnit.
-                        if (elapsed >= settingsRepository.getLockDelay().millis) needsUnlock = true
-                        backgroundedAt = 0L
+                    // Rozhodnutí je v čisté LockGateLogic (otestovatelné - LockGateLogicTest).
+                    // Prodlevu čti čerstvě, uživatel ji mohl v nastavení změnit.
+                    if (LockGateLogic.shouldLock(
+                            enabled = settingsRepository.isAppLockEnabled(),
+                            alreadyLocked = needsUnlock,
+                            backgroundedAt = backgroundedAt,
+                            now = SystemClock.elapsedRealtime(),
+                            delayMs = settingsRepository.getLockDelay().millis
+                        )
+                    ) {
+                        needsUnlock = true
                     }
+                    backgroundedAt = 0L
                 }
                 else -> {}
             }

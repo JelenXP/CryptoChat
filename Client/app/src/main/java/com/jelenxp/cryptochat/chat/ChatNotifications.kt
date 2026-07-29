@@ -30,11 +30,9 @@ object ChatNotifications {
     private const val CHANNEL_SERVICE_OLD = "relay_service"
     const val CHANNEL_MESSAGES = "chat_messages"
     const val CHANNEL_UPDATES = "app_updates"
-    const val SERVICE_NOTIFICATION_ID = 1001
-    private const val MESSAGE_NOTIFICATION_BASE = 2000
-    private const val UPDATE_NOTIFICATION_ID = 3001
-    // Vlastní pásmo pro notifikace o reakcích, ať nepřepisují notifikaci zpráv.
-    private const val REACTION_NOTIFICATION_BASE = 4000
+    // Pásma ID notifikací žijí v čistém (jednotkově testovatelném) NotificationIds.
+    const val SERVICE_NOTIFICATION_ID = NotificationIds.SERVICE
+    private const val UPDATE_NOTIFICATION_ID = NotificationIds.UPDATE
 
     /**
      * Context s jazykem zvoleným uživatelem. Notifikace vznikají mimo Compose,
@@ -232,7 +230,7 @@ object ChatNotifications {
 
     /** Stabilní ID notifikace o reakci (per-kontakt, vlastní pásmo). */
     private fun reactionNotificationId(contactId: String): Int =
-        REACTION_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF)
+        NotificationIds.reaction(contactId)
 
     /** Akce „Odpovědět" s inline RemoteInput - odešle NORMÁLNÍ zprávu. */
     private fun replyAction(context: Context, contactId: String): NotificationCompat.Action {
@@ -279,7 +277,7 @@ object ChatNotifications {
      * [cancelMessage] ho MUSÍ počítat odsud, jinak by se notifikace nedala zrušit.
      */
     fun messageNotificationId(contactId: String): Int =
-        MESSAGE_NOTIFICATION_BASE + (contactId.hashCode() and 0xFFFF)
+        NotificationIds.message(contactId)
 
     /**
      * Zruší notifikaci zpráv daného kontaktu. Volá se při otevření jeho konverzace:
