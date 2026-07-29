@@ -19,6 +19,21 @@ import java.util.UUID
  * uložení přijatých/odeslaných fotek do soukromého úložiště appky
  * (files/chat_media/) a jejich načtení k zobrazení. Fotky jsou tak jen na
  * zařízení, jiné aplikace je nevidí.
+ *
+ * **Model hrozby médií je SLABŠÍ než u textu zpráv a klíčů (nález A8, zatím
+ * nedořešeno).** Fotky i soubory tu leží v PLAINTEXTU - chrání je jen sandbox
+ * appky (izolace mezi aplikacemi), NE šifrování at rest. To znamená: útočník
+ * s rootem nebo forenzním obrazem ODEMČENÉHO zařízení je přečte přímo, přestože
+ * stejný obsah je v přenosu E2E šifrovaný a text zpráv i klíče kontaktů jsou at
+ * rest šifrované ([com.jelenxp.cryptochat.crypto.KeystoreCryptoHelper], jehož
+ * deklarovaný model hrozby zahrnuje root/ADB/forenzní nástroj). `allowBackup=false`
+ * a `FLAG_SECURE` tenhle vektor nekryjí.
+ *
+ * Plné šifrování médií at rest (přes [com.jelenxp.cryptochat.crypto.FileCryptoManager]
+ * device-lokálním klíčem, s fallbackem na legacy plaintext) je připravený follow-up:
+ * je to průřezová změna (save/decode, souborová roura v `MediaTransfers`/`RelaySync`,
+ * externí otevření přes dešifrování do temp, záloha/obnova, `AvatarStore`) a vyžaduje
+ * ověření na dvou zařízeních, proto se dělá samostatně, ne v rámci dávky oprav.
  */
 object ChatMediaStore {
 
