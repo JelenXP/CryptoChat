@@ -1816,9 +1816,13 @@ private fun MessageBubble(
                             when {
                                 // Ve výběrovém režimu má přednost přepnutí označení.
                                 onTap != null -> onTap()
-                                // Klepnutí na fotku (mimo výběr) ji otevře přes celou obrazovku.
-                                message.kind == ChatMessage.Kind.IMAGE && !deleted && onImageClick != null -> onImageClick()
+                                // NEúspěšná odchozí zpráva (i fotka): klepnutí = opakovat
+                                // odeslání. MUSÍ být PŘED větví fotky - jinak by u FAILED
+                                // fotky vyhrála „otevři fullscreen" a klepnutí na „opakovat"
+                                // by se ztratilo (nápověda „klepni pro opakování" by lhala).
                                 message.status == ChatMessage.Status.FAILED && outgoing -> onRetry()
+                                // Klepnutí na (doručenou) fotku ji otevře přes celou obrazovku.
+                                message.kind == ChatMessage.Kind.IMAGE && !deleted && onImageClick != null -> onImageClick()
                             }
                         }
                     ) else if (message.status == ChatMessage.Status.FAILED && outgoing)

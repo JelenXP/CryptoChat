@@ -5,7 +5,9 @@ import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
@@ -127,10 +129,15 @@ fun LockScreen(onUnlocked: () -> Unit) {
     LaunchedEffect(Unit) { tryUnlock() }
 
     Scaffold { padding ->
+        BoxWithConstraints(modifier = Modifier.padding(padding)) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                // Min. výška = obrazovka: krátký obsah zůstane vycentrovaný, ale při
+                // extrémním písmu / malé obrazovce jde doscrollovat k tlačítku
+                // Odemknout (jinak by ho `Arrangement.Center` mohl vytlačit mimo).
+                .heightIn(min = maxHeight)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -164,6 +171,7 @@ fun LockScreen(onUnlocked: () -> Unit) {
             }
 
             Button(onClick = { tryUnlock() }) { Text(stringResource(R.string.btn_unlock)) }
+        }
         }
     }
 }

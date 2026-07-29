@@ -13,6 +13,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Autorenew
@@ -188,10 +190,19 @@ fun BackgroundOnboardingScreen(onFinished: () -> Unit) {
                 }
             }
 
-            Column(
+            BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    // Min. výška = dostupná (vážená) oblast: krátký obsah kroku zůstane
+                    // vycentrovaný, dlouhý (delší překlad „proč") jde doscrollovat místo
+                    // aby ho `Arrangement.Center` ořízl mimo obrazovku.
+                    .heightIn(min = maxHeight),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -225,6 +236,7 @@ fun BackgroundOnboardingScreen(onFinished: () -> Unit) {
                         )
                     }
                 }
+            }
             }
 
             // Tlačítka.

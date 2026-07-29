@@ -37,10 +37,16 @@ fun UpdateScreen(
     onLater: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        BoxWithConstraints {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                // Min. výška = obrazovka: krátké oznámení zůstane vycentrované, ale
+                // dlouhé (novinky víc verzí, delší překlad) roste a scrolluje odshora.
+                // Bez tohohle dělal `Arrangement.Center` u dlouhého obsahu horní část
+                // nedostupnou - stejný bug jako v ChangelogScreen.
+                .heightIn(min = maxHeight)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -136,6 +142,7 @@ fun UpdateScreen(
             TextButton(onClick = onLater, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.btn_update_later))
             }
+        }
         }
     }
 }
