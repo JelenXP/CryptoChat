@@ -1373,14 +1373,18 @@ object RelaySync {
                 // teď.
                 when (result) {
                     is ChatEnvelope.Result.Ok -> {
+                        // ts přetížení = recency guard: přehraná stará (ale autentická)
+                        // zpráva nesmí zdegradovat minor/schopnosti protějška (downgrade
+                        // relayem, v horším případě strhnutí CAP_RECEIPTS → ztráta zpráv).
+                        val ts = result.content.timestamp
                         WireCompat.notePeer(
                             context, contact.id, result.senderMinor,
-                            result.maxMajor ?: WireCompat.UNKNOWN
+                            result.maxMajor ?: WireCompat.UNKNOWN, ts
                         )
-                        WireCompat.notePeerCapabilities(context, contact.id, result.capabilities)
+                        WireCompat.notePeerCapabilities(context, contact.id, result.capabilities, ts)
                     }
                     is ChatEnvelope.Result.Unsupported ->
-                        WireCompat.notePeerMinor(context, contact.id, result.senderMinor)
+                        WireCompat.notePeerMinor(context, contact.id, result.senderMinor, result.timestamp)
                     ChatEnvelope.Result.Unreadable -> Unit
                 }
                 // Rozumíme šifře, ale ne obsahu (novější funkce). Karanténa by

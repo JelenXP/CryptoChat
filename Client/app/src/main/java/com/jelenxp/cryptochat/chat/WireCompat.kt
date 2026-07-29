@@ -300,7 +300,16 @@ object WireCompat {
             // s falešnou verzí a natrvalo uživateli zobrazit „aktualizuj si
             // appku" - pěkný předstupeň sociálního inženýrství. Držíme ho proto
             // jen v paměti (do restartu procesu) a NEukládáme na disk.
-            rememberEphemeral(contactId, PeerVersion(major, UNKNOWN))
+            //
+            // Navíc: když už jsme od protějšku přečetli AUTENTICKOU zprávu (major
+            // je tedy známý), NEDOVOL neautentizovanému cizímu majoru ten stav
+            // přebít - jinak by relay opakovaným podvržením jednoho blobu při
+            // každém pollu držel falešný banner natrvalo (i když skutečné zprávy
+            // chodí správně). Ephemeral major si pamatujeme jen tehdy, když o
+            // protějšku ještě nic autentického nevíme (první kontakt).
+            if (peerVersion(context, contactId).major == UNKNOWN) {
+                rememberEphemeral(contactId, PeerVersion(major, UNKNOWN))
+            }
             return false
         }
         return true
@@ -311,6 +320,12 @@ object WireCompat {
      * tehdy je jisté, že major sedí a minor je pravý (autentizovaný GCM tagem).
      */
     fun notePeerMinor(context: Context, contactId: String, minor: Int) {
+        notePeer(context, contactId, minor, UNKNOWN)
+    }
+
+    /** [notePeerMinor] s recency guardem (viz [noteFresh]). Používá RelaySync. */
+    fun notePeerMinor(context: Context, contactId: String, minor: Int, ts: Long) {
+        if (!noteFresh(context, contactId, ts)) return
         notePeer(context, contactId, minor, UNKNOWN)
     }
 
@@ -331,6 +346,45 @@ object WireCompat {
                 maxMajor = if (maxMajor != UNKNOWN) maxMajor else cur.maxMajor
             )
         )
+    }
+
+    /** [notePeer] s recency guardem. Zastaralou (přehranou) zprávu ignoruje. */
+    fun notePeer(context: Context, contactId: String, minor: Int, maxMajor: Int, ts: Long) {
+        if (!noteFresh(context, contactId, ts)) return
+        notePeer(context, contactId, minor, maxMajor)
+    }
+
+    /**
+     * Nejvyšší autentizovaný timestamp zprávy, ze které jsme naposledy
+     * aktualizovali stav protějška. Recency guard proti downgrade útoku: relay
+     * může přehrát STAROU (ale autentickou) zprávu s nižším minorem / menší
+     * množinou schopností; bez tohohle by tím zdegradoval stav protějška - v horším
+     * případě strhl CAP_RECEIPTS → vypnuté doručenky a resend → tichá ztráta
+     * zprávy. Porovnává se autentizovaný ts z hlavičky, ne pořadí doručení.
+     */
+    private val noteTs = mutableMapOf<String, Long>()
+
+    /**
+     * Je zpráva s tímto autentizovaným [ts] aspoň tak nová jako poslední, ze které
+     * jsme aktualizovali stav? Pokud ano, posune vodoznak (na striktně větší) a
+     * vrátí true; starší (přehranou) zprávu odmítne (false), aby stav nesnížila.
+     */
+    private fun noteFresh(context: Context, contactId: String, ts: Long): Boolean {
+        val prev = noteTs[contactId] ?: try {
+            prefs(context).getLong(key(contactId, "notets"), Long.MIN_VALUE)
+        } catch (e: Exception) {
+            Long.MIN_VALUE
+        }
+        if (ts < prev) return false
+        if (ts > prev) {
+            noteTs[contactId] = ts
+            try {
+                prefs(context).edit().putLong(key(contactId, "notets"), ts).apply()
+            } catch (e: Exception) {
+                Log.w(TAG, "Uložení recency vodoznaku selhalo", e)
+            }
+        }
+        return true
     }
 
     /**
@@ -402,16 +456,25 @@ object WireCompat {
         }
     }
 
+    /** [notePeerCapabilities] s recency guardem. Zastaralou (přehranou) zprávu ignoruje. */
+    fun notePeerCapabilities(context: Context, contactId: String, caps: Set<Int>?, ts: Long) {
+        if (caps == null) return
+        if (!noteFresh(context, contactId, ts)) return
+        notePeerCapabilities(context, contactId, caps)
+    }
+
     /** Zapomene verzi i schopnosti kontaktu (při jeho smazání). */
     fun clear(context: Context, contactId: String) {
         versions.remove(contactId)
         peerCaps.remove(contactId)
+        noteTs.remove(contactId)
         try {
             prefs(context).edit()
                 .remove(key(contactId, "major"))
                 .remove(key(contactId, "minor"))
                 .remove(key(contactId, "maxmajor"))
                 .remove(key(contactId, "caps"))
+                .remove(key(contactId, "notets"))
                 .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Úklid stavu kompatibility selhal", e)

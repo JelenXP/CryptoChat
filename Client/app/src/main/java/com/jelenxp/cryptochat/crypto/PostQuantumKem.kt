@@ -50,7 +50,14 @@ object PostQuantumKem {
     private const val INFO_AES_KEY = "CryptoChat/message-key/AES-256-GCM/v1"
     private const val INFO_SAS = "CryptoChat/verification-code/SAS/v1"
     private const val AES_KEY_BYTES = 32
-    private const val SAS_BYTES = 6
+    // SAS = 8 bajtů = 64 bitů. Dřív 6 bajtů (48 bitů): u vzdáleného párování
+    // (RemoteInit/RemoteComplete přes asynchronní kanál) je SAS JEDINÁ obrana
+    // proti MITM a 2^48 grinding encapsulation randomness byl pro dobře vybaveného
+    // útočníka reálný (async kanál = neomezený čas). 64 bitů to posouvá do
+    // nepraktična. Konzistentní s DoubleRatchet.safetyNumber (128 b). SAS je
+    // doménově oddělený od šifrovacího klíče (INFO_SAS), takže změna délky mění
+    // JEN SAS, ne klíč - ale obě strany musí při párování běžet na stejné verzi.
+    private const val SAS_BYTES = 8
 
     data class KeyPairBase64(val publicKeyBase64: String, val privateKeyBase64: String)
 
