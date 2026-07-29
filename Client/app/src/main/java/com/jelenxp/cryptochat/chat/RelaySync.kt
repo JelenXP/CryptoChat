@@ -195,6 +195,13 @@ object RelaySync {
         text: String,
         replyToWireId: String? = null
     ): ChatMessage? {
+        // Strop délky (A11): přerostlý text by dal blob nad limit relaye a zůstal
+        // by navždy neodeslatelný (413 → FAILED → retry donekonečna). Radši vůbec
+        // neuložit; UI má stejný strop, takže sem se v praxi nedostane.
+        if (!textWithinRelayLimit(text)) {
+            DiagnosticsLog.warn(TAG, "text nad limitem ($MAX_TEXT_BYTES B), neodesílám")
+            return null
+        }
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             outgoing = true,
@@ -255,6 +262,8 @@ object RelaySync {
         }
         val now = System.currentTimeMillis()
         val repo = repoFor(context)
+        // Stav reakce PŘED pokusem - kvůli rollbacku, kdyby odeslání selhalo (A6).
+        val prior = repo.findByWireRef(contact.id, wireRef)?.reactions?.get(ChatMessage.REACTOR_ME)
         val stored = repo.setReaction(contact.id, wireRef, ChatMessage.REACTOR_ME, emoji, now)
         if (stored != ChatRepository.ReactionResult.APPLIED) {
             DiagnosticsLog.warn(TAG, "reakci se nepodařilo uložit ($stored)")
@@ -275,6 +284,13 @@ object RelaySync {
         } catch (e: Exception) {
             DiagnosticsLog.warn(TAG, "odeslání reakce selhalo (${e.javaClass.simpleName})")
             false
+        }
+        if (!delivered) {
+            // Odeslání selhalo a pro reakce NENÍ outbox (na rozdíl od zpráv),
+            // takže by u odesílatele trvale svítila reakce, kterou protějšek nikdy
+            // nedostane (trvalý desync, A6). Vrať lokální stav přesně na to, co
+            // bylo před pokusem - merge podle času by prostý revert neuměl.
+            repo.forceReaction(contact.id, wireRef, ChatMessage.REACTOR_ME, prior)
         }
         DiagnosticsLog.log(TAG, "odeslání reakce: ${if (delivered) "doručeno" else "selhalo"}")
         return if (delivered) ReactionSend.SENT else ReactionSend.FAILED
@@ -931,9 +947,17 @@ object RelaySync {
     ) {
         val peerSupportsReceipts = WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_RECEIPTS)
         if (!peerSupportsReceipts) return
+        // Prune mrtvých záznamů throttle mapy (A17): po give-up okně se zpráva už
+        // znovu neposílá (doručena, nebo vzdáno), takže záznam jen zabírá paměť
+        // v dlouhožijícím FGS. Bez toho mapa roste s každou SENT zprávou navždy.
+        receiptResendAt.entries.removeIf { receiptEntryExpired(now, it.value, RESEND_GIVE_UP_MS) }
         for (message in messages) {
+            // Stáří od skutečného ODESLÁNÍ (sentAt), ne od vzniku (timestamp) -
+            // jinak by zpráva dlouho uvízlá ve FAILED byla po odeslání hned za
+            // give-up stropem a resend síť by ji nepokryla (A13). Fallback na
+            // timestamp u starých zpráv bez sentAt.
             if (!receiptResendDue(
-                    message.status, now - message.timestamp, peerSupportsReceipts,
+                    message.status, now - (message.sentAt ?: message.timestamp), peerSupportsReceipts,
                     RESEND_AFTER_MS, RESEND_GIVE_UP_MS
                 )
             ) continue
@@ -2075,6 +2099,27 @@ internal fun receiptResendDue(
  */
 internal fun resendThrottleOk(now: Long, lastResendAt: Long?, intervalMs: Long): Boolean =
     lastResendAt == null || now - lastResendAt >= intervalMs
+
+/**
+ * Je záznam throttle mapy `receiptResendAt` mrtvý (starší než give-up okno)? Po
+ * něm se zpráva už znovu neposílá (doručena / vzdáno), takže záznam jen zabírá
+ * paměť v dlouhožijícím FGS - prune ho odstraní. Čistá funkce (A17).
+ */
+internal fun receiptEntryExpired(now: Long, lastResendAt: Long, giveUpAfterMs: Long): Boolean =
+    now - lastResendAt > giveUpAfterMs
+
+/** Strop délky textové zprávy v bajtech UTF-8 (viz [textWithinRelayLimit], A11). */
+internal const val MAX_TEXT_BYTES = 1_000_000
+
+/**
+ * Vejde se text pod strop pro relay? Přerostlý text (~2 MB+) by přes `bucketFor`
+ * vyrobil blob nad `RELAY_BLOB_LIMIT` (2 MB) → relay ho odmítne 413 → FAILED →
+ * každý retry pošle stejný přerostlý blob donekonečna. 1 MB je pro chatovou
+ * zprávu víc než dost a s velkou rezervou pod limitem blobu (viz ChatTextLimitTest).
+ * Čistá funkce (A11).
+ */
+internal fun textWithinRelayLimit(text: String): Boolean =
+    text.toByteArray(Charsets.UTF_8).size <= MAX_TEXT_BYTES
 
 /**
  * Směr schránky, na který strana POSÍLÁ, podle role při párování ([Contact.initiator]).

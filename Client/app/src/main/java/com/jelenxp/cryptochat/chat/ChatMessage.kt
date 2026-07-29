@@ -60,7 +60,17 @@ data class ChatMessage(
      * Text, média i reakce se přitom vyprázdní. Smazání je **terminální** -
      * pozdější úprava ani reakce ho už nevzkřísí (viz [MessageMutationMerge]).
      */
-    val deleted: Boolean = false
+    val deleted: Boolean = false,
+
+    /**
+     * Čas (epoch millis), kdy zpráva POPRVÉ přešla na [Status.SENT] (relay ji
+     * přijal), nebo `null`. Na rozdíl od [timestamp] (čas VZNIKU) měří okno pro
+     * znovuodeslání bez doručenky od skutečného odeslání: zpráva dlouho uvízlá ve
+     * FAILED (nedostupný relay) se po odeslání nesmí hned octnout za give-up
+     * stropem (viz `RelaySync.resendUndelivered`, nález A13). Stampuje se jen
+     * jednou - opakované přechody na SENT (resend) ho nepřepíší.
+     */
+    val sentAt: Long? = null
 ) {
     /**
      * Stavy odchozí zprávy: SENDING → SENT (doručeno na relay = jedna fajfka) →

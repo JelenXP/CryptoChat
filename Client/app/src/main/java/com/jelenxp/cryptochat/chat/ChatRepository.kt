@@ -103,6 +103,7 @@ class ChatRepository(
                         wireId = if (o.has("wid")) o.optString("wid") else null,
                         replyToWireId = if (o.has("rto")) o.optString("rto") else null,
                         editedAt = if (o.has("ed")) o.optLong("ed") else null,
+                        sentAt = if (o.has("sa")) o.optLong("sa") else null,
                         deleted = o.optBoolean("del", false),
                         reactions = readReactions(o.optJSONObject("rx"))
                     )
@@ -194,7 +195,14 @@ class ChatRepository(
                 when {
                     it.id != messageId -> it
                     it.status == ChatMessage.Status.DELIVERED && isOutgoingDowngrade(status) -> it
-                    else -> it.copy(status = status)
+                    else -> it.copy(
+                        status = status,
+                        // Čas prvního přechodu na SENT (A13): resend okno se počítá
+                        // od skutečného odeslání, ne od vzniku. Stampuje se jen jednou
+                        // (opakovaný SENT při resendu ho zachová).
+                        sentAt = if (status == ChatMessage.Status.SENT && it.sentAt == null)
+                            System.currentTimeMillis() else it.sentAt
+                    )
                 }
             }
             saveLocked(contactId, updated)
@@ -331,6 +339,34 @@ class ChatRepository(
             it[index] = message.copy(reactions = updated)
         })
         if (saved) ReactionResult.APPLIED else ReactionResult.FAILED
+    }
+
+    /**
+     * Vrátí reakci daného autora do explicitního [prior] stavu (nebo ji odstraní,
+     * když `prior == null`), BEZ merge podle času. Používá se k rollbacku po
+     * selhání odeslání: reakce se ukládá lokálně PŘED odesláním a pro reakce není
+     * outbox, takže při přechodném síťovém selhání by u odesílatele trvale svítila
+     * reakce, kterou protějšek nikdy nedostane (trvalý desync, nález A6). Rollback
+     * vrátí lokální stav přesně na to, co bylo před pokusem. Merge se obchází
+     * schválně - neúspěšný pokus měl novější timestamp, takže by ho běžný
+     * [setReaction] neuměl přebít zpátky.
+     */
+    fun forceReaction(
+        contactId: String,
+        wireRef: String,
+        reactor: String,
+        prior: ChatMessage.Reaction?
+    ): Boolean = synchronized(lock) {
+        val current = loadForWriteLocked(contactId) ?: return false
+        val index = current.indexOfFirst { it.wireRef == wireRef }
+        if (index < 0) return true   // zpráva mezitím zmizela - není co obnovovat
+        val message = current[index]
+        val updated = message.reactions.toMutableMap().apply {
+            if (prior == null) remove(reactor) else put(reactor, prior)
+        }
+        saveLocked(contactId, current.toMutableList().also {
+            it[index] = message.copy(reactions = updated)
+        })
     }
 
     /** Jak dopadlo nastavení reakce. */
@@ -543,6 +579,7 @@ class ChatRepository(
                             m.wireId?.let { put("wid", it) }
                             m.replyToWireId?.let { put("rto", it) }
                             m.editedAt?.let { put("ed", it) }
+                            m.sentAt?.let { put("sa", it) }
                             if (m.deleted) put("del", true)
                             if (m.reactions.isNotEmpty()) put("rx", writeReactions(m.reactions))
                         }
