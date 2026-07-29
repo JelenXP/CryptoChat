@@ -35,10 +35,17 @@ fun ChangelogScreen(entries: List<AppChangelog.Entry>, onDismiss: () -> Unit) {
         stringResource(R.string.changelog_title_multi)
     }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        BoxWithConstraints {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
+                // Min. výška = výška obrazovky. Krátké novinky tak zůstanou svisle
+                // vycentrované, ale jakmile obsah přeroste obrazovku, sloupec roste
+                // a normálně SCROLLUJE odshora. Bez tohohle dělal `Arrangement.Center`
+                // u dlouhého changelogu horní část nedostupnou - nešlo doscrollovat
+                // nahoru (obsah se vycentroval mimo scrollovací rozsah).
+                .heightIn(min = maxHeight)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -87,6 +94,7 @@ fun ChangelogScreen(entries: List<AppChangelog.Entry>, onDismiss: () -> Unit) {
             Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.btn_changelog_ok))
             }
+        }
         }
     }
 }
