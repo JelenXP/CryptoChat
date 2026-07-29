@@ -93,6 +93,18 @@ object ChatScreenLogic {
     fun sendBlockedByTrust(trustChanged: Boolean, acknowledged: Boolean): Boolean =
         trustChanged && !acknowledged
 
+    /**
+     * Jednotné rozhodnutí „smí se cokoli poslat protějšku?" (negace
+     * [sendBlockedByTrust]). Když se ověřenému kontaktu změní bezpečnostní kód,
+     * MUSÍ se zablokovat VŠECHNY odchozí cesty - nejen nová zpráva a příloha, ale
+     * i retry nepovedené zprávy, reakce, úprava, smazání pro všechny i fotka/soubor
+     * (nález A1: dřív se gatovalo jen tlačítko odeslat a příloha, takže ostatními
+     * cestami šlo protějšku s podvrženým klíčem odeslat obálku i s obsahem). Proto
+     * jediná funkce, kterou volají všechny odchozí cesty.
+     */
+    fun canSendOutbound(trustChanged: Boolean, acknowledged: Boolean): Boolean =
+        !sendBlockedByTrust(trustChanged, acknowledged)
+
     /** Výsledek dohledání citované zprávy. */
     data class Quote(
         /** Nalezená původní zpráva, nebo `null`. */

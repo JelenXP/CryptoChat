@@ -279,7 +279,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val canChat = hasKey && relayUrl.isNotBlank()
     // Odesílání (text i příloha) se blokuje, dokud se změna bezpečnostního kódu
     // vědomě nepotvrdí nebo kontakt znovu neověří.
-    val sendBlocked = ChatScreenLogic.sendBlockedByTrust(trustChanged, trustAcknowledged)
+    // Jediné rozhodnutí, kterým se gatují VŠECHNY odchozí cesty (A1).
+    val sendBlocked = !ChatScreenLogic.canSendOutbound(trustChanged, trustAcknowledged)
 
     // Předehřátí ODESÍLACÍHO Tor okruhu: jakmile uživatel začne psát (vstup přestane
     // být prázdný), postav dopředu okruh pro odesílací schránku, ať první PUT nečeká
@@ -472,6 +473,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         editing = null
     }
     fun sendCurrent() {
+        if (sendBlocked) return   // A1: trust změněn → žádná odchozí cesta (i z klávesnice)
         val text = input.trim()
         if (text.isEmpty() || contact == null) return
         // Režim úpravy: přepiš text existující zprávy místo poslání nové.
@@ -536,6 +538,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     val reactionsUnsupported = stringResource(R.string.chat_reactions_unsupported)
     /** Nastaví/zruší naši reakci (`next == null` = zrušit) a pošle ji. */
     fun applyReaction(message: ChatMessage, next: String?) {
+        if (sendBlocked) return   // A1
         val ref = message.wireRef ?: return
         if (contact == null) return
         selectedIds = emptySet()
@@ -548,6 +551,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             // uživatel nekouká na tlačítko, které nic neudělalo.
             if (result == RelaySync.ReactionSend.PEER_UNSUPPORTED) {
                 Toast.makeText(context, reactionsUnsupported, Toast.LENGTH_SHORT).show()
+            } else if (result == RelaySync.ReactionSend.FAILED) {
+                // Reakce se po síťovém selhání lokálně vrátila zpět (A6); refresh výš
+                // už revert ukázal, tady jen dej vědět, že se neodeslala.
+                Toast.makeText(context, messageFailed, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -576,6 +583,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
 
     /** Smaže vybrané MOJE zprávy pro všechny (náhrobek u mě i u protějšku). */
     fun deleteForEveryone(toDelete: List<ChatMessage>) {
+        if (sendBlocked) return   // A1: řídicí zpráva protějšku je taky odchozí cesta
         val c = contact ?: return
         scope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -604,6 +612,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     }
 
     fun retry(message: ChatMessage) {
+        if (sendBlocked) return   // A1: retry by odeslal plný obsah zprávy protějšku
         // Opakovat lze jen ODESLÁNÍ. Příchozí zpráva se přes `deliver` posílat
         // nemá - jen by se nesmyslně přepnula na SENDING a zpátky na FAILED.
         if (contact == null || !message.outgoing) return
@@ -618,6 +627,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // --- Posílání fotek ---
     val imageFailed = stringResource(R.string.chat_image_failed)
     fun sendImage(uri: Uri) {
+        if (sendBlocked) return   // A1
         if (contact == null) return
         cancelEditing()   // poslání fotky opustí režim úpravy (a vrátí rozepsaný koncept)
         scope.launch {
@@ -665,6 +675,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // --- Posílání souborů (video, dokumenty) po kouscích ---
     val fileFailed = stringResource(R.string.chat_file_failed)
     fun sendFile(uri: Uri) {
+        if (sendBlocked) return   // A1
         if (contact == null) return
         cancelEditing()   // poslání souboru opustí režim úpravy (a vrátí rozepsaný koncept)
         scope.launch {
@@ -949,7 +960,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                                     selected = m.id in selectedIds,
                                     // Pruh emoji jen když je vybraná JEN tahle jedna zpráva.
                                     showReactionPicker = selectedIds == setOf(m.id),
-                                    canReact = canChat && m.wireRef != null && !m.deleted,
+                                    canReact = canChat && m.wireRef != null && !m.deleted && !sendBlocked,
                                     selectionMode = selectedIds.isNotEmpty(),
                                     onSelect = { selectedIds = selectedIds + m.id },
                                     onTapInSelection = { selectedIds = ChatScreenLogic.toggleSelection(selectedIds, m.id) },
