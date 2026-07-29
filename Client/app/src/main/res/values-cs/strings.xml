@@ -196,6 +196,7 @@
     <string name="label_password_confirm">Potvrzení hesla</string>
     <string name="backup_password_warning">Heslo si dobře pamatuj — bez něj zálohu neobnovíš a nedá se nijak získat zpět.</string>
     <string name="error_passwords_dont_match">Hesla se neshodují.</string>
+    <string name="backup_password_too_short">Heslo musí mít alespoň 8 znaků.</string>
     <string name="error_backup_decrypt">Špatné heslo, nebo soubor není platná záloha.</string>
     <string name="error_export_failed">Export se nezdařil. Zkus to znovu.</string>
     <string name="error_import_failed">Soubor se nepodařilo načíst. Zkus to znovu.</string>

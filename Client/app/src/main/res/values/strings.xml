@@ -196,6 +196,7 @@
     <string name="label_password_confirm">Confirm password</string>
     <string name="backup_password_warning">Keep this password safe — without it the backup can\'t be restored, and there\'s no way to recover it.</string>
     <string name="error_passwords_dont_match">Passwords don\'t match.</string>
+    <string name="backup_password_too_short">Password must be at least 8 characters.</string>
     <string name="error_backup_decrypt">Wrong password, or the file is not a valid backup.</string>
     <string name="error_export_failed">Export failed. Please try again.</string>
     <string name="error_import_failed">Couldn\'t read the file. Please try again.</string>

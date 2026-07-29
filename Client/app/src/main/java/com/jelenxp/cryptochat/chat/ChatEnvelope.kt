@@ -15,8 +15,12 @@ import javax.crypto.spec.SecretKeySpec
  * Podporuje dva druhy (první bajt uvnitř šifry = KIND):
  *   - TEXT: doplněný (padding) na fixní „koš", aby ani délka neprozradila,
  *     jak dlouhá zpráva byla.
- *   - IMAGE: syrové bajty JPEG (bez paddingu - obrázek se posílá jako jeden blob,
- *     odesílatel ho komprimuje pod limit relaye).
+ *   - IMAGE: bajty JPEG, také zarovnané do koše ([MEDIA_BUCKETS]), aby relayi
+ *     neunikla ani přibližná velikost fotky. Odesílatel fotku komprimuje pod
+ *     limit relaye; horní koš médií je bezpečně pod ním.
+ *   - FILE_MANIFEST/FILE_CHUNK: manifest je drobný (padding do textových košů,
+ *     ať splyne s textovým provozem), kousky souboru do košů médií - jinak by
+ *     poslední (kratší) kousek prozradil přesnou velikost souboru.
  *
  * Formát otevřeného obsahu (uvnitř šifry, chráněný GCM tagem):
  *   [1B kind][1B minor][8B timestamp BE][4B délka dat BE][data][trailer?][(u textu) výplň nulami]
@@ -52,6 +56,17 @@ object ChatEnvelope {
 
     // Koše pro padding textu (bajty).
     private val BUCKETS = intArrayOf(256, 1024, 4096, 16_384, 65_536, 262_144)
+
+    // Koše pro padding médií (fotky, kousky souborů). Na rozdíl od textu mají
+    // STROP bezpečně pod limitem relaye: horní koš (1 966 080 B) + režie obálky
+    // (29 B: 1 major + 12 IV + 16 GCM tag) = 1 966 109 B < RELAY_BLOB_LIMIT (2 MB).
+    // Proto se nad horní koš NEzaokrouhluje na násobek (jako u textu) - fotka
+    // ~1,9 MB by spadla přesně na 2 MB a s obálkou by limit přetekla. Horní koš
+    // zároveň pobere největší reálný payload (MAX_BYTES fotka i CHUNK_SIZE kousek
+    // + hlavička/trailer); hlídá to ChatMediaStoreLimitTest.
+    private val MEDIA_BUCKETS = intArrayOf(
+        16_384, 65_536, 262_144, 524_288, 1_048_576, 1_572_864, 1_966_080
+    )
 
     /** Výsledek dešifrování - text, fotka, nebo manifest/kousek většího souboru. */
     sealed interface Opened {
@@ -182,10 +197,14 @@ object ChatEnvelope {
         return encrypt(buildImagePayload(jpeg, timestamp, msgId), keyBase64, dir)
     }
 
-    /** Vnitřní plaintext fotky (bez šifrování). */
+    /**
+     * Vnitřní plaintext fotky (bez šifrování), zarovnaný do koše médií. Výplň
+     * (nuly) leží ZA trailerem; příjemce ji ignoruje, protože čte přesně `len`
+     * bajtů dat a trailer je délkově ohraničený blok - úplně stejně jako u textu.
+     */
     internal fun buildImagePayload(jpeg: ByteArray, timestamp: Long, msgId: ByteArray?): ByteArray {
         val trailer = trailerFor(msgId)
-        val payload = ByteArray(HEADER + jpeg.size + trailer.size)
+        val payload = ByteArray(mediaBucketFor(HEADER + jpeg.size + trailer.size))
         writeHeader(payload, KIND_IMAGE, timestamp, jpeg.size)
         System.arraycopy(jpeg, 0, payload, HEADER, jpeg.size)
         System.arraycopy(trailer, 0, payload, HEADER + jpeg.size, trailer.size)
@@ -386,7 +405,10 @@ object ChatEnvelope {
         data.put(fileId).putInt(totalChunks).putLong(totalSize)
         data.putShort(mime.size.toShort()).put(mime)
         data.putShort(name.size.toShort()).put(name)
-        return buildRawPayload(KIND_FILE_MANIFEST, data.array(), timestamp)
+        // Manifest je drobný a jediné, co prozrazuje, je délka názvu/MIME - stačí
+        // ho zarovnat do textových košů (splyne tak s textovým provozem relaye).
+        val bytes = data.array()
+        return buildRawPayload(KIND_FILE_MANIFEST, bytes, timestamp, bucketFor(HEADER + bytes.size))
     }
 
     /** Jeden kousek souboru. Data: `[16B fileId][4B index][bajty]`. */
@@ -401,7 +423,12 @@ object ChatEnvelope {
         return encrypt(buildChunkPayload(fileId, index, chunk, timestamp), keyBase64, dir)
     }
 
-    /** Vnitřní plaintext kousku souboru (bez šifrování). */
+    /**
+     * Vnitřní plaintext kousku souboru (bez šifrování), zarovnaný do koše médií.
+     * Bez paddingu by poslední (kratší) kousek prozradil velikost souboru modulo
+     * velikost plného kousku; se zarovnáním relay vidí jen hrubý koš. Výplň leží
+     * za daty a příjemce ji ignoruje (čte přesně `len` bajtů).
+     */
     internal fun buildChunkPayload(
         fileId: ByteArray,
         index: Int,
@@ -410,7 +437,8 @@ object ChatEnvelope {
     ): ByteArray {
         val data = ByteBuffer.allocate(FILE_ID_BYTES + 4 + chunk.size)
         data.put(fileId).putInt(index).put(chunk)
-        return buildRawPayload(KIND_FILE_CHUNK, data.array(), timestamp)
+        val bytes = data.array()
+        return buildRawPayload(KIND_FILE_CHUNK, bytes, timestamp, mediaBucketFor(HEADER + bytes.size))
     }
 
     /**
@@ -431,9 +459,13 @@ object ChatEnvelope {
         return padded
     }
 
-    /** Vnitřní plaintext obecné zprávy typu [kind] s daty (bez šifrování). */
-    private fun buildRawPayload(kind: Byte, data: ByteArray, timestamp: Long): ByteArray {
-        val payload = ByteArray(HEADER + data.size)
+    /**
+     * Vnitřní plaintext obecné zprávy typu [kind] s daty, zarovnaný na
+     * [paddedSize] (nuly za daty). [paddedSize] musí být >= `HEADER + data.size`;
+     * `coerceAtLeast` je jen pojistka pro případ, že by koš byl menší (nemá nastat).
+     */
+    private fun buildRawPayload(kind: Byte, data: ByteArray, timestamp: Long, paddedSize: Int): ByteArray {
+        val payload = ByteArray(paddedSize.coerceAtLeast(HEADER + data.size))
         writeHeader(payload, kind, timestamp, data.size)
         System.arraycopy(data, 0, payload, HEADER, data.size)
         return payload
@@ -834,5 +866,20 @@ object ChatEnvelope {
         // ale zbytek formátu je proti přetečení bráněný, ať to nevyčnívá.
         if (size > Int.MAX_VALUE - top) return Int.MAX_VALUE
         return ((size + top - 1) / top) * top
+    }
+
+    /**
+     * Nejbližší koš médií >= [size]. Na rozdíl od [bucketFor] se NAD horní koš
+     * NEzaokrouhluje na násobek - vrací [size] beze změny (tedy bez paddingu).
+     * Důvod: násobení horního koše by u fotky ~1,9 MB spadlo přesně na 2 MB a
+     * s režií obálky by přeteklo limit relaye. Horní koš je schválně dost velký,
+     * aby pobral největší reálné médium (MAX_BYTES fotka i CHUNK_SIZE kousek
+     * s hlavičkou/trailerem), takže se do „size beze změny" nikdy nespadne;
+     * hlídá to ChatMediaStoreLimitTest. Kdyby přesto (např. po zvýšení konstant),
+     * je nezarovnaný blob pořád lepší než blob nad limitem, který relay odmítne.
+     */
+    // internal kvůli přímému testu stropu i chování nad ním.
+    internal fun mediaBucketFor(size: Int): Int {
+        return MEDIA_BUCKETS.firstOrNull { it >= size } ?: size
     }
 }

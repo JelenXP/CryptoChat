@@ -223,7 +223,13 @@ private fun PasswordDialog(
     var confirm by remember { mutableStateOf("") }
 
     val matches = !confirmField || password == confirm
-    val valid = password.isNotEmpty() && matches
+    // Minimální délka hesla se vynucuje jen při VYTVÁŘENÍ zálohy (export -
+    // confirmField). Delší heslo = pomalejší prolomení, takže i případný únik
+    // zašifrované zálohy je těžší rozlousknout. Při IMPORTU se nevynucuje: stará
+    // záloha mohla vzniknout s kratším heslem a musí jít pořád načíst.
+    val minPasswordLength = 8
+    val longEnough = !confirmField || password.length >= minPasswordLength
+    val valid = password.isNotEmpty() && longEnough && matches
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -239,6 +245,13 @@ private fun PasswordDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (confirmField && password.isNotEmpty() && password.length < minPasswordLength) {
+                    Text(
+                        stringResource(R.string.backup_password_too_short),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 if (confirmField) {
                     OutlinedTextField(
                         value = confirm,
