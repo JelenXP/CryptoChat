@@ -21,10 +21,15 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
+        // JEN chráněné (protected) broadcasty, které umí poslat výhradně systém.
+        // QUICKBOOT_POWERON (ani HTC varianta) chráněné NEJSOU: přijímač je
+        // exported, takže cizí appka je může doručit EXPLICITNÍM intentem (ten
+        // obchází intent-filter úplně) a nastartovat Tor FGS - žrout baterie a
+        // prozrazení, že messenger na zařízení běží. Kód je jediná skutečná brána,
+        // takže guard musí QUICKBOOT odmítnout, ne jen jeho odebrání z filtru
+        // (re-audit #4). BOOT_COMPLETED / MY_PACKAGE_REPLACED chráněné jsou a stačí.
         if (action != Intent.ACTION_BOOT_COMPLETED &&
-            action != Intent.ACTION_MY_PACKAGE_REPLACED &&
-            action != QUICKBOOT_POWERON &&
-            action != HTC_QUICKBOOT_POWERON
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
 
         try {
@@ -42,7 +47,5 @@ class BootReceiver : BroadcastReceiver() {
 
     companion object {
         private const val TAG = "BootReceiver"
-        private const val QUICKBOOT_POWERON = "android.intent.action.QUICKBOOT_POWERON"
-        private const val HTC_QUICKBOOT_POWERON = "com.htc.intent.action.QUICKBOOT_POWERON"
     }
 }

@@ -1407,8 +1407,19 @@ object RelaySync {
                         )
                         WireCompat.notePeerCapabilities(context, contact.id, result.capabilities, ts)
                     }
-                    is ChatEnvelope.Result.Unsupported ->
-                        WireCompat.notePeerMinor(context, contact.id, result.senderMinor, result.timestamp)
+                    is ChatEnvelope.Result.Unsupported -> {
+                        // I řídicí zprávu, kterou neumíme, protějšek autentizovaně
+                        // opatřil minorem, maxMajorem i bitmapou schopností - zaznamenej
+                        // je VŠECHNY (ne jen minor), ať se capability-gate ani major
+                        // migrace nezaseknou jen proto, že tahle zpráva nese neznámou
+                        // funkci (re-audit #9).
+                        val ts = result.timestamp
+                        WireCompat.notePeer(
+                            context, contact.id, result.senderMinor,
+                            result.maxMajor ?: WireCompat.UNKNOWN, ts
+                        )
+                        WireCompat.notePeerCapabilities(context, contact.id, result.capabilities, ts)
+                    }
                     ChatEnvelope.Result.Unreadable -> Unit
                 }
                 // Rozumíme šifře, ale ne obsahu (novější funkce). Karanténa by

@@ -496,7 +496,12 @@ class ChatRepository(
     fun incrementUnread(contactId: String) = synchronized(lock) {
         // Čtení a zápis musí být atomické, jinak se souběžné inkrementy překryjí
         // a odznak ukáže míň nepřečtených, než kolik jich doopravdy přišlo.
-        prefs.edit().putInt(unreadKey(contactId), getUnreadCount(contactId) + 1).apply()
+        // commit() (durabilní), ne apply(): historie zprávy se ukládá commitem, a
+        // když se FGS proces zabije mezi ním a async apply(), počítadlo by regredovalo
+        // (odznak by ukázal míň, než kolik zpráv přišlo) (re-audit #11). Běží v poll
+        // smyčce na IO vlákně, takže synchronní zápis neblokuje UI.
+        prefs.edit().putInt(unreadKey(contactId), getUnreadCount(contactId) + 1).commit()
+        Unit
     }
 
     /** Označí konverzaci za přečtenou (volá se při otevření chatu). */
@@ -510,7 +515,9 @@ class ChatRepository(
         // Pod zámkem jako incrementUnread/markRead: obnova ze zálohy může běžet
         // souběžně s incrementUnread z poll smyčky a bez zámku by si zápisy
         // read-modify-write počítadla přepsaly (odznak by ukázal špatné číslo).
-        prefs.edit().putInt(unreadKey(contactId), count.coerceAtLeast(0)).apply()
+        // commit() (durabilní) jako incrementUnread - obnova běží na IO vlákně (re-audit #11).
+        prefs.edit().putInt(unreadKey(contactId), count.coerceAtLeast(0)).commit()
+        Unit
     }
 
     /** Přepíše celou historii konverzace (použije se při obnově ze zálohy). */
@@ -527,12 +534,16 @@ class ChatRepository(
      * seřadí podle času. Tím obnova nikdy nezahodí zprávy přijaté PO vytvoření
      * zálohy - dřív [restore] celou konverzaci přepsal a novější zprávy zmizely.
      *
-     * Když stávající historii nejde přečíst, spadne zpět na přepis (lepší obnovit
-     * aspoň zálohu než nic).
+     * Když stávající historii nejde PŘEČÍST (null = přechodné selhání Keystore),
+     * obnova SELŽE (vrátí false), NEpřepisuje. `readFromDisk` vrací pro chybějící
+     * historii `emptyList`, ne null, takže obnova na čistém zařízení sem nespadne
+     * (jde normální merge cestou) - null je opravdu jen „klíč na disku je, ale
+     * nejde dešifrovat". Přepsat taková data zálohou by zahodilo reálné, jen
+     * dočasně nečitelné zprávy (re-audit #7, invariant „null-read nikdy nepřepisuje").
      */
     fun restoreMerging(contactId: String, backup: List<ChatMessage>): Boolean = synchronized(lock) {
         val existing = loadForWriteLocked(contactId)
-            ?: return@synchronized saveLocked(contactId, backup.distinctBy { it.id })
+            ?: return@synchronized false
         val seenIds = existing.mapTo(HashSet()) { it.id }
         val seenWire = existing.mapNotNullTo(HashSet()) { it.wireId }
         val merged = ArrayList(existing)
@@ -589,7 +600,17 @@ class ChatRepository(
             // commit(), ne apply(): příchozí zprávu už relay smazal, takže
             // asynchronní zápis by ji při zabití procesu ztratil nenávratně.
             // Jsme na IO vlákně, takže synchronní zápis nikoho neblokuje.
-            prefs.edit().putString(key(contactId), encrypted).commit()
+            val committed = prefs.edit().putString(key(contactId), encrypted).commit()
+            if (!committed) {
+                // commit() vrátil false (plný disk / poškozený prefs) BEZ výjimky.
+                // NESMÍME tvrdit úspěch: volající by ACKnul příchozí blob relayi, ten
+                // by ho smazal, a po restartu procesu (cache je jen v paměti) by zpráva
+                // zmizela nenávratně (re-audit HIGH). Zahoď cache a vrať false, ať se
+                // dávka nepotvrdí - přesně jako RatchetStore.save.
+                cache.remove(contactId)
+                Log.e(TAG, "commit() historie vrátil false (disk/prefs) - zápis NEpotvrzen")
+                return false
+            }
             cache[contactId] = messages
             _changes.tryEmit(contactId)
             true

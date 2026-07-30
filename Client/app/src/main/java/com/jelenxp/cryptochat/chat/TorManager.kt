@@ -121,6 +121,13 @@ object TorManager {
         }
     }
 
-    /** Je cílový host `.onion` (má se jít přes Tor)? */
-    fun isOnion(host: String): Boolean = host.endsWith(".onion", ignoreCase = true)
+    /**
+     * Je cílový host `.onion` (má se jít přes Tor)? Před testem se odříznou
+     * KONCOVÉ TEČKY: FQDN s koncovou tečkou (`xxx.onion.`) by jinak testem
+     * neprošel a spadl by do PŘÍMÉ clearnet větve → lokální DNS resolve + connect
+     * z reálné IP = deanonymizace onion adresy, přesně to, čemu má appka bránit
+     * (re-audit #2). Rozhodnutí je tak fail-safe vůči normalizaci hostname.
+     */
+    fun isOnion(host: String): Boolean =
+        host.trimEnd('.').endsWith(".onion", ignoreCase = true)
 }

@@ -369,7 +369,19 @@ object WireCompat {
      * jsme aktualizovali stav? Pokud ano, posune vodoznak (na striktně větší) a
      * vrátí true; starší (přehranou) zprávu odmítne (false), aby stav nesnížila.
      */
+    /**
+     * Tolerance hodin protějšku pro recency vodoznak (1 h). Přes ni je ts
+     * nedůvěryhodně v budoucnu (rozbité hodiny / NTP glitch) a nesmí posunout
+     * vodoznak. Legitimní rozdíl hodin dvou telefonů jsou vteřiny až minuty.
+     */
+    private const val NOTE_TS_FUTURE_SKEW_MS = 60L * 60 * 1000
+
     private fun noteFresh(context: Context, contactId: String, ts: Long): Boolean {
+        // Implausibilně budoucí ts: zprávu ZPRACUJ (je autentizovaná, caps/minor
+        // chceme), ale NEPOSOUVEJ podle ní vodoznak - jinak by jediná zpráva
+        // z „roku 2099" zmrazila sledování schopností/verze až do té doby a zrušila
+        // downgrade obranu, kvůli které vodoznak vznikl (re-audit #8).
+        if (ts > System.currentTimeMillis() + NOTE_TS_FUTURE_SKEW_MS) return true
         val prev = noteTs[contactId] ?: try {
             prefs(context).getLong(key(contactId, "notets"), Long.MIN_VALUE)
         } catch (e: Exception) {

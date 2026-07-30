@@ -42,7 +42,14 @@ android {
         // která drží klíče a historii na zařízení, nebezpečné: takové APK se nedá
         // aktualizovat přes to podepsané ostrým klíčem (jiný podpis = nutná
         // odinstalace = ztráta všech dat). Radši build rovnou zastav.
-        val wantsRelease = gradle.startParameter.taskNames.any { it.contains("Release") }
+        // Pozor: agregátní tasky (`build`, `assemble`, `bundle` bez sufixu build-typu)
+        // sestaví i RELEASE variantu, ale řetězec „Release" v názvu nemají - guard by
+        // se nespustil a vznikl by nepodepsaný release APK místo dokumentovaného
+        // tvrdého stopu (re-audit #14). Proto je chytáme zvlášť.
+        val wantsRelease = gradle.startParameter.taskNames.any { name ->
+            val task = name.substringAfterLast(':')   // odřízni cestu modulu (:app:build)
+            task.contains("Release") || task == "build" || task == "assemble" || task == "bundle"
+        }
         if (!keystorePropsFile.exists() && wantsRelease) {
             throw GradleException(
                 "Chybí keystore.properties - release APK by se podepsalo DEBUG klíčem " +

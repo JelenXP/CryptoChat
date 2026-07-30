@@ -50,6 +50,15 @@ object DiagnosticsLog {
     /** Onion adresy v cizích textech (typicky logy Toru) - nesmí se zapsat. */
     private val ONION_RE = Regex("[a-z2-7]{16,56}\\.onion", RegexOption.IGNORE_CASE)
 
+    /** Fingerprint Tor rele (`$` + 40 hex) - Tor SafeLogging je NEscrubuje (re-audit #12). */
+    private val FINGERPRINT_RE = Regex("\\$[A-Fa-f0-9]{40}")
+
+    /** IPv4 (guard/rele v logu Toru). Hrubě - občasná redakce čísla verze je přijatelná daň. */
+    private val IPV4_RE = Regex("\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b")
+
+    /** IPv6 (≥3 dvojtečkové skupiny, ať se netrefí do časů `12:34:56` se 2 dvojtečkami). */
+    private val IPV6_RE = Regex("\\b(?:[A-Fa-f0-9]{0,4}:){3,}[A-Fa-f0-9]{0,4}\\b")
+
     fun log(tag: String, message: String) = add(Level.INFO, tag, message)
 
     fun warn(tag: String, message: String) = add(Level.WARN, tag, message)
@@ -97,8 +106,18 @@ object DiagnosticsLog {
     }
 
     /**
-     * Odstraní z cizího textu `.onion` adresy. Používá se u řádků, které appka
-     * sama nesložila (logy Toru) - ty by jinak mohly adresu relaye vypsat.
+     * Odstraní z cizího textu citlivá Tor metadata: `.onion` adresy, fingerprinty
+     * rele (`$…`) a IP adresy (IPv4/IPv6). Používá se u řádků, které appka sama
+     * nesložila (logy Toru) a které mohou skončit v dobrovolném hlášení chyby
+     * odeslaném operátorovi relaye - ten je v modelu hrozby nedůvěryhodný, takže
+     * mu nesmí protéct semi-persistentní korelátory jako guard IP / fingerprint
+     * (re-audit #12).
      */
-    fun redact(text: String): String = ONION_RE.replace(text, "<onion>")
+    fun redact(text: String): String {
+        var out = ONION_RE.replace(text, "<onion>")
+        out = FINGERPRINT_RE.replace(out, "<fp>")
+        out = IPV6_RE.replace(out, "<ip>")
+        out = IPV4_RE.replace(out, "<ip>")
+        return out
+    }
 }

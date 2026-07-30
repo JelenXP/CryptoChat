@@ -60,6 +60,14 @@ DRAIN_CAP = int(os.environ.get("CC_DRAIN_CAP", str(8 * 1024 * 1024)))          #
 # nez si prijemce stihne vyzvednout).
 MAX_MAILBOX_BLOBS = int(os.environ.get("CC_MAX_MAILBOX_BLOBS", "200"))
 
+# Strop na POCET schranek. MAX_TOTAL_BYTES scita jen len(blob), ale kazda schranka
+# ma ~1 kB Python rezie (dict/deque/tuple/klic), ktera se nikam nezapocitava.
+# Utocnik znajici onion adresu (zadna autorizace zapisu) tak 1bajtovymi bloby na
+# tisice ruznych ID nafoukne pocet schranek do GB skutecne RAM, zatimco _total_bytes
+# hlasi kB a eviction se NIKDY nespusti -> OOM (re-audit #5). 50k schranek ~ ~50 MB
+# rezie; realny provoz jich ma rady mensi (par na aktivni par kontaktu a epochu).
+MAX_BOXES = int(os.environ.get("CC_MAX_BOXES", "50000"))
+
 # Za jak dlouho nevyzvednuta schranka expiruje (sekundy).
 TTL_SECONDS = int(os.environ.get("CC_TTL_SECONDS", str(24 * 3600)))            # 24 h
 
@@ -197,6 +205,13 @@ class MailboxStore:
                 return "full"
             box = self._boxes.get(mailbox_id)
             if box is None:
+                # Strop na POCET schranek (re-audit #5): pri dosazeni obetuj
+                # nejstarsi schranky, jinak by _total_bytes-based eviction u samych
+                # malych blobu nikdy nesplnila a pamet by rostla do OOM.
+                if len(self._boxes) >= MAX_BOXES:
+                    self._evict_boxes_locked()
+                if len(self._boxes) >= MAX_BOXES:
+                    return "full"
                 box = {"blobs": deque(), "expires": now + TTL_SECONDS}
                 self._boxes[mailbox_id] = box
             if len(box["blobs"]) >= MAX_MAILBOX_BLOBS:
@@ -298,6 +313,24 @@ class MailboxStore:
         #    plna schranka vratila 'box_full' (409 = viditelny FAIL) driv nez eviction.
         for mid, _box in sorted(self._boxes.items(), key=lambda kv: kv[1]["expires"]):
             if self._total_bytes <= target:
+                break
+            self._drain_locked(mid)
+
+    def _evict_boxes_locked(self):
+        """Sniz POCET schranek pod strop MAX_BOXES zahozenim nejstarsich (podle
+        expirace). Vola se uz drzici self._cond. Nejdriv expirovane (zadna ziva
+        zprava se neztrati), pak nejstarsi zive (posledni pojistka proti OOM,
+        symetricky k _evict_locked). Uklidi s rezervou, at se neuklizi pri kazdem PUT."""
+        target = MAX_BOXES * 9 // 10
+        if len(self._boxes) <= target:
+            return
+        now = time.monotonic()
+        for mid in [m for m, b in list(self._boxes.items()) if b["expires"] <= now]:
+            if len(self._boxes) <= target:
+                return
+            self._drain_locked(mid)
+        for mid, _box in sorted(self._boxes.items(), key=lambda kv: kv[1]["expires"]):
+            if len(self._boxes) <= target:
                 break
             self._drain_locked(mid)
 

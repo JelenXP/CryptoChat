@@ -502,7 +502,13 @@ object ChatEnvelope {
          * takže tu není žádný obsah pro uživatele. Odkládat ji do karantény by
          * znamenalo 30 dní zbytečných pokusů o něco, co je stejně jen ozdoba.
          */
-        data class Unsupported(val senderMinor: Int, val timestamp: Long = 0L) : Result
+        data class Unsupported(
+            val senderMinor: Int,
+            val timestamp: Long = 0L,
+            /** Autentizovaně inzerovaný maxMajor/schopnosti - i neznámá řídicí zpráva je nese. */
+            val maxMajor: Int? = null,
+            val capabilities: Set<Int>? = null
+        ) : Result
 
         /**
          * **Nejde přečíst TEĎ.** Cizí klíč, poškození, jiné rozložení hlavičky,
@@ -653,7 +659,7 @@ object ChatEnvelope {
                     }
                 }
             }
-            return Result.Unsupported(senderMinor, timestamp)
+            return Result.Unsupported(senderMinor, timestamp, trailer?.maxMajor, trailer?.capabilities)
         }
 
         val content: Opened? = when (kind) {
