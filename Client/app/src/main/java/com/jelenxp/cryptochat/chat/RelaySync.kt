@@ -1882,11 +1882,20 @@ object RelaySync {
             // dešifrovatelnost backfill blobů NEzávisí na LOOKAHEAD, ale na tom, že
             // skipped-store pořád drží klíče pro NEJNIŽŠÍ dočítané msgNo. `boundSkipped`
             // ořezává na SKIP_MAX a odhazuje nejnižší (gen,msgNo) první - přesně ty,
-            // co backfill (odspodu nahoru) potřebuje. Skutečná invarianta: celá díra
-            // `(recvEpoch - backfillFloor)*EPOCH_MSGS <= SKIP_MAX`. Drží ji `recvKey`,
-            // který skok > SKIP_MAX odmítne (SkipTooLarge → karanténa, recvEpoch se
-            // neposune), takže díra nikdy nepřeroste SKIP_MAX. Kdyby někdo snížil
-            // SKIP_MAX nebo zvýšil EPOCH_MSGS, tahle mez se musí přepočítat.
+            // co backfill (odspodu nahoru) potřebuje.
+            //
+            // INVARIANT (nález 2026-07-29-v2.3-RA3): skipped-store nesmí přerůst
+            // SKIP_MAX, jinak `boundSkipped` evikuje ty nejnižší (backfill-potřebné)
+            // klíče → jejich bloby spadnou v recvKey do AlreadyConsumed, poll je ACKne
+            // a relay smaže = tichá ztráta. Mezera se AKUMULUJE přes víc pollů (leap +
+            // částečný backfill + další leap), takže to NENÍ prostý vztah konstant
+            // `(recvEpoch - backfillFloor)*EPOCH_MSGS <= SKIP_MAX` - naivní hlídací
+            // test tvaru `SKIP_MAX >= f(EPOCH_MSGS, LOOKAHEAD)` by byl ŠPATNĚ. Invariant
+            // teď VYNUCUJE `recvKey` běhově (`DoubleRatchet.wouldOverfillSkipped`):
+            // leap, který by store přeplnil, odmítne (SkipTooLarge → karanténa,
+            // recvEpoch se NEposune); backfill store sníží a příště se leap vejde
+            // (self-healing). Kryto `DoubleRatchetTest` (invariant recvKey) +
+            // `RatchetPipelineTest.dvaLeapy_sBackfillem_neztratiZadnouZpravu` (roura).
             run {
                 val cur = ratchetStore.load(contact.id) ?: ratchetState
                 val recvNow = cur.recvEpoch

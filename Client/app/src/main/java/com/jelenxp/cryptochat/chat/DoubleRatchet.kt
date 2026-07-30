@@ -182,6 +182,10 @@ object DoubleRatchet {
         if (generation == state.generation) {
             if (msgNo < state.recvMsgNo) return RecvStep.AlreadyConsumed
             if (msgNo - state.recvMsgNo > SKIP_MAX) return RecvStep.SkipTooLarge
+            // KUMULATIVNÍ strop (nález 2026-07-29-v2.3-RA3): jeden leap hlídá řádek
+            // výš, ale mezera se AKUMULUJE přes víc pollů. Když by přírůstek přeplnil
+            // skipped-store, karanténa místo consume - viz [wouldOverfillSkipped].
+            if (wouldOverfillSkipped(state.skipped.size, msgNo - state.recvMsgNo)) return RecvStep.SkipTooLarge
             val adv = advanceChain(
                 state.recvChainKeyB64 ?: error("přijímací řetěz není inicializovaný"),
                 state.recvMsgNo, msgNo, epoch, generation
@@ -200,6 +204,9 @@ object DoubleRatchet {
         if (generation == state.prevRecvGeneration && state.prevRecvChainKeyB64 != null) {
             if (msgNo < state.prevRecvMsgNo) return RecvStep.AlreadyConsumed
             if (msgNo - state.prevRecvMsgNo > SKIP_MAX) return RecvStep.SkipTooLarge
+            // Kumulativní strop i pro grace řetěz předchozí generace (viz [wouldOverfillSkipped]):
+            // i tahle větev sype do TÉHOŽ skipped-store, takže může vyvolat eviction.
+            if (wouldOverfillSkipped(state.skipped.size, msgNo - state.prevRecvMsgNo)) return RecvStep.SkipTooLarge
             val adv = advanceChain(state.prevRecvChainKeyB64, state.prevRecvMsgNo, msgNo, epoch, generation)
             return RecvStep.Key(adv.aesKey, adv.iv, state.copy(
                 prevRecvChainKeyB64 = adv.nextChainKeyB64,
@@ -249,9 +256,36 @@ object DoubleRatchet {
     }
 
     /**
+     * Přeplnil by přírůstek [gap] přeskočených klíčů skipped-store nad [SKIP_MAX]?
+     *
+     * **Proč (nález 2026-07-29-v2.3-RA3):** [boundSkipped] evikuje NEJNIŽŠÍ
+     * (generace, msgNo) klíče - jenže právě ty potřebuje `RelaySync` backfill
+     * nižších epoch (dočítá schránky odspodu nahoru, klíč bere ze skipped-store).
+     * Eviction potřebného klíče = jeho blob v [recvKey] spadne do
+     * [RecvStep.AlreadyConsumed], poll ho ACKne a relay ho SMAŽE → nenávratná
+     * tichá ztráta. Jeden leap sice hlídá strop `msgNo - recvMsgNo <= SKIP_MAX`,
+     * jenže mezera se AKUMULUJE přes víc pollů: leap (naplní store) → částečný
+     * backfill (store nestihne dojet) → další leap → součet přeteče SKIP_MAX.
+     * Skutečný invariant proto NENÍ prostý vztah konstant
+     * (SKIP_MAX/EPOCH_MSGS/LOOKAHEAD), ale běhová podmínka na velikost store:
+     * `skipped.size + gap <= SKIP_MAX` (přesně tehdy [boundSkipped] neevikuje).
+     *
+     * Nad limit → volající pošle blob do karantény (`SkipTooLarge`), recvEpoch se
+     * NEposune; backfill mezitím store sníží (spotřebuje nižší klíče) a příště se
+     * leap vejde → **self-healing** bez ztráty. In-order zpráva (gap 0) projde vždy.
+     */
+    private fun wouldOverfillSkipped(currentSkipped: Int, gap: Int): Boolean =
+        currentSkipped + gap > SKIP_MAX
+
+    /**
      * Ořízne skipped-store na [SKIP_MAX] - nejstarší (nejnižší (generace, index))
      * padají první. Staré generace jdou ven dřív než nižší indexy v aktuální.
      * Bez toho by protějšek mohl posílat samé mezery a nafouknout paměť.
+     *
+     * **S kumulativním stropem ([wouldOverfillSkipped]) je to už jen pojistka**
+     * (defense-in-depth): recvKey brání store přerůst SKIP_MAX, takže tady se za
+     * běžného chodu nic neevikuje. Kdyby přesto (budoucí cesta bez guardu), pořadí
+     * eviction je zafixované testem (viz níž).
      *
      * **Politika eviction je zafixovaná testem** (nález v2.0-10): opožděná
      * out-of-order zpráva s oříznutým msgNo dostane `AlreadyConsumed` = tichá
