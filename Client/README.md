@@ -1,6 +1,6 @@
 # CryptoChat
 
-**English** | [Čeština](#cryptochatserver-česky)
+**English** | [Čeština](#cryptochat-cesky)
 
 CryptoChat is an Android messenger for **end-to-end encrypted** chat between two
 people — with **no accounts, no phone numbers and no e-mail**. Messages and photos travel
@@ -9,7 +9,7 @@ to whom**. Tor is **built into the app**, so there is nothing extra to install.
 
 ## Download & install
 
-1. Open [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases) and download
+1. Open [**Releases**](https://github.com/JelenXP/CryptoChat/releases) and download
    the latest `app-release.apk`.
 2. Open the file on your Android phone.
 3. If prompted, allow installation from unknown sources.
@@ -50,13 +50,18 @@ it, and if that person's security code ever changes later, the conversation warn
 ## Chatting
 
 - Write a message and send — it arrives almost instantly.
-- Tap the **photo button** to send a picture from the **camera** or **gallery**. The photo
-  is encrypted the same way; the other side sees it decrypted directly in the chat.
+- **Formatting** — wrap text in `*bold*`, `_italics_`, `~strikethrough~` or `` `monospace` ``
+  and it shows up formatted in the chat.
+- Tap the **photo button** to send a picture from the **camera** or **gallery**, or send any
+  **file** — both are encrypted the same way and travel end-to-end (files in chunks). The
+  other side sees a photo decrypted directly in the chat; **tap it to open it full-screen**
+  with pinch-to-zoom and panning.
 - **Reply** — swipe a message from left to right, or hold it and pick Reply. The original
   is quoted above your answer. **Tap the quote** to jump to the original message, which
   lights up briefly.
 - **React** — hold a message and pick one of six emoji. Tapping the same one removes it.
-  Both phones need a recent version; until then reactions simply aren't sent.
+  You get a notification when someone reacts to your message. Both phones need a recent
+  version; until then reactions simply aren't sent.
 - **Edit** — hold one of your own text messages and pick Edit; fix it and send. The other
   phone updates it too and the message is marked **"edited"**. Older versions keep the
   original text.
@@ -106,7 +111,7 @@ mailbox identifiers are never shown there.
 
 ## Security at a glance
 
-- **AES-256-GCM** authenticated encryption of messages and photos.
+- **AES-256-GCM** authenticated encryption of messages, photos and files.
 - **Post-quantum** key exchange (ML-KEM-768, NIST FIPS 203) with a spoken verification code.
 - **Automatic key rotation** — keys refresh themselves as you chat (a forward-secret
   ratchet, plus a periodic post-quantum re-key that heals after a possible leak), with no
@@ -115,12 +120,13 @@ mailbox identifiers are never shown there.
 - **Built-in Tor** — the server never sees your IP address, and you install nothing extra.
 - **The server is a blind dead-drop** — no accounts; mailbox IDs are derived from your
   shared key (which the server has never seen) and rotate daily, so the server cannot link
-  a conversation together. Message length is hidden by padding.
+  a conversation together. Padding hides message length as well as photo and file sizes.
 - Server keeps everything **in memory only**, writes **no access logs**, and mailboxes are
   deleted the moment they're picked up.
 - **Encryption at rest** — keys and chat history are wrapped by a non-exportable key in the
   Android Keystore.
-- **App lock** — optional biometric / PIN lock on every open.
+- **App lock** — optional biometric / PIN lock, with a configurable delay before it kicks in
+  (immediately / 10 s / 30 s / 1 min / 5 min).
 - **No cloud backup** of app data, and screenshots are blocked inside the app.
 
 ## What it does *not* hide
@@ -146,9 +152,9 @@ The app follows your phone's language automatically; you can also force
 ---
 
 # CryptoChat (česky)
-<a name="cryptochatserver-česky"></a>
+<a name="cryptochat-cesky"></a>
 
-[English](#cryptochatserver) | **Čeština**
+[English](#cryptochat) | **Čeština**
 
 CryptoChat je Android messenger pro **end-to-end šifrovaný** chat mezi dvěma lidmi —
 **bez účtů, telefonních čísel a e-mailů**. Zprávy i fotky chodí přes „slepou schránku"
@@ -157,7 +163,7 @@ přímo v aplikaci**, takže není potřeba nic dalšího instalovat.
 
 ## Stažení a instalace
 
-1. Otevři [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases) a stáhni
+1. Otevři [**Releases**](https://github.com/JelenXP/CryptoChat/releases) a stáhni
    poslední `app-release.apk`.
 2. Soubor otevři na Android telefonu.
 3. Případně povol instalaci z neznámých zdrojů.
@@ -198,13 +204,18 @@ varuje.
 ## Chatování
 
 - Napiš zprávu a odešli — dorazí skoro okamžitě.
-- Tlačítkem **fotky** pošleš obrázek z **foťáku** nebo **galerie**. Fotka se šifruje stejně
-  jako zprávy a druhá strana ji vidí rovnou dešifrovanou přímo v chatu.
+- **Formátování** — text obal do `*tučně*`, `_kurzíva_`, `~přeškrtnuté~` nebo `` `strojopis` ``
+  a v chatu se ukáže naformátovaný.
+- Tlačítkem **fotky** pošleš obrázek z **foťáku** nebo **galerie**, nebo pošli libovolný
+  **soubor** — obojí se šifruje stejně jako zprávy a jde end-to-end (soubory po kouscích).
+  Druhá strana fotku vidí rovnou dešifrovanou přímo v chatu; **ťuknutím na ni ji otevřeš na
+  celou obrazovku** se zoomem (pinch-to-zoom) a posunem.
 - **Odpověď** — přetáhni zprávu zleva doprava, nebo ji podrž a zvol Odpovědět. Původní
   zpráva se ukáže nad tvojí odpovědí. **Ťuknutím na citaci** skočíš na původní zprávu,
   která se na chvíli rozsvítí.
 - **Reakce** — podrž zprávu a vyber jedno ze šesti emoji. Stejné podruhé reakci zruší.
-  Oba telefony potřebují novější verzi; do té doby se reakce prostě neposílají.
+  Když někdo zareaguje na tvoji zprávu, dostaneš upozornění. Oba telefony potřebují novější
+  verzi; do té doby se reakce prostě neposílají.
 - **Úprava** — podrž svoji textovou zprávu a zvol Upravit; oprav ji a odešli. Druhý telefon
   ji přepíše taky a zpráva se označí **„upraveno"**. Starší verze si nechá původní text.
 - **Kopírování a mazání** — po podržení zprávy jde zkopírovat text nebo zprávu smazat;
@@ -253,7 +264,7 @@ schránek se tam nikdy nezobrazují.
 
 ## Zabezpečení ve zkratce
 
-- **AES-256-GCM** autentizované šifrování zpráv i fotek.
+- **AES-256-GCM** autentizované šifrování zpráv, fotek i souborů.
 - **Post-kvantová** výměna klíče (ML-KEM-768, NIST FIPS 203) s nahlas ověřovaným kódem.
 - **Automatická rotace klíčů** — klíče se během psaní samy obměňují (forward-secret ratchet
   plus občasný post-kvantový re-key, který uzdraví po možném úniku), bez nutnosti znovu se
@@ -262,12 +273,13 @@ schránek se tam nikdy nezobrazují.
 - **Zabudovaný Tor** — server nevidí tvoji IP adresu a ty nic dalšího neinstaluješ.
 - **Server je slepá schránka** — žádné účty; ID schránek se odvozují ze sdíleného klíče
   (který server nikdy neviděl) a každý den se mění, takže server nespojí konverzaci
-  dohromady. Délku zprávy skrývá padding.
+  dohromady. Padding skrývá délku zprávy i velikosti fotek a souborů.
 - Server drží vše **jen v paměti**, nevede **žádné access logy** a schránky mizí hned po
   vyzvednutí.
 - **Šifrování „at rest"** — klíče i historie chatů jsou zabalené neexportovatelným klíčem
   v Android Keystore.
-- **Zámek aplikace** — volitelné biometrické / PIN ověření při každém otevření.
+- **Zámek aplikace** — volitelné biometrické / PIN ověření s nastavitelnou prodlevou, než se
+  zámek aktivuje (ihned / 10 s / 30 s / 1 min / 5 min).
 - **Bez cloudových záloh** dat aplikace a uvnitř appky jsou blokované screenshoty.
 
 ## Co to *neskryje*
