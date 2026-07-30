@@ -305,29 +305,36 @@ private fun AppLockGate(content: @Composable () -> Unit) {
             enter = EnterTransition.None,
             exit = fadeOut(tween(220))
         ) {
-            // Neprůhledný celoobrazovkový překryv, který navíc pohltí doteky,
-            // aby nešlo omylem ovládat skrytý obsah pod zámkem.
+            // Neprůhledný celoobrazovkový překryv nad obsahem appky. Pohlcovač
+            // doteků leží jako SOUROZENEC POD LockScreenem, ne jako jeho RODIČ:
+            // rodič, co slepě polyká doteky v Main pasu, rušil gesta uvnitř -
+            // klik na „Odemknout" i scroll k němu se na některých telefonech
+            // nedaly provést (tlačítko je ve Final pasu vidělo jako spotřebované),
+            // což mohlo uživatele zamknout z appky ven. Pod LockScreenem pohlcovač
+            // brání ovládání appky vespod, ale vlastní gesta LockScreenu nechá být.
             //
-            // Polykat doteky se smí JEN dokud je zámek opravdu potřeba. Během
-            // odemykacího fadu (220 ms) je překryv pořád složený a jako sourozenec
-            // leží NAD obsahem - kdyby dál polykal, prvních 220 ms po odemčení by
-            // appka nereagovala na klepnutí. Na rychlém telefonu to splyne s
-            // animací, na pomalejším je to znát. Obsah je během fadu legitimně
-            // vidět (proto ten fade existuje), takže ho smí jít i ovládat.
+            // Polykat se smí JEN dokud je zámek opravdu potřeba: scrim se kreslí
+            // jen `if (needsUnlock)`. Během odemykacího fadu (220 ms) je overlay
+            // pořád složený, ale needsUnlock už false → scrim zmizí a appka pod
+            // odtávajícím zámkem zase reaguje (jinak by prvních 220 ms byla hluchá).
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
-                    .then(
-                        if (needsUnlock) Modifier.pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    awaitPointerEvent().changes.forEach { it.consume() }
+            ) {
+                if (needsUnlock) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        awaitPointerEvent().changes.forEach { it.consume() }
+                                    }
                                 }
                             }
-                        } else Modifier
                     )
-            ) {
+                }
                 LockScreen(onUnlocked = { needsUnlock = false })
             }
         }
@@ -436,20 +443,43 @@ private fun StartupGate(content: @Composable () -> Unit) {
     }
 }
 
-/** Celoobrazovkový překryv, který pohltí doteky (nejde ovládat obsah pod ním). */
+/**
+ * Celoobrazovkový překryv nad appkou: [content] kreslí PŘES appku a klepnutí,
+ * která minou jeho vlastní ovládací prvky, pohltí, aby nepropadla na appku
+ * vespod (jinak by šlo naslepo klepat do skryté obrazovky za překryvem).
+ *
+ * KLÍČOVÉ: pohlcovač je SOUROZENEC POD obsahem, ne jeho RODIČ. Dřív tenhle
+ * překryv obsah OBALOVAL a v Main pasu slepě polykal VŠECHNY doteky - jenže tím
+ * rušil i gesta uvnitř obsahu (scroll, klik na „OK"/„Novinky"): rodič dotek v
+ * Main pasu spotřeboval a tlačítko ho pak ve Final pasu vidělo jako spotřebovaný,
+ * takže se tap zrušil. Přežilo jen dokonale „čisté" klepnutí bez jediné události
+ * pohybu prstu - a jestli taková vznikne, závisí na citlivosti digitizéru, proto
+ * šel changelog ovládat na jednom telefonu a na jiném vůbec. `clickable` na scrimu
+ * POD obsahem se spustí JEN u klepnutí, které si obsah nenárokoval (nespotřeboval
+ * `down`), takže gesta obsahu nechává být a přitom pohltí klepnutí do prázdna.
+ */
 @Composable
 private fun BlockingOverlay(content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        awaitPointerEvent().changes.forEach { it.consume() }
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Pohlcovač doteků POD obsahem: pohltí doteky, které nezachytí obsah nad
+        // ním, aby nepropadly na appku vespod. Pořadí je klíčové - scrim je
+        // SOUROZENEC POD obsahem (kreslí se první), obsah leží NAD ním. Kdekoli
+        // obsah kreslí (jeho neprůhledný fullscreen Surface + tlačítka), scrim se
+        // hit-testem vůbec nedotkne, takže jeho gesta neruší; pohltí jen doteky do
+        // prázdna, kam obsah nesahá.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { it.consume() }
+                        }
                     }
                 }
-            }
-    ) { content() }
+        )
+        content()
+    }
 }
 
 /** Verze nainstalované appky (versionName, např. „2.3"). */
