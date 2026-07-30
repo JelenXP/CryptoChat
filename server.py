@@ -26,9 +26,11 @@ Zadne zavislosti - jen standardni knihovna Pythonu 3. Spusteni: `python3 server.
 Konfigurace pres promenne prostredi (viz nize), vse ma rozumny vychozi stav.
 """
 
+import io
 import os
 import re
 import secrets
+import socket
 import struct
 import sys
 import threading
@@ -36,6 +38,7 @@ import tempfile
 import time
 import urllib.parse
 from collections import deque
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -105,6 +108,44 @@ RATE_LIMIT_WINDOW = int(os.environ.get("CC_RATE_LIMIT_WINDOW", "60"))          #
 # 25 s snizi pocet round-tripu na ctvrtinu, aniz by se zdrzelo doruceni (PUT
 # cekajici GET probudi okamzite). Vlakno navic nic nestoji - jen ceka na Condition.
 LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "90"))                     # sekundy
+
+# --- Timeouty spojeni (obrana proti slowloris / necinnemu keep-alive) --------
+#
+# Re-audit RA6: driv mel handler JEDINY velky socket timeout (LONGPOLL_MAX+60 =
+# 150 s), aby nerusil dlouhy long-poll. Jenze stejny timeout platil i pro NECINNE
+# spojeni a cteni hlavicek. Utocnik znajici onion adresu tak otevrel MAX_CONNECTIONS
+# spojeni a bud posilal hlavicky po kapkach (slowloris), nebo je po jedne rychle
+# odpovedi drzel necinne v HTTP/1.1 keep-alive - vlakno viselo v readline az 150 s
+# a drzelo slot z MAX_CONNECTIONS, cimz odriznul VSECHNY ostatni. MAX_LONGPOLL na to
+# nestacil (ten hlida jen blokujici ?wait GETy). Reseni: kazda faze spojeni ma
+# vlastni timeout - kratky na necinnost/hlavicky, delsi az na aktivni prenos dat.
+
+# Cteni request line + hlavicek a necinne cekani mezi keep-alive requesty. Kratke:
+# legitimni klient posle kompletni hlavicky v jednom paketu (i pres Tor par sekund),
+# takze je to velka rezerva; necinny/slowloris klient se utne temer hned. Slouzi i
+# jako CELKOVY deadline na kompletni hlavicky (viz handle_one_request), takze ani
+# kapajici slowloris (bajt tesne pod per-recv timeout) nedrzi slot dele nez tohle.
+HEADER_TIMEOUT = int(os.environ.get("CC_HEADER_TIMEOUT", "20"))                 # sekundy
+
+# Aktivni prenos dat: cteni tela PUT a zapis odpovedi (per-recv/per-send). Vic nez
+# header timeout, protoze az 2 MB blob muze pres pomaly Tor okruh tect desitky sekund.
+IO_TIMEOUT = int(os.environ.get("CC_IO_TIMEOUT", "60"))                         # sekundy
+
+# Celkovy strop na nacteni CELEHO tela pozadavku (slow-POST obrana). Bez nej by
+# utocnik poslal velky Content-Length a telo kapal po bajtech - per-recv IO_TIMEOUT
+# se resetuje kazdym bajtem, takze by drzel slot temer navzdy. Legitimni 2 MB upload
+# se pres Tor prenese v jednotkach sekund, takze je to velka rezerva.
+BODY_TIMEOUT = int(os.environ.get("CC_BODY_TIMEOUT", "120"))                    # sekundy
+
+# Strop poctu requestu na jednom keep-alive spojeni (jeden Tor stream). Po limitu
+# posleme Connection: close a klient si otevre nove spojeni (levne - novy TCP stream
+# jde pres uz zahraty Tor okruh, ne novy okruh). Vysoke, aby neomezovalo legitimni
+# dlouhotrvajici polling, ale konecne - zadne spojeni nezije donekonecna.
+MAX_KEEPALIVE_REQUESTS = int(os.environ.get("CC_MAX_KEEPALIVE_REQUESTS", "10000"))
+
+# Strop na celkovou velikost request line + hlavicek jednoho pozadavku. Legitimni
+# jsou stovky bajtu (kratke mailbox ID, par hlavicek), vic uz je pokus o nafouknuti.
+MAX_HEADER_BYTES = int(os.environ.get("CC_MAX_HEADER_BYTES", str(64 * 1024)))    # 64 KB
 
 # --- Hlaseni chyb (POST /report) ---------------------------------------------
 #
@@ -478,11 +519,109 @@ class RelayHandler(BaseHTTPRequestHandler):
     # Protokol nechame HTTP/1.1 (keep-alive), rychlejsi pri pollingu.
     protocol_version = "HTTP/1.1"
 
-    # Timeout na necinne spojeni. BEZ NEJ je socket bez timeoutu a vlakno visi
-    # navzdy v readline() - utocnik otevre par tisic spojeni, nic neposle a
-    # server dojdou vlakna (slowloris). Musi byt delsi nez nejdelsi long-poll,
-    # jinak by se rusila legitimni cekani.
-    timeout = LONGPOLL_MAX + 60
+    # Uvodni socket timeout, ktery nastavi StreamRequestHandler.setup(). Kratky:
+    # je to timeout na NECINNE spojeni a cteni hlavicek (idle keep-alive / slowloris
+    # obrana, re-audit RA6). Delsi timeouty pro telo/odpoved/long-poll se nastavuji
+    # az za behu podle faze (viz handle_one_request a do_GET). BEZ jakehokoli timeoutu
+    # by socket visel navzdy v readline() a utocnik par tisici necinnymi spojenimi
+    # vycerpal vlakna.
+    timeout = HEADER_TIMEOUT
+
+    def setup(self):
+        # StreamRequestHandler.setup() nastavi socket timeout na self.timeout
+        # (= HEADER_TIMEOUT). Pridame pocitadlo requestu na tomto keep-alive
+        # spojeni (strop MAX_KEEPALIVE_REQUESTS).
+        super().setup()
+        self._request_count = 0
+
+    def handle_one_request(self):
+        """Jako BaseHTTPRequestHandler.handle_one_request, ale s FAZOVYMI timeouty
+        (re-audit RA6).
+
+        Puvodne mel cely handler jediny velky socket timeout (150 s), aby nerusil
+        dlouhy long-poll. Jenze ten platil i pro necinne spojeni a cteni hlavicek:
+        utocnik otevrel MAX_CONNECTIONS spojeni pres Tor a bud posilal hlavicky po
+        kapkach (slowloris), nebo je po jedne rychle odpovedi drzel necinne v
+        keep-alive - vlakno viselo v readline az 150 s a drzelo slot, cimz odriznul
+        vsechny ostatni.
+
+        Ted ma kazda faze vlastni timeout:
+          - cteni request line + hlavicek a necinny keep-alive = kratky HEADER_TIMEOUT
+            jako CELKOVY deadline na kompletni hlavicky (viz _read_head - utne i
+            kapajici slowloris, ktery obejde prosty per-recv socket timeout),
+          - cteni tela / zapis odpovedi = delsi IO_TIMEOUT (pomaly Tor okruh),
+          - blokujici long-poll na Condition = plny (wait + IO_TIMEOUT), nastavuje do_GET.
+        """
+        try:
+            # --- Idle / hlavickova faze: cti request line + hlavicky s CELKOVYM
+            #     deadlinem HEADER_TIMEOUT. ---
+            self.connection.settimeout(HEADER_TIMEOUT)
+            head = self._read_head()
+            if head is None:
+                # Timeout / prekroceni stropu hlavicek / zavrene spojeni - zahod.
+                self.close_connection = True
+                return
+            # Naparsuj request line + hlavicky z prednacteneho bufferu (bez blokovani).
+            # Telo za hlavickami zustava v bufferu self.rfile (BufferedReader) a
+            # precte se az v do_PUT/_handle_report pres self._read_body.
+            saved_rfile = self.rfile
+            self.rfile = io.BytesIO(head)
+            try:
+                self.raw_requestline = self.rfile.readline(65537)
+                if not self.raw_requestline:
+                    self.close_connection = True
+                    return
+                if not self.parse_request():
+                    # Chybovy kod uz byl odeslan
+                    return
+            finally:
+                self.rfile = saved_rfile
+            # --- Aktivni faze: delsi timeout na cteni tela / zapis odpovedi. ---
+            self.connection.settimeout(IO_TIMEOUT)
+            mname = 'do_' + self.command
+            if not hasattr(self, mname):
+                self.send_error(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    "Unsupported method (%r)" % self.command)
+                return
+            method = getattr(self, mname)
+            method()
+            self.wfile.flush()  # skutecne odesli odpoved, pokud jeste neni
+            # Strop poctu requestu na jednom keep-alive spojeni (jeden Tor stream):
+            # po limitu spojeni uzavri, at se slot uvolni pro ostatni.
+            self._request_count += 1
+            if self._request_count >= MAX_KEEPALIVE_REQUESTS:
+                self.close_connection = True
+        except (socket.timeout, TimeoutError):
+            # Cteni/zapis vyprsel (necinny klient, slowloris, mrtvy Tor okruh).
+            # Zahod spojeni, uvolni slot. Zadny log (soukromi).
+            self.close_connection = True
+            return
+
+    def _read_head(self):
+        """Precte request line + vsechny hlavicky (do prazdneho radku) s CELKOVYM
+        deadlinem HEADER_TIMEOUT. Vraci bytes hlavicek vcetne koncoveho oddelovace,
+        nebo None (timeout / prekroceni MAX_HEADER_BYTES / zavrene spojeni).
+
+        Cte po jednom bajtu z self.rfile (BufferedReader, takze recv syscall padne
+        jen kdyz je vnitrni buffer prazdny) a mezi bajty hlida CELKOVY cas. Tim plati
+        deadline na celou fazi: prosty per-recv socket timeout by kapajici slowloris
+        (bajt tesne pod timeout) NEUTNUL, protoze se resetuje kazdym prijatym bajtem -
+        tady se cas kontroluje mezi bajty, takze utok nema jak deadline obejit. Telo
+        za hlavickami zustava v bufferu self.rfile a precte se pozdeji."""
+        deadline = time.monotonic() + HEADER_TIMEOUT
+        buf = bytearray()
+        while True:
+            if time.monotonic() > deadline:
+                return None
+            if len(buf) > MAX_HEADER_BYTES:
+                return None
+            chunk = self.rfile.read(1)
+            if not chunk:
+                return None
+            buf += chunk
+            if buf.endswith(b"\r\n\r\n") or buf.endswith(b"\n\n"):
+                return bytes(buf)
 
     # Zadne logy pristupu - soukromi. Prepisujeme na no-op.
     def log_message(self, *args, **kwargs):  # noqa: D401
@@ -516,16 +655,44 @@ class RelayHandler(BaseHTTPRequestHandler):
 
     def _drain_body(self, length: int) -> bool:
         """Vypije (zahodi) telo pozadavku. Vraci True, pokud se povedlo cele
-        precist (spojeni se da drzet dal), jinak False (radsi zavrit)."""
+        precist (spojeni se da drzet dal), jinak False (radsi zavrit).
+
+        Cte s celkovym deadlinem (BODY_TIMEOUT), aby slow-POST na teto ceste
+        (klient posle prilis velke telo a pak kape) nedrzel slot navzdy."""
         if length > DRAIN_CAP:
             return False
+        deadline = time.monotonic() + BODY_TIMEOUT
         remaining = length
         while remaining > 0:
+            if time.monotonic() > deadline:
+                return False
             chunk = self.rfile.read(min(65536, remaining))
             if not chunk:
                 return False
             remaining -= len(chunk)
         return True
+
+    def _read_body(self, length: int) -> bytes:
+        """Precte az [length] bajtu tela s CELKOVYM deadlinem (BODY_TIMEOUT).
+
+        Prime rfile.read(length) ceka jen s per-recv timeoutem IO_TIMEOUT, ktery
+        se resetuje kazdym prijatym bajtem - slow-POST (velky Content-Length +
+        kapani po bajtech) by tak drzel slot temer navzdy. Cteme proto po castech
+        a hlidame celkovy cas. Vraceny buffer kratsi nez length = spojeni umrelo
+        nebo vyprsel deadline; volajici to pozna kontrolou len() a odmitne
+        (400 short body)."""
+        deadline = time.monotonic() + BODY_TIMEOUT
+        chunks = []
+        remaining = length
+        while remaining > 0:
+            if time.monotonic() > deadline:
+                break
+            chunk = self.rfile.read(min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
 
     def _mailbox_id_from_path(self):
         # Ocekavame /m/<id>. Query string ignorujeme.
@@ -587,6 +754,16 @@ class RelayHandler(BaseHTTPRequestHandler):
         holding_longpoll = wait_s > 0 and self.server.acquire_longpoll_slot()
         if wait_s > 0 and not holding_longpoll:
             wait_s = 0
+        if wait_s > 0:
+            # Az TED, kdyz se pozadavek bude aktivne blokovat na Condition, dej
+            # spojeni PLNY timeout na celou dobu cekani + zapis odpovedi po probuzeni.
+            # (Samotne _cekani_ na Condition se socketu nedotyka, takze kratky
+            # IO_TIMEOUT by ho neprerusil; timeout tu ridi az zapis odpovedi, ktera
+            # muze prijit klidne po 90 s. Nastavujeme ho velkoryse, aby dlouhy
+            # long-poll spolehlive dobehl.) Pred dalsim requestem ho handle_one_request
+            # vrati zpet na kratky HEADER_TIMEOUT, takze necinny keep-alive po odpovedi
+            # zustava chraneny.
+            self.connection.settimeout(wait_s + IO_TIMEOUT)
         try:
             self._serve_get(mid, wait_s)
         finally:
@@ -703,7 +880,7 @@ class RelayHandler(BaseHTTPRequestHandler):
             self._send(413, b"blob too large\n", "text/plain", close=not drained)
             return
 
-        blob = self.rfile.read(length)
+        blob = self._read_body(length)
         if len(blob) != length:
             # Klient slibil Content-Length, ale poslal min a zavrel spojeni. Bez
             # kontroly by se ulozil USEKNUTY blob (zabral by slot v MAX_MAILBOX_BLOBS
@@ -744,7 +921,7 @@ class RelayHandler(BaseHTTPRequestHandler):
             self._send(413, b"report too large\n", "text/plain", close=not drained)
             return
 
-        body = self.rfile.read(length)
+        body = self._read_body(length)
         if len(body) != length:
             self._send(400, b"short body\n", "text/plain", close=True)
             return
@@ -825,7 +1002,9 @@ class RelayServer(ThreadingHTTPServer):
         # nevede zadne provozni zaznamy" (soukromi) a odstranuje sum z journalu.
         # Skutecne chyby (bug v handleru) se logují dal.
         exc = sys.exc_info()[1]
-        if isinstance(exc, ConnectionError):
+        if isinstance(exc, (ConnectionError, socket.timeout, TimeoutError)):
+            # Sem spadne i timeout ve finish() (flush wfile mrtvemu klientovi) -
+            # taky to neni chyba serveru, jen zmizely/pomaly klient.
             return
         super().handle_error(request, client_address)
 
