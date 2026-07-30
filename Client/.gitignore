@@ -20,5 +20,8 @@ captures/
 .claude/
 CLAUDE.md
 
+# --- Interní audit poznámky (lokální, nepublikují se) ---
+AUDIT_*.md
+
 # --- Různé ---
 *.log
