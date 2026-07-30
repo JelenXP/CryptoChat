@@ -1819,7 +1819,14 @@ object RelaySync {
                             secondaryReceived += fetch(RelayCrypto.ratchetMailboxId(key, dir, e), 0, ratchet = true, url = fb)
                         }
                     } else {
+                        // Legacy sweep: fetchni i PŘEDCHOZÍ epochu (epoch-1), ne jen
+                        // aktuální. Zpráva položená na fallback do VČEREJŠÍ epochy
+                        // (primární down přes přelom dne) by se z fallbacku jinak nikdy
+                        // nevyzvedla a po TTL zmizela (re-audit #10). Symetrické k
+                        // prev-epoch kontrole primární cesty; sweep je throttlovaný
+                        // (SECONDARY_SWEEP_MS), takže jeden GET navíc je zanedbatelný.
                         secondaryReceived += fetch(RelayCrypto.mailboxId(key, dir, epoch), 0, ratchet = false, url = fb)
+                        secondaryReceived += fetch(RelayCrypto.mailboxId(key, dir, epoch - 1), 0, ratchet = false, url = fb)
                     }
                 }
                 failed = savedFailed
