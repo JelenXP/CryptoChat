@@ -94,7 +94,7 @@ moment they're picked up**.
 
 ## Get it
 
-1. Open the [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases)
+1. Open the [**Releases**](https://github.com/JelenXP/CryptoChat/releases)
    page and download the latest `app-release.apk` (currently **2.4.1**).
 2. Open the file on your Android phone; allow installation from unknown sources if
    prompted.
@@ -225,7 +225,7 @@ schránky mají krátkou životnost (TTL) a **mažou se hned po prvním vyzvednu
 
 ## Jak ji získat
 
-1. Otevři stránku [**Releases**](https://github.com/JelenXP/CryptoChatServer-releases/releases)
+1. Otevři stránku [**Releases**](https://github.com/JelenXP/CryptoChat/releases)
    a stáhni poslední `app-release.apk` (aktuálně **2.4.1**).
 2. Soubor otevři na Android telefonu; případně povol instalaci z neznámých zdrojů.
 3. Nainstaluj. Vyžaduje **Android 8.0 (API 26)** nebo novější.

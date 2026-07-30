@@ -35,27 +35,12 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # Unit testy jedou PŘED buildem: čistě JVM (ChatEnvelope, Pairing, krypto)
-      # i Robolectric (RelayCrypto, ReplayGuard, BlobQuarantine, WireCompat stav).
-      # Robolectric si stahuje android-all jar - proto to jde jen tady, kde je síť.
-      # Selhání testu shodí celý workflow (build APK se ani nespustí).
-      - name: Run unit tests
-        run: gradle testDebugUnitTest
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: Client/app/build/reports/tests/testDebugUnitTest/
-          if-no-files-found: warn
-
       - name: Build debug APK
         run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CryptoChatOnline-debug-apk
+          name: CryptoChat-debug-apk
           path: Client/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error

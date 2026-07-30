@@ -1009,6 +1009,138 @@ class RelayServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+# --- Setup wizard (interaktivni pruvodce konfiguraci) ------------------------
+#
+# Spusti se `python3 server.py --setup`. Nic nemeni na behu serveru - jen se
+# zepta na klicova nastaveni, zapise je do souboru `relay.env` (CC_* promenne)
+# a vypise, jak server s touto konfiguraci spustit, vcetne volitelneho Tor onion
+# service a systemd sluzby. Server pak tyhle promenne cte pri startu (sekce
+# Konfigurace nahore). Vsechny hodnoty maji rozumny vychozi stav, takze `python3
+# server.py` bez wizardu porad funguje.
+
+def _ask(prompt, default=""):
+    """Zeptej se s vychozi hodnotou (Enter = vychozi). Odolne vuci EOF/Ctrl+C."""
+    suffix = f" [{default}]" if default != "" else ""
+    try:
+        ans = input(f"{prompt}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nZruseno, nic se nezapsalo.")
+        sys.exit(1)
+    return ans or default
+
+
+def _ask_int(prompt, default):
+    """Jako _ask, ale opakuje dotaz, dokud nedostane cele nezaporne cislo."""
+    while True:
+        raw = _ask(prompt, str(default))
+        try:
+            val = int(float(raw))
+            if val < 0:
+                raise ValueError
+            return val
+        except ValueError:
+            print("   (zadej cislo, napr. " + str(default) + ")")
+
+
+def _ask_yesno(prompt, default=True):
+    ans = _ask(f"{prompt} ({'Y/n' if default else 'y/N'})", "").lower()
+    if not ans:
+        return default
+    return ans in ("y", "yes", "a", "ano")
+
+
+def run_setup_wizard():
+    """Interaktivni pruvodce nastavenim relaye - vygeneruje `relay.env`."""
+    print("=" * 64)
+    print("  CryptoChat relay - pruvodce nastavenim")
+    print("=" * 64)
+    print("Enter = ponechat vychozi hodnotu v [zavorkach].\n")
+
+    # 1) Naslouchaci adresa
+    print("1) Kde ma server naslouchat?")
+    print("   [1] jen lokalne 127.0.0.1  - DOPORUCENO, relay bezi ZA Torem")
+    print("   [2] primo do site 0.0.0.0  - jen kdyz vis proc (bez Toru = viditelna IP)")
+    host = "0.0.0.0" if _ask("   Volba", "1") == "2" else "127.0.0.1"
+    port = _ask_int("   Port", PORT)
+
+    # 2) Limity (promenne prostredi)
+    print("\n2) Limity (Enter = rozumny vychozi stav):")
+    ttl_h = _ask_int("   Zivotnost zpravy ve schrance, hodiny (TTL)", TTL_SECONDS // 3600)
+    mem_mb = _ask_int("   Strop pameti v MB (max soucasne drzenych dat)", MAX_TOTAL_BYTES // (1024 * 1024))
+    print("   Pozor: max blob NESNIZUJ pod 2 - appka posila fotky/soubory az do ~2 MB.")
+    blob_mb = _ask_int("   Max velikost jednoho blobu v MB", MAX_BLOB_SIZE // (1024 * 1024))
+
+    env = {
+        "CC_HOST": host,
+        "CC_PORT": str(port),
+        "CC_TTL_SECONDS": str(ttl_h * 3600),
+        "CC_MAX_TOTAL_BYTES": str(mem_mb * 1024 * 1024),
+        "CC_MAX_BLOB_SIZE": str(blob_mb * 1024 * 1024),
+    }
+
+    # 3) Tor onion service
+    print("\n3) Tor onion service (skryje IP i adresu serveru):")
+    if _ask_yesno("   Vypsat navod na Tor onion service?", True):
+        print(f"""
+   -> Nainstaluj Tor (napr. `sudo apt install tor`) a do /etc/tor/torrc pridej:
+
+        HiddenServiceDir /var/lib/tor/cryptochat/
+        HiddenServicePort 80 127.0.0.1:{port}
+
+      pak restartuj Tor a precti si vygenerovanou adresu:
+
+        sudo systemctl restart tor
+        sudo cat /var/lib/tor/cryptochat/hostname     # <- tvoje .onion adresa
+
+      Tu adresu zadas v appce: Server chatu -> Vlastni -> http://<adresa>
+""")
+
+    # 4) systemd sluzba
+    print("4) systemd sluzba (relay bezi na pozadi i po restartu serveru):")
+    if _ask_yesno("   Vypsat systemd unit?", True):
+        print(f"""
+   -> Uloz jako /etc/systemd/system/cryptochat-relay.service:
+
+        [Unit]
+        Description=CryptoChat relay
+        After=network.target
+
+        [Service]
+        User=cryptochat
+        WorkingDirectory=/opt/cryptochat-relay
+        EnvironmentFile=/opt/cryptochat-relay/relay.env
+        ExecStart=/usr/bin/python3 /opt/cryptochat-relay/server.py
+        Restart=on-failure
+
+        [Install]
+        WantedBy=multi-user.target
+
+      pak: sudo systemctl daemon-reload && sudo systemctl enable --now cryptochat-relay
+""")
+
+    # Zapis relay.env
+    env_path = "relay.env"
+    try:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write("# CryptoChat relay - konfigurace (vygeneroval `server.py --setup`)\n")
+            f.write("# Nacte se automaticky pres systemd EnvironmentFile, nebo rucne:\n")
+            f.write("#   set -a; . ./relay.env; python3 server.py\n")
+            for k, v in env.items():
+                f.write(f"{k}={v}\n")
+    except OSError as e:
+        print(f"\nCHYBA: nepodarilo se zapsat {env_path}: {e}")
+        sys.exit(1)
+
+    print("=" * 64)
+    print(f"Hotovo. Konfigurace zapsana do ./{env_path}:")
+    for k, v in env.items():
+        print(f"   {k}={v}")
+    print("\nSpusteni relaye s touto konfiguraci:")
+    print("   set -a; . ./relay.env; python3 server.py      (Linux/macOS)")
+    print("nebo bez souboru, primo:  CC_TTL_SECONDS=... python3 server.py")
+    print("=" * 64)
+
+
 def main():
     server = RelayServer((HOST, PORT), RelayHandler)
 
@@ -1032,4 +1164,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg in ("--setup", "setup"):
+        run_setup_wizard()
+    elif arg in ("-h", "--help"):
+        print("CryptoChat relay - zero-knowledge dead-drop")
+        print("Pouziti:")
+        print("  python3 server.py            spusti relay (konfigurace z CC_* promennych)")
+        print("  python3 server.py --setup    interaktivni pruvodce -> zapise relay.env")
+        print("  python3 server.py --help     tato napoveda")
+        print("Vsechny CC_* promenne maji rozumny vychozi stav, viz sekce Konfigurace ve zdroji.")
+    else:
+        main()

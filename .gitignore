@@ -20,6 +20,12 @@ __pycache__/
 *.pyc
 *.pyo
 
+# --- Relay setup wizard: per-deployment konfigurace, nepatri do gitu ---
+relay.env
+
+# --- Testy (drzi se lokalne, na verejny GitHub nepatri) ---
+test_*.py
+
 # --- Claude Code (lokální, nepatří na GitHub) ---
 .claude/
 CLAUDE.md
