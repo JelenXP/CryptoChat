@@ -12,8 +12,10 @@ the flaw before it can be fixed.
 
 Instead, use GitHub's **private vulnerability reporting**:
 
-1. Open the **Security** tab of this repository.
-2. Click **Report a vulnerability**.
+1. Open the repository's **Security** tab, then **Advisories** in the left
+   sidebar — or go straight to
+   <https://github.com/JelenXP/CryptoChat/security/advisories>.
+2. Click the green **Report a vulnerability** button.
 3. Describe what you found: how to reproduce it, the impact, and the affected
    version.
 
@@ -69,8 +71,9 @@ chybu dřív, než ji jde opravit.
 
 Použij místo toho **soukromé nahlašování zranitelností** na GitHubu:
 
-1. Otevři kartu **Security** tohoto repozitáře.
-2. Klikni na **Report a vulnerability**.
+1. Otevři kartu **Security** repozitáře a v levém menu **Advisories** — nebo rovnou
+   <https://github.com/JelenXP/CryptoChat/security/advisories>.
+2. Klikni na zelené tlačítko **Report a vulnerability**.
 3. Popiš, co jsi našel: jak to reprodukovat, jaký to má dopad a které verze se
    to týká.
 
