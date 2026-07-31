@@ -1,8 +1,10 @@
 package com.jelenxp.cryptochat.ui.screens
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -86,6 +88,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -311,6 +314,19 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Klávesnici skryj při odchodu z konverzace. Vstupní pole je vlastní EditText
+    // s incognito příznakem (IME_FLAG_NO_PERSONALIZED_LEARNING); kdyby klávesnice
+    // po odchodu (šipka zpět i systémové Back) zůstala viset, systém ji znovu naváže
+    // na výchozí cíl BEZ incognito příznaku - a uživatel by najednou psal do
+    // „učící se" klávesnice. Skrytí na dispose to zavře dřív, než k tomu dojde.
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        onDispose {
+            val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(view.windowToken, 0)
+        }
     }
 
     // --- Držení konverzace „u dna" (řeší tři UI bugy: fotka neotevře úplně dole,
