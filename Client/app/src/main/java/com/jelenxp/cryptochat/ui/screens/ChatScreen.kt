@@ -444,6 +444,26 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 }
             }
     }
+    // Když se ZMENŠÍ výška viewportu (vstupní lišta narostla o řádek, otevře se
+    // klávesnice / náhled odpovědi), odskoč seznam na skutečné dno, ať poslední
+    // bublina drží mezeru nad lištou a lišta ji nepřekryje. Efekt výš to neudělá:
+    // po zmenšení viewportu poslední položka dosedne na jeho konec, takže `atBottom`
+    // hlásí true a podmínka `!bottom` scroll zablokuje. Řídíme se JEN změnou výšky
+    // (ne každou emisí), aby scroll na dno sám sebe nespouštěl dokola.
+    LaunchedEffect(listState) {
+        var lastViewportH = -1
+        snapshotFlow { listState.layoutInfo.viewportSize.height }
+            .collect { vpH ->
+                if (vpH > 0 && vpH != lastViewportH) {
+                    val hadPrev = lastViewportH != -1
+                    lastViewportH = vpH
+                    if (hadPrev && stickToBottom && !listState.isScrollInProgress) {
+                        val rs = liveRows
+                        if (rs.isNotEmpty()) listState.scrollToItem(rs.lastIndex, SCROLL_BOTTOM_OFFSET)
+                    }
+                }
+            }
+    }
 
     // Skok na citovanou zprávu (klik na citaci): doroluj na její řádek a krátce ji
     // zvýrazni. Index se hledá v UŽ SESTAVENÝCH `rows`, žádné čtení historie.
@@ -937,7 +957,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // Zarovnání DOLŮ: poslední bublina drží konstantní mezeru nad
+                    // vstupní lištou. Bez toho seznam visel nahoře, a když lišta
+                    // narostla o řádek, její horní hrana se přiblížila k poslední
+                    // bublině (mezera 148→87 px) a při víc řádcích ji překryla.
+                    // Takhle se místo toho chat plynule sroluje nahoru. Při zaplněné
+                    // obrazovce (obsah > výška) beze změny.
+                    verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)
                 ) {
                     items(rows, key = { it.key }, contentType = { it::class }) { row ->
                         when (row) {
