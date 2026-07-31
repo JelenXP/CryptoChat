@@ -65,9 +65,15 @@ fun IncognitoTextField(
         AndroidView(
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             factory = { ctx ->
+                // Svislé odsazení v PIXELECH (proto převod z dp): jeden řádek + odsazení
+                // ≈ min. výška 40 dp. Bez něj 40 dp pojme DVA řádky, takže první přírůstek
+                // se „spolkne" a pole naroste (odtlačí chat) až u třetího řádku - skokově.
+                // S odsazením roste plynule po jednom řádku. CENTER_VERTICAL drží jeden
+                // řádek svisle vycentrovaný, takže vzhled prázdného pole zůstává.
+                val vpad = (10 * ctx.resources.displayMetrics.density).toInt()
                 EditText(ctx).apply {
                     background = null
-                    setPadding(0, 0, 0, 0)
+                    setPadding(0, vpad, 0, vpad)
                     gravity = Gravity.CENTER_VERTICAL
                     textSize = 16f
                     this.maxLines = maxLines
