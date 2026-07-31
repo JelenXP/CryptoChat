@@ -13,11 +13,12 @@ import java.net.URL
  * vydání. Nikdy nevyhodí výjimku (offline, chyba sítě → vrátí `null`), aby
  * kontrola nikdy nezablokovala ani neshodila appku.
  *
- * **Dotaz jde vždy přes zabudovaný Tor.** Napřímo by to byl jediný požadavek
- * celé appky, který by z reálné IP prozradil, že tenhle (privacy) messenger
- * na daném zařízení běží a jak často se spouští - přesně ta metadata, kvůli
- * kterým appka jinak jede přes onion. Když Tor neběží, kontrola se prostě
- * přeskočí ([Result.Failed]) a zkusí se příště; nikdy se nepošle napřímo.
+ * **V Tor módu jde dotaz přes zabudovaný Tor.** Napřímo by to byl jediný
+ * požadavek celé appky, který by z reálné IP prozradil, že tenhle (privacy)
+ * messenger na daném zařízení běží a jak často se spouští. Když Tor neběží,
+ * kontrola se v Tor módu přeskočí ([Result.Failed]) a zkusí se příště. V
+ * Cloudflare módu (uživatel zvolil přímé připojení, jeho IP už vidí relay
+ * i Cloudflare) jde kontrola napřímo - `viaTor` volí volající.
  *
  * Verze je „důležitá" (`important`), pokud její poznámky (release body)
  * obsahují značku [IMPORTANT_MARKER] - tu do vydání přidává release workflow
@@ -87,22 +88,25 @@ object UpdateChecker {
         data object Failed : Result
     }
 
-    /** Vrátí info o novější verzi, nebo `null` (nic novějšího / se to nepovedlo). */
-    fun check(currentVersion: String): UpdateInfo? =
-        (checkDetailed(currentVersion) as? Result.UpdateAvailable)?.info
+    /**
+     * Vrátí info o novější verzi, nebo `null` (nic novějšího / se to nepovedlo).
+     * @param viaTor přes zabudovaný Tor (Tor mód), nebo napřímo (Cloudflare mód).
+     */
+    fun check(currentVersion: String, viaTor: Boolean): UpdateInfo? =
+        (checkDetailed(currentVersion, viaTor) as? Result.UpdateAvailable)?.info
 
     /**
      * Podrobná varianta [check]: vrátí [Result] rozlišující dostupný update,
      * aktuální verzi a selhání. Nikdy nevyhodí výjimku.
      */
-    fun checkDetailed(currentVersion: String): Result {
+    fun checkDetailed(currentVersion: String, viaTor: Boolean): Result {
         return try {
             var reachedAny = false
             val releases = mutableListOf<Release>()
             for (url in RELEASES_URLS) {
                 // null = zdroj nedosažitelný (síť / neexistující repo → 404).
                 // Přeskoč ho; verze sbíráme napříč zbylými.
-                val json = fetch(url) ?: continue
+                val json = fetch(url, viaTor) ?: continue
                 reachedAny = true
                 val array = try { JSONArray(json) } catch (e: Exception) { continue }
                 for (i in 0 until array.length()) {
@@ -164,14 +168,17 @@ object UpdateChecker {
 
     internal data class Release(val version: String, val url: String, val body: String)
 
-    private fun fetch(urlString: String): String? {
-        // Bez běžícího Toru se nekontroluje vůbec - radši žádná kontrola než
-        // dotaz z reálné IP (viz poznámka u třídy).
-        if (!TorManager.awaitReady(TOR_WAIT_MS)) return null
-        val proxy = Proxy(
-            Proxy.Type.SOCKS,
-            InetSocketAddress(TorManager.socksHost, TorManager.socksPort)
-        )
+    private fun fetch(urlString: String, viaTor: Boolean): String? {
+        val proxy = if (viaTor) {
+            // Tor mód: bez běžícího Toru se nekontroluje vůbec - radši žádná
+            // kontrola než dotaz z reálné IP (viz poznámka u třídy).
+            if (!TorManager.awaitReady(TOR_WAIT_MS)) return null
+            Proxy(Proxy.Type.SOCKS, InetSocketAddress(TorManager.socksHost, TorManager.socksPort))
+        } else {
+            // Cloudflare mód: uživatel zvolil přímé připojení, takže i kontrola
+            // updatu jde napřímo (jeho IP už vidí relay i Cloudflare - konzistentní).
+            Proxy.NO_PROXY
+        }
         var connection: HttpURLConnection? = null
         return try {
             connection = (URL(urlString).openConnection(proxy) as HttpURLConnection).apply {

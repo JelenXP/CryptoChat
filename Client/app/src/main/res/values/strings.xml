@@ -229,6 +229,7 @@
          and drop the oldest (6th) one. -->
     <string name="changelog_title">What\'s new in %1$s</string>
     <string name="changelog_title_multi">What\'s new</string>
+    <string name="changelog_2_6_0">Version 2.6.0 — choose how you connect.\n\n• On first launch you can now pick how the app reaches the server: over Tor (recommended, maximum privacy) or directly via Cloudflare (faster and lighter on the battery).\n\n• Messages stay end-to-end encrypted either way — the choice only affects network metadata like your IP.\n\n• Change it anytime in Settings → Chat server.</string>
     <string name="changelog_2_5_0">Version 2.5.0 — accent-coloured chat bubbles and a tidier settings screen.\n\n• Your sent messages now follow the accent colour you pick in Appearance, each accent a distinct light shade — so the choice finally shows in the chat.\n\n• The app-lock delay is now a compact switch instead of a tall list.\n\n• Settings cleanup — removed a few rarely-used options: copying the key to the clipboard, the file-size limit, and pausing update reminders.\n\n• Removed the older, duplicate key verification; the security code from key rotation is the one to use.</string>
     <string name="changelog_2_4_1">Version 2.4.1 — a quick fix for the full-screen windows.\n\n• The full-screen What\'s new and update windows can now be scrolled and their button tapped on every phone. On some phones the button did nothing and scrolling only half worked, depending on the phone — it was not a performance issue.\n\n• The same fix applies to the lock screen, so unlocking always responds.</string>
     <string name="changelog_2_4_0">Version 2.4.0 — stronger privacy, safer pairing and lots of reliability fixes.\n\n⚠️ For a NEW remote pairing, both phones should be on 2.4.0: the verification code (SAS) is now longer, so a new and an old phone would show codes that don’t line up. Existing chats keep working no matter which phone updates first.\n\n• Hidden photo and file sizes — photos and files are padded before sending, so the server can’t tell how big they are (it already can’t see the content).\n\n• Stronger verification code — the code you read aloud when pairing is longer and much harder to forge.\n\n• Configurable auto-lock — Settings lets you pick how long after leaving the app it locks: immediately, 10s, 30s, 1min or 5min.\n\n• Better full-screen photos — they open instantly, animate like the rest of the app, and no longer flash on screen before the app lock.\n\n• Tighter block on key changes — if a verified contact’s security code changes, every way of sending (reactions, retry and delete-for-everyone too) pauses until you re-verify, not just the send button.\n\n• Stronger backup password — backups now need at least 8 characters.\n\n• Fewer lost messages — many fixes so a message can’t be silently dropped when a write fails, a failed reaction rolls back instead of looking sent, and more.\n\n• Sturdier server and privacy — the relay resists flooding better, and bug reports no longer leak IP addresses or Tor identifiers.\n\n• Assorted scroll and tap fixes across several screens.</string>
@@ -355,16 +356,32 @@
     <string name="relay_info">A zero-knowledge relay for chatting over the internet. The server only forwards encrypted messages — it never learns their content or who is talking to whom.</string>
     <string name="relay_mode_default">Default</string>
     <string name="relay_mode_custom">Custom</string>
-    <string name="relay_default_desc">Uses the official relay over Tor — nothing to install.</string>
+    <string name="relay_default_desc_tor">Official server over Tor — maximum privacy, nothing to install.</string>
+    <string name="relay_default_desc_cloudflare">Official server directly via Cloudflare — fast, but Cloudflare and the server can see your IP.</string>
+
+    <!-- Connection choice screen (first launch) + relay screen toggle -->
+    <string name="conn_choice_title">Connection</string>
+    <string name="conn_choice_intro">Messages are always end-to-end encrypted. The choice only affects how your phone connects to the server.</string>
+    <string name="conn_recommended">Recommended</string>
+    <string name="conn_tor_title">Over Tor</string>
+    <string name="conn_tor_subtitle">Maximum privacy</string>
+    <string name="conn_tor_pro">No one sees your IP or that you use the app</string>
+    <string name="conn_tor_con">Slower connection, higher battery use</string>
+    <string name="conn_cf_title">Over Cloudflare</string>
+    <string name="conn_cf_subtitle">Fast, saves battery</string>
+    <string name="conn_cf_pro">Almost instant connection, lower battery use</string>
+    <string name="conn_cf_con">Cloudflare and the server can see your IP</string>
+    <string name="conn_choice_continue">Continue</string>
+    <string name="conn_choice_footer">You can change this anytime in settings.</string>
     <string name="relay_custom_desc">Use your own server address.</string>
     <string name="relay_custom_label">Server address</string>
     <string name="relay_custom_help">For example http://192.168.1.10:8787 on a local network, or a .onion address over Tor. Leave empty to turn the chat server off.</string>
     <string name="relay_fallback_label">Backup relays (one per line)</string>
     <string name="relay_fallback_help">Optional. If the main relay is unreachable, outgoing messages fail over to these in order, and incoming messages are checked here too. A mailbox is the same on any relay, so both phones can use different backups.</string>
     <string name="diag_settings_label">Connection diagnostics</string>
-    <string name="diag_settings_desc">Tor and relay health, for troubleshooting</string>
+    <string name="diag_settings_desc">Connection and relay health, for troubleshooting</string>
     <string name="diag_title">Connection diagnostics</string>
-    <string name="diag_info">Health metrics for the Tor connection and relay. Everything here is aggregated and redacted — no addresses, mailboxes, or message content.</string>
+    <string name="diag_info">Health metrics for the connection and relay. Everything here is aggregated and redacted — no addresses, mailboxes, or message content.</string>
     <string name="diag_tor">Tor</string>
     <string name="diag_bootstrap">Bootstrap</string>
     <string name="diag_relay">Relay</string>
@@ -489,7 +506,7 @@
 
     <!-- Background service / notifications -->
     <string name="notif_channel_service">Chat server connection</string>
-    <string name="notif_channel_service_desc">Keeps the Tor connection to the chat server active so messages arrive.</string>
+    <string name="notif_channel_service_desc">Keeps the connection to the chat server active so messages arrive.</string>
     <string name="notif_channel_messages">Messages</string>
     <string name="notif_channel_messages_desc">Notifications for new messages.</string>
     <string name="notif_channel_updates">App updates</string>
@@ -526,9 +543,9 @@
     <string name="onb_status_enabled">Enabled</string>
     <!-- Hlaseni chyb (Nahlasit chybu) -->
     <string name="settings_bug_report_label">Report a problem</string>
-    <string name="settings_bug_report_desc">Send an anonymous report over Tor to help fix a bug</string>
+    <string name="settings_bug_report_desc">Send an anonymous report to help fix a bug</string>
     <string name="bug_report_title">Report a problem</string>
-    <string name="bug_report_intro">Describe what went wrong. The report is sent anonymously over Tor, so your real IP address stays hidden.</string>
+    <string name="bug_report_intro">Describe what went wrong. The report is anonymous — it never includes your messages, keys, or contacts.</string>
     <string name="bug_report_desc_label">What happened?</string>
     <string name="bug_report_desc_placeholder">For example: messages from one contact stopped arriving after restarting the phone.</string>
     <string name="bug_report_desc_required">Please describe the problem first.</string>
@@ -536,17 +553,17 @@
     <string name="bug_report_attach_device">App and phone version</string>
     <string name="bug_report_attach_device_desc">App version, Android version and phone model</string>
     <string name="bug_report_attach_log">Diagnostic log</string>
-    <string name="bug_report_attach_log_desc">Recent events: Tor state, relay connections, number of messages delivered</string>
+    <string name="bug_report_attach_log_desc">Recent events: connection state, relay connections, number of messages delivered</string>
     <string name="bug_report_attach_conn">Connection state</string>
-    <string name="bug_report_attach_conn_desc">Whether Tor is running and whether the server is reachable</string>
+    <string name="bug_report_attach_conn_desc">Whether the connection is up and whether the server is reachable</string>
     <string name="bug_report_attach_crash">Last crash record</string>
     <string name="bug_report_attach_crash_desc">Technical details of the last app crash</string>
     <string name="bug_report_attach_crash_none">No crash has been recorded</string>
-    <string name="bug_report_privacy">Messages, encryption keys, contact names, mailbox IDs and the server address are never logged and are never part of a report. By sending it you agree to submit the listed anonymous data to the server. The transfer goes over Tor.</string>
+    <string name="bug_report_privacy">Messages, encryption keys, contact names, mailbox IDs and the server address are never logged and are never part of a report. By sending it you agree to submit the listed anonymous data to the server.</string>
     <string name="bug_report_preview">Show what will be sent</string>
     <string name="bug_report_preview_title">Contents of the report</string>
     <string name="bug_report_send">Send report</string>
-    <string name="bug_report_sending">Sending over Tor, this can take a while…</string>
+    <string name="bug_report_sending">Sending, this can take a while…</string>
     <string name="bug_report_result_ok">Report sent. Thank you!</string>
     <string name="bug_report_error_no_relay">Chat server is not set, there is nowhere to send the report.</string>
     <string name="bug_report_error_tor">Tor did not start in time. The report was not sent – sending it directly would reveal your IP address.</string>

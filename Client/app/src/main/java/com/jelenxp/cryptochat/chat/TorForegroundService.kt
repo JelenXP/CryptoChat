@@ -288,7 +288,8 @@ class TorForegroundService : Service() {
         // smyček, tedy zotavení příjmu zpráv.
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { UpdateChecker.checkDetailed(currentVersionName()) }
+                val viaTor = settings.getRelayUrl().contains(".onion")
+                runCatching { UpdateChecker.checkDetailed(currentVersionName(), viaTor) }
                     .getOrDefault(UpdateChecker.Result.Failed)
             }
             if (result is UpdateChecker.Result.Failed) {

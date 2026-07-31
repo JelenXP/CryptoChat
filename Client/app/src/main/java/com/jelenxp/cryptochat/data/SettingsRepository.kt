@@ -113,14 +113,37 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_RELAY_URL, url.trim()).apply()
     }
 
+    // --- Způsob připojení k VÝCHOZÍMU serveru (Tor vs. Cloudflare) ---
+    // Uplatní se JEN v režimu VÝCHOZÍ. Tor = zabudovaná .onion adresa (nejvyšší
+    // soukromí), Cloudflare = přímá https adresa (rychlé, ale Cloudflare i server
+    // vidí IP). U VLASTNÍ adresy o transportu rozhoduje sama adresa (.onion → Tor,
+    // http/https → napřímo), tahle volba se tam neuplatní. Výchozí [ConnectionMode.TOR].
+
+    fun getConnectionMode(): ConnectionMode = readEnum(KEY_CONN_MODE, ConnectionMode.TOR)
+    fun setConnectionMode(v: ConnectionMode) = writeEnum(KEY_CONN_MODE, v)
+
+    /**
+     * Potvrdil už uživatel volbu způsobu připojení (úvodní obrazovka)? Dokud ne,
+     * ukazuje se po startu (viz StartupGate v MainActivity). Výchozí `false`.
+     */
+    fun isConnectionChoiceMade(): Boolean = prefs.getBoolean(KEY_CONN_CHOICE_MADE, false)
+    fun setConnectionChoiceMade(made: Boolean) {
+        prefs.edit().putBoolean(KEY_CONN_CHOICE_MADE, made).apply()
+    }
+
     /**
      * Efektivní adresa serveru, kterou používá zbytek appky (RelayClient,
-     * RelaySync, Tor…). V režimu VÝCHOZÍ vrací zabudovanou [DEFAULT_RELAY_URL],
-     * jinak uživatelskou adresu. Prázdná (VLASTNÍ + nevyplněno) = chat přes
-     * server je vypnutý a appka jede jako offline.
+     * RelaySync, Tor…). V režimu VÝCHOZÍ vrací zabudovanou adresu podle
+     * [getConnectionMode] ([DEFAULT_RELAY_URL] přes Tor, nebo
+     * [DEFAULT_RELAY_URL_CLOUDFLARE] napřímo), jinak uživatelskou adresu. Prázdná
+     * (VLASTNÍ + nevyplněno) = chat přes server je vypnutý a appka jede jako offline.
      */
     fun getRelayUrl(): String =
-        if (isUsingCustomRelay()) getRelayCustomUrl() else DEFAULT_RELAY_URL
+        if (isUsingCustomRelay()) getRelayCustomUrl()
+        else when (getConnectionMode()) {
+            ConnectionMode.TOR -> DEFAULT_RELAY_URL
+            ConnectionMode.CLOUDFLARE -> DEFAULT_RELAY_URL_CLOUDFLARE
+        }
 
     /**
      * Záložní relaye (jeden na řádek). Když primární neodpoví, odeslání zkusí je
@@ -200,6 +223,8 @@ class SettingsRepository(context: Context) {
         private const val KEY_RELAY_URL = "relay_url"
         private const val KEY_RELAY_CUSTOM = "relay_use_custom"
         private const val KEY_RELAY_FALLBACKS = "relay_fallbacks"
+        private const val KEY_CONN_MODE = "relay_connection_mode"
+        private const val KEY_CONN_CHOICE_MADE = "relay_connection_choice_made"
         private const val KEY_ONBOARDING_DONE = "onboarding_done"
         private const val KEY_LANGUAGE = "app_language_tag"
         private const val KEY_LANGUAGE_MIGRATED = "app_language_migrated"
@@ -210,5 +235,19 @@ class SettingsRepository(context: Context) {
          */
         const val DEFAULT_RELAY_URL =
             "http://m7rwivoh3yzvzbvi2m5ob3qau5wtik5f46qsphjycoyof7gcwfbjnaad.onion"
+
+        /**
+         * Výchozí přímá (clearnet) adresa oficiálního relaye přes Cloudflare tunel.
+         * Použije se ve VÝCHOZÍM režimu při [ConnectionMode.CLOUDFLARE] - rychlé
+         * připojení bez Toru, ale Cloudflare i server vidí IP klienta.
+         */
+        const val DEFAULT_RELAY_URL_CLOUDFLARE = "https://cryptochat.deersolutions.eu"
     }
 }
+
+/**
+ * Způsob připojení k VÝCHOZÍMU relayi. [TOR] = přes zabudovaný Tor na .onion
+ * (nejvyšší soukromí), [CLOUDFLARE] = napřímo přes https (rychlé, ale Cloudflare
+ * i server vidí IP). Viz [SettingsRepository.getConnectionMode].
+ */
+enum class ConnectionMode { TOR, CLOUDFLARE }

@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.data.ConnectionMode
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
@@ -35,12 +36,14 @@ fun RelaySettingsScreen(navController: NavController) {
 
     var useCustom by remember { mutableStateOf(settings.isUsingCustomRelay()) }
     var customUrl by remember { mutableStateOf(settings.getRelayCustomUrl()) }
+    var connMode by remember { mutableStateOf(settings.getConnectionMode()) }
 
-    // Po přepnutí na .onion (výchozí i vlastní) nastartuj Tor, ať se stihne
-    // nabootovat, než se otestuje spojení.
+    // Po přepnutí na .onion adresu (výchozí přes Tor i vlastní .onion) nastartuj
+    // Tor, ať se stihne nabootovat, než se otestuje spojení. Čte efektivní adresu
+    // z nastavení, takže respektuje i volbu Tor/Cloudflare u výchozího serveru
+    // (u Cloudflare je adresa https → Tor se nespouští).
     fun ensureTorIfOnion() {
-        val effective = if (useCustom) customUrl.trim() else SettingsRepository.DEFAULT_RELAY_URL
-        if (effective.contains(".onion")) TorController.ensureStarted(context)
+        if (settings.getRelayUrl().contains(".onion")) TorController.ensureStarted(context)
     }
 
     CryptoScaffold(
@@ -93,8 +96,26 @@ fun RelaySettingsScreen(navController: NavController) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
+                // Způsob připojení k VÝCHOZÍMU serveru: Tor (soukromí) vs. Cloudflare
+                // (rychlost). U vlastní adresy o transportu rozhoduje sama adresa,
+                // takže se tenhle přepínač ukazuje jen tady.
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.conn_tor_title),
+                        stringResource(R.string.conn_cf_title)
+                    ),
+                    selectedIndex = if (connMode == ConnectionMode.TOR) 0 else 1,
+                    onSelect = { index ->
+                        connMode = if (index == 0) ConnectionMode.TOR else ConnectionMode.CLOUDFLARE
+                        settings.setConnectionMode(connMode)
+                        ensureTorIfOnion()
+                    }
+                )
                 Text(
-                    text = stringResource(R.string.relay_default_desc),
+                    text = stringResource(
+                        if (connMode == ConnectionMode.TOR) R.string.relay_default_desc_tor
+                        else R.string.relay_default_desc_cloudflare
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

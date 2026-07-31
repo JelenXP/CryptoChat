@@ -229,6 +229,7 @@
          a nejstarší (šestý) odeber. -->
     <string name="changelog_title">Novinky ve verzi %1$s</string>
     <string name="changelog_title_multi">Novinky</string>
+    <string name="changelog_2_6_0">Verze 2.6.0 — vyber si, jak se připojíš.\n\n• Při prvním spuštění teď zvolíš, jak se aplikace spojí se serverem: přes Tor (doporučeno, nejvyšší soukromí) nebo napřímo přes Cloudflare (rychlejší a šetrnější k baterii).\n\n• Zprávy zůstávají šifrované end-to-end u obou — volba ovlivní jen síťová metadata jako tvoji IP.\n\n• Změníš kdykoliv v Nastavení → Server chatu.</string>
     <string name="changelog_2_5_0">Verze 2.5.0 — bubliny chatu v barvě accentu a uklizené nastavení.\n\n• Tvoje odeslané zprávy teď mají barvu accentu, který si zvolíš ve Vzhledu — každý accent jiný světlý odstín, takže se volba konečně projeví i v chatu.\n\n• Prodleva zámku aplikace je teď kompaktní přepínač místo dlouhého seznamu.\n\n• Úklid nastavení — odebrané málo používané volby: kopírování klíče do schránky, limit velikosti souboru a pozastavení připomínání aktualizací.\n\n• Odebráno starší, duplicitní ověření klíče; používej bezpečnostní kód z rotace klíčů.</string>
     <string name="changelog_2_4_1">Verze 2.4.1 — rychlá oprava celoobrazovkových oken.\n\n• Celoobrazovková okna Novinky a Aktualizace teď jdou na každém telefonu odscrollovat a jejich tlačítko zareaguje. Na některých telefonech tlačítko nic nedělalo a scrollování fungovalo jen z poloviny — nebylo to výkonem, ale způsobem zpracování dotyku na daném telefonu.\n\n• Stejná oprava platí i pro zamykací obrazovku, takže odemykání vždy zareaguje.</string>
     <string name="changelog_2_4_0">Verze 2.4.0 — silnější soukromí, bezpečnější párování a spousta oprav spolehlivosti.\n\n⚠️ Pro NOVÉ párování na dálku by měly být oba telefony na 2.4.0: ověřovací kód (SAS) je teď delší, takže nový a starý telefon by ukázaly kódy, které si neodpovídají. Stávající konverzace fungují dál bez ohledu na to, který telefon aktualizuješ dřív.\n\n• Skrytá velikost fotek a souborů — fotky i soubory se před odesláním zarovnají, takže server nepozná, jak jsou velké (obsah stejně nevidí).\n\n• Silnější ověřovací kód — kód, který si při párování čtete nahlas, je delší a mnohem těžší podvrhnout.\n\n• Nastavitelné automatické zamčení — v nastavení si vybereš, za jak dlouho po odchodu z aplikace se zamkne: ihned, 10 s, 30 s, 1 min nebo 5 min.\n\n• Lepší fotky na celou obrazovku — otevírají se okamžitě, animují jako zbytek aplikace a už neproblesknou před zámkem aplikace.\n\n• Důkladnější blokace při změně klíče — když se ověřenému kontaktu změní bezpečnostní kód, pozastaví se každý způsob odeslání (i reakce, opakování a mazání pro všechny), ne jen tlačítko odeslat.\n\n• Silnější heslo zálohy — záloha teď vyžaduje aspoň 8 znaků.\n\n• Míň ztracených zpráv — spousta oprav, aby se zpráva tiše neztratila při selhání zápisu, aby se nepovedená reakce vrátila místo zobrazení jako odeslaná, a další.\n\n• Odolnější server a soukromí — relay líp odolá zahlcení a hlášení chyb už neprozradí IP adresy ani Tor identifikátory.\n\n• Různé opravy scrollování a klepání ve více oknech.</string>
@@ -355,16 +356,32 @@
     <string name="relay_info">Zero-knowledge relay pro chat přes internet. Server přeposílá jen zašifrované zprávy — nezná jejich obsah ani to, kdo komu píše.</string>
     <string name="relay_mode_default">Výchozí</string>
     <string name="relay_mode_custom">Vlastní</string>
-    <string name="relay_default_desc">Používá oficiální relay přes Tor — nic se neinstaluje.</string>
+    <string name="relay_default_desc_tor">Oficiální server přes Tor — nejvyšší soukromí, nic se neinstaluje.</string>
+    <string name="relay_default_desc_cloudflare">Oficiální server napřímo přes Cloudflare — rychlé, ale Cloudflare a server vidí tvou IP.</string>
+
+    <!-- Connection choice screen (first launch) + relay screen toggle -->
+    <string name="conn_choice_title">Připojení</string>
+    <string name="conn_choice_intro">Zprávy jsou vždy šifrované end-to-end. Volba určuje jen způsob připojení k serveru.</string>
+    <string name="conn_recommended">Doporučeno</string>
+    <string name="conn_tor_title">Přes Tor</string>
+    <string name="conn_tor_subtitle">Nejvyšší soukromí</string>
+    <string name="conn_tor_pro">Nikdo nevidí tvou IP ani že appku používáš</string>
+    <string name="conn_tor_con">Pomalejší připojení, větší spotřeba baterie</string>
+    <string name="conn_cf_title">Přes Cloudflare</string>
+    <string name="conn_cf_subtitle">Rychlé, šetří baterii</string>
+    <string name="conn_cf_pro">Připojení skoro okamžité, nižší spotřeba baterie</string>
+    <string name="conn_cf_con">Cloudflare a server mohou vidět tvou IP</string>
+    <string name="conn_choice_continue">Pokračovat</string>
+    <string name="conn_choice_footer">Změníš kdykoliv v nastavení.</string>
     <string name="relay_custom_desc">Zadej si vlastní adresu serveru.</string>
     <string name="relay_custom_label">Adresa serveru</string>
     <string name="relay_custom_help">Například http://192.168.1.10:8787 v místní síti nebo .onion adresa přes Tor. Necháš-li prázdné, chat přes server je vypnutý.</string>
     <string name="relay_fallback_label">Záložní relaye (jeden na řádek)</string>
     <string name="relay_fallback_help">Volitelné. Když primární relay neodpovídá, odchozí zprávy se přesměrují na tyhle (v pořadí) a příchozí se tu taky kontrolují. Schránka je na každém relayi stejná, takže oba telefony můžou mít různé zálohy.</string>
     <string name="diag_settings_label">Diagnostika spojení</string>
-    <string name="diag_settings_desc">Zdraví Toru a relaye, pro řešení potíží</string>
+    <string name="diag_settings_desc">Zdraví spojení a relaye, pro řešení potíží</string>
     <string name="diag_title">Diagnostika spojení</string>
-    <string name="diag_info">Zdravotní metriky spojení přes Tor a relaye. Vše tady je agregované a zredigované — žádné adresy, schránky ani obsah zpráv.</string>
+    <string name="diag_info">Zdravotní metriky spojení a relaye. Vše tady je agregované a zredigované — žádné adresy, schránky ani obsah zpráv.</string>
     <string name="diag_tor">Tor</string>
     <string name="diag_bootstrap">Bootstrap</string>
     <string name="diag_relay">Relay</string>
@@ -489,7 +506,7 @@
 
     <!-- Služba na pozadí / notifikace -->
     <string name="notif_channel_service">Spojení se serverem chatu</string>
-    <string name="notif_channel_service_desc">Drží spojení k serveru chatu přes Tor, aby chodily zprávy.</string>
+    <string name="notif_channel_service_desc">Drží spojení k serveru chatu, aby chodily zprávy.</string>
     <string name="notif_channel_messages">Zprávy</string>
     <string name="notif_channel_messages_desc">Upozornění na nové zprávy.</string>
     <string name="notif_channel_updates">Aktualizace aplikace</string>
@@ -526,9 +543,9 @@
     <string name="onb_status_enabled">Povoleno</string>
     <!-- Hlaseni chyb (Nahlasit chybu) -->
     <string name="settings_bug_report_label">Nahlásit chybu</string>
-    <string name="settings_bug_report_desc">Odeslat anonymní hlášení přes Tor a pomoct chybu opravit</string>
+    <string name="settings_bug_report_desc">Odeslat anonymní hlášení a pomoct chybu opravit</string>
     <string name="bug_report_title">Nahlásit chybu</string>
-    <string name="bug_report_intro">Popiš, co se pokazilo. Hlášení se posílá anonymně přes Tor, takže tvá skutečná IP adresa zůstane skrytá.</string>
+    <string name="bug_report_intro">Popiš, co se pokazilo. Hlášení je anonymní — nikdy neobsahuje tvé zprávy, klíče ani kontakty.</string>
     <string name="bug_report_desc_label">Co se stalo?</string>
     <string name="bug_report_desc_placeholder">Například: po restartu telefonu přestaly chodit zprávy od jednoho kontaktu.</string>
     <string name="bug_report_desc_required">Nejdřív prosím popiš problém.</string>
@@ -536,17 +553,17 @@
     <string name="bug_report_attach_device">Verze aplikace a telefonu</string>
     <string name="bug_report_attach_device_desc">Verze aplikace, verze Androidu a model telefonu</string>
     <string name="bug_report_attach_log">Diagnostický log</string>
-    <string name="bug_report_attach_log_desc">Poslední události: stav Toru, připojení k serveru, počty doručených zpráv</string>
+    <string name="bug_report_attach_log_desc">Poslední události: stav spojení, připojení k serveru, počty doručených zpráv</string>
     <string name="bug_report_attach_conn">Stav připojení</string>
-    <string name="bug_report_attach_conn_desc">Jestli běží Tor a jestli je server dostupný</string>
+    <string name="bug_report_attach_conn_desc">Jestli je spojení navázané a jestli je server dostupný</string>
     <string name="bug_report_attach_crash">Záznam o posledním pádu</string>
     <string name="bug_report_attach_crash_desc">Technické podrobnosti o posledním pádu aplikace</string>
     <string name="bug_report_attach_crash_none">Žádný pád není zaznamenaný</string>
-    <string name="bug_report_privacy">Zprávy, šifrovací klíče, jména kontaktů, ID schránek ani adresa serveru se nikdy nezaznamenávají a nejsou součástí hlášení. Odesláním souhlasíš s odesláním vypsaných anonymních údajů na server. Přenos jde přes Tor.</string>
+    <string name="bug_report_privacy">Zprávy, šifrovací klíče, jména kontaktů, ID schránek ani adresa serveru se nikdy nezaznamenávají a nejsou součástí hlášení. Odesláním souhlasíš s odesláním vypsaných anonymních údajů na server.</string>
     <string name="bug_report_preview">Zobrazit, co se odešle</string>
     <string name="bug_report_preview_title">Obsah hlášení</string>
     <string name="bug_report_send">Odeslat hlášení</string>
-    <string name="bug_report_sending">Odesílám přes Tor, může to chvíli trvat…</string>
+    <string name="bug_report_sending">Odesílám, může to chvíli trvat…</string>
     <string name="bug_report_result_ok">Hlášení odesláno. Díky!</string>
     <string name="bug_report_error_no_relay">Není nastavený server chatu, hlášení nemá kam odejít.</string>
     <string name="bug_report_error_tor">Tor se nestihl spustit. Hlášení se neodeslalo – napřímo by prozradilo tvou IP adresu.</string>

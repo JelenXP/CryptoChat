@@ -72,6 +72,7 @@ import com.jelenxp.cryptochat.ui.screens.AddUserScreen
 import com.jelenxp.cryptochat.ui.screens.BackupScreen
 import com.jelenxp.cryptochat.ui.screens.BugReportScreen
 import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
+import com.jelenxp.cryptochat.ui.screens.ConnectionChoiceScreen
 import com.jelenxp.cryptochat.ui.screens.DiagnosticsScreen
 import com.jelenxp.cryptochat.ui.screens.ChatScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
@@ -376,6 +377,11 @@ private fun StartupGate(content: @Composable () -> Unit) {
     var showChangelog by remember { mutableStateOf(changelogEntries.isNotEmpty()) }
     LaunchedEffect(Unit) { settings.setLastSeenVersionCode(currentVersionCode) }
 
+    // Úvodní volba připojení (Tor / Cloudflare): ukazuje se po startu vždy, dokud
+    // ji uživatel nepotvrdí - u nové instalace hned, u existující po aktualizaci
+    // (až PO changelogu, viz pořadí ve `when` níže).
+    var showConnChoice by remember { mutableStateOf(!settings.isConnectionChoiceMade()) }
+
     // Kontrola nové verze na pozadí.
     var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
     var updateEligible by remember { mutableStateOf(false) }
@@ -384,7 +390,10 @@ private fun StartupGate(content: @Composable () -> Unit) {
         // původní offline appky). Až budou vlastní veřejné releases, zapni ji.
         if (!FeatureFlags.UPDATE_CHECK_ENABLED) return@LaunchedEffect
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
-        val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion) }
+        // V Cloudflare módu (efektivní adresa není .onion) jde kontrola napřímo,
+        // v Tor módu přes Tor - stejný transport, jaký uživatel zvolil pro chat.
+        val viaTor = settings.getRelayUrl().contains(".onion")
+        val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion, viaTor) }
             ?: return@LaunchedEffect
         // Rozhodnutí (pozastavení, zavření, připomínací interval) je v čisté
         // funkci vedle obrazovky - stejná pravidla jako UpdateNotifyPolicy na
@@ -403,7 +412,7 @@ private fun StartupGate(content: @Composable () -> Unit) {
         }
     }
 
-    val overlayShown = showChangelog || (updateEligible && updateInfo != null)
+    val overlayShown = showChangelog || showConnChoice || (updateEligible && updateInfo != null)
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Obsahu pod překryvem řekni, že je zakrytý - pozastaví periodickou práci,
@@ -411,9 +420,13 @@ private fun StartupGate(content: @Composable () -> Unit) {
         CompositionLocalProvider(LocalUiBlocked provides overlayShown) { content() }
         val info = updateInfo
         when {
-            // Novinky mají přednost; teprve po jejich zavření se případně ukáže update.
+            // Novinky mají přednost; teprve po jejich zavření se ukáže volba
+            // připojení (dokud není potvrzená), a až nakonec případný update.
             showChangelog -> BlockingOverlay {
                 ChangelogScreen(entries = changelogEntries, onDismiss = { showChangelog = false })
+            }
+            showConnChoice -> BlockingOverlay {
+                ConnectionChoiceScreen(onDone = { showConnChoice = false })
             }
             updateEligible && info != null -> BlockingOverlay {
                 UpdateScreen(

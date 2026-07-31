@@ -94,11 +94,23 @@ it — on this or another phone — restores exactly the same state.
 
 > Keep the password safe. Without it the backup cannot be recovered.
 
+## Choosing how to connect
+
+The first time you open the app it asks how to reach the server:
+
+- **Over Tor** (recommended) — the highest privacy: no one sees your IP address or that you
+  use the app. The trade-off is a slower first connection and a bit more battery.
+- **Over Cloudflare** — a direct connection: fast and lighter on the battery, but Cloudflare
+  and the server can see your IP address.
+
+Either way your messages stay end-to-end encrypted — the choice only affects network
+metadata, never the content. You can change it anytime in **Chat server**.
+
 ## Own server
 
-By default the app uses the built-in relay over Tor. In **Chat server** you can switch to
-**Custom** and enter your own address (your own relay on your local network or your own
-`.onion`).
+By default the app uses the built-in official relay (over Tor or Cloudflare, as chosen
+above). In **Chat server** you can also switch to **Custom** and enter your own address
+(your own relay on your local network or your own `.onion`).
 
 You can also list **backup servers**, one address per line. If the main one doesn't answer,
 messages go out over a backup — and the app looks for incoming ones there too. Because a
@@ -247,11 +259,23 @@ nebo jiném telefonu — obnoví přesně stejný stav.
 
 > Heslo si dobře ulož. Bez něj zálohu nelze obnovit.
 
+## Jak se připojit
+
+Při prvním spuštění se appka zeptá, jak se má spojit se serverem:
+
+- **Přes Tor** (doporučeno) — nejvyšší soukromí: nikdo nevidí tvou IP adresu ani to, že appku
+  používáš. Cenou je pomalejší první připojení a o něco větší spotřeba baterie.
+- **Přes Cloudflare** — přímé připojení: rychlé a šetrnější k baterii, ale Cloudflare a server
+  vidí tvou IP adresu.
+
+Zprávy zůstávají u obou voleb šifrované end-to-end — volba ovlivní jen síťová metadata, nikdy
+obsah. Změnit ji můžeš kdykoliv v **Serveru chatu**.
+
 ## Vlastní server
 
-Ve výchozím stavu appka používá zabudovaný relay přes Tor. V **Serveru chatu** můžeš
-přepnout na **Vlastní** a zadat svou adresu (vlastní relay v místní síti nebo vlastní
-`.onion`).
+Ve výchozím stavu appka používá zabudovaný oficiální relay (přes Tor nebo Cloudflare, podle
+volby výše). V **Serveru chatu** můžeš taky přepnout na **Vlastní** a zadat svou adresu
+(vlastní relay v místní síti nebo vlastní `.onion`).
 
 Můžeš taky vypsat **záložní servery**, jednu adresu na řádek. Když hlavní neodpovídá,
 zprávy odejdou přes záložní — a appka tam hledá i příchozí. Adresa schránky se odvozuje ze

@@ -40,11 +40,11 @@ object AppChangelog {
 
     /** Posledních [MAX_ENTRIES] verzí, NEJNOVĚJŠÍ první. */
     val ENTRIES: List<Entry> = listOf(
+        Entry("2.6.0", 17, R.string.changelog_2_6_0),
         Entry("2.5.0", 16, R.string.changelog_2_5_0),
         Entry("2.4.1", 15, R.string.changelog_2_4_1),
         Entry("2.4.0", 14, R.string.changelog_2_4_0),
         Entry("2.3.0", 13, R.string.changelog_2_3_0),
-        Entry("2.2.0", 12, R.string.changelog_2_2_0),
     )
 
     /**

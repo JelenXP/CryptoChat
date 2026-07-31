@@ -102,7 +102,8 @@ fun SettingsScreen(navController: NavController) {
     fun runUpdateCheck() {
         updateCheckState = ManualCheckState.Checking
         scope.launch {
-            val result = withContext(Dispatchers.IO) { UpdateChecker.checkDetailed(versionName) }
+            val viaTor = settingsRepository.getRelayUrl().contains(".onion")
+            val result = withContext(Dispatchers.IO) { UpdateChecker.checkDetailed(versionName, viaTor) }
             updateCheckState = ManualCheckState.Done(result)
         }
     }
