@@ -18,6 +18,7 @@ import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.data.UpdateNotifyPolicy
+import com.jelenxp.cryptochat.data.UpdateRoutePolicy
 import com.jelenxp.cryptochat.diagnostics.DiagnosticsLog
 import com.jelenxp.cryptochat.ui.util.localizedContext
 import kotlinx.coroutines.withContext
@@ -123,7 +124,10 @@ class TorForegroundService : Service() {
         // awaitReady, takže na pořadí nezáleží.
         scope.launch(Dispatchers.IO) {
             try {
-                if (SettingsRepository(this@TorForegroundService).getRelayUrl().contains(".onion")) {
+                // Spusť Tor, jen když je aspoň jedna efektivní adresa .onion
+                // (getRelayUrls = primární + záložní). V Cloudflare módu se nespustí.
+                val settings = SettingsRepository(this@TorForegroundService)
+                if (TorManager.anyOnion(settings.getRelayUrls())) {
                     TorController.ensureStarted(this@TorForegroundService)
                 }
             } catch (e: Exception) {
@@ -201,7 +205,8 @@ class TorForegroundService : Service() {
      */
     private suspend fun watchdogTick() {
         val ctx = this@TorForegroundService
-        val relayUrl = SettingsRepository(ctx).getRelayUrl()
+        val settings = SettingsRepository(ctx)
+        val relayUrl = settings.getRelayUrl()
         if (relayUrl.isBlank()) {
             // Chat vypnutý - zastav všechny smyčky, ať netočí naprázdno.
             jobs.values.forEach { it.cancel() }
@@ -232,17 +237,27 @@ class TorForegroundService : Service() {
                 DiagnosticsLog.log(TAG, "spuštěna poll smyčka kontaktu")
             }
         }
-        // Keepalive JEN když nic nepolluje. Běžící long-polly drží okruh
-        // teplý samy - health request navíc by byl čistá spotřeba navíc.
-        if (contacts.isEmpty()) {
-            RelayStatus.refresh(ctx)
-        } else if (relayUrl.contains(".onion") && !TorController.isRunning) {
-            // Tor mohl na pozadí spadnout (listener se zavřel / StartDaemon
-            // selhal) a sám se nerozjede - poll smyčky volají jen `awaitReady`,
-            // ne `ensureStarted`. Bez tohohle by doručování na pozadí tiše umřelo
-            // až do otevření appky. `ensureStarted` je no-op, když runtime žije.
-            DiagnosticsLog.warn(TAG, "Tor na pozadí neběží, znovu ho spouštím")
-            withContext(Dispatchers.IO) { TorController.ensureStarted(ctx) }
+        // Srovnej běh Toru s potřebou. needsTor = aspoň jedna efektivní adresa (primární
+        // i záložní) je .onion - pokrývá i .onion zálohu pod clearnet primárkou.
+        val needsTor = TorManager.anyOnion(settings.getRelayUrls())
+        when {
+            // Přepnuto na clearnet (Cloudflare), ale Tor z dřívějška ještě běží -
+            // ZASTAV ho (ať jsou kontakty nebo ne), jinak by dál žral baterii.
+            !needsTor && TorController.isRunning -> {
+                DiagnosticsLog.log(TAG, "clearnet režim, zastavuji běžící Tor")
+                withContext(Dispatchers.IO) { TorController.stop() }
+            }
+            // Keepalive JEN když nic nepolluje. Běžící long-polly drží okruh teplý
+            // samy - health request navíc by byl čistá spotřeba navíc.
+            contacts.isEmpty() -> RelayStatus.refresh(ctx)
+            // Tor mohl na pozadí spadnout (listener se zavřel / StartDaemon selhal)
+            // a sám se nerozjede - poll smyčky volají jen `awaitReady`, ne
+            // `ensureStarted`. Bez tohohle by doručování na pozadí tiše umřelo až do
+            // otevření appky. `ensureStarted` je no-op, když runtime žije.
+            needsTor && !TorController.isRunning -> {
+                DiagnosticsLog.warn(TAG, "Tor na pozadí neběží, znovu ho spouštím")
+                withContext(Dispatchers.IO) { TorController.ensureStarted(ctx) }
+            }
         }
         updateNotification()
         maybeNotifyAboutUpdate()
@@ -287,8 +302,15 @@ class TorForegroundService : Service() {
         // 20 s na odpověď; uvnitř tiku by o tuhle dobu odložil dorovnání poll
         // smyček, tedy zotavení příjmu zpráv.
         scope.launch {
+            // Přes co (soukromí): Tor / clearnet napřímo / prázdná adresa = přeskočit,
+            // ať se z reálné IP neposílá clearnet dotaz bez volby uživatele (viz UpdateRoutePolicy).
+            val relayUrl = settings.getRelayUrl()
+            val viaTor = when (UpdateRoutePolicy.route(relayUrl, TorManager.urlIsOnion(relayUrl))) {
+                UpdateRoutePolicy.Route.SKIP -> return@launch
+                UpdateRoutePolicy.Route.TOR -> true
+                UpdateRoutePolicy.Route.DIRECT -> false
+            }
             val result = withContext(Dispatchers.IO) {
-                val viaTor = settings.getRelayUrl().contains(".onion")
                 runCatching { UpdateChecker.checkDetailed(currentVersionName(), viaTor) }
                     .getOrDefault(UpdateChecker.Result.Failed)
             }

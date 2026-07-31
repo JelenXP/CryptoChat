@@ -29,23 +29,36 @@ class DraftStore(
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     /** Všechny drafty (dešifrované). Prázdná mapa při chybě/absenci. */
-    fun all(): Map<String, String> = synchronized(lock) {
+    fun all(): Map<String, String> = readAll() ?: emptyMap()
+
+    /**
+     * Jako [all], ale vrací `null`, když se úložiště nepodařilo DEŠIFROVAT (přechodná
+     * nedostupnost Keystore). To se MUSÍ odlišit od „nic uloženo" (prázdná mapa),
+     * jinak by [set] při selhání přepsal a zahodil drafty ostatních kontaktů. Poškozený
+     * JSON (trvale nečitelný) se naopak bere jako prázdno - přepis je legitimní obnova.
+     */
+    private fun readAll(): Map<String, String>? = synchronized(lock) {
         val stored = prefs.getString(KEY, null)
         if (stored == null) {
             plaintextCache = emptyMap()   // definitivně žádné drafty → cache je platná
             return emptyMap()
         }
-        // Dešifrování selhalo (přechodná chyba Keystore / poškození) - NEcachuj prázdno,
-        // ať synchronní náhled radši hlásí „nevím" (null) a volající načte znovu async.
-        val json = crypto.decrypt(stored) ?: return emptyMap()
+        // Přechodné selhání dešifrování → „nevím" (null), NEcachuj prázdno: synchronní
+        // náhled i set se pak zachovají bezpečně (náhled: null, set: nepřepíše).
+        val json = crypto.decrypt(stored) ?: return null
         return try {
             val obj = JSONObject(json)
             val out = HashMap<String, String>(obj.length())
             for (k in obj.keys()) obj.optString(k).takeIf { it.isNotEmpty() }?.let { out[k] = it }
-            plaintextCache = out
+            // Cache drží SAMOSTATNOU kopii (`out.toMap()`), NE tutéž instanci, kterou
+            // vracíme volajícímu: kdyby si volající vrácenou mapu zmutoval, lock-free
+            // čtenář [cachedDraft] by jinak nad sdílenou instancí viděl roztržený stav.
+            // Kopii nikdo jiný nedrží, takže se nikdy nemění na místě = bezpečné čtení.
+            plaintextCache = out.toMap()
             out
         } catch (e: Exception) {
             Log.w(TAG, "Nečitelné drafty (${e.javaClass.simpleName})")
+            plaintextCache = emptyMap()   // trvale poškozeno = prázdno je platný stav
             emptyMap()
         }
     }
@@ -59,7 +72,10 @@ class DraftStore(
      * se zápis nepovedl (best-effort).
      */
     fun set(contactId: String, text: String): Boolean = synchronized(lock) {
-        val map = HashMap(all())
+        // Když teď nejde bezpečně přečíst (přechodné selhání dešifrování), NEPŘEPISUJ:
+        // jinak by se uložil jen tenhle draft a o drafty ostatních kontaktů bys přišel.
+        val current = readAll() ?: return false
+        val map = HashMap(current)
         if (text.isBlank()) {
             if (map.remove(contactId) == null) return true   // nic k mazání
         } else {

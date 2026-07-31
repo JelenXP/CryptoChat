@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.chat.TorManager
 import com.jelenxp.cryptochat.data.ConnectionMode
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
@@ -38,12 +39,12 @@ fun RelaySettingsScreen(navController: NavController) {
     var customUrl by remember { mutableStateOf(settings.getRelayCustomUrl()) }
     var connMode by remember { mutableStateOf(settings.getConnectionMode()) }
 
-    // Po přepnutí na .onion adresu (výchozí přes Tor i vlastní .onion) nastartuj
-    // Tor, ať se stihne nabootovat, než se otestuje spojení. Čte efektivní adresu
-    // z nastavení, takže respektuje i volbu Tor/Cloudflare u výchozího serveru
-    // (u Cloudflare je adresa https → Tor se nespouští).
-    fun ensureTorIfOnion() {
-        if (settings.getRelayUrl().contains(".onion")) TorController.ensureStarted(context)
+    // Po změně adresy srovnej běh Toru s tím, co je potřeba: když je aspoň jedna
+    // efektivní adresa (primární i záložní) .onion, nastartuj Tor; když žádná není
+    // (přepnuto na Cloudflare / clearnet), Tor ZASTAV - jinak by dál žral baterii.
+    // Bere `getRelayUrls()`, takže pokryje i .onion zálohu pod clearnet primárkou.
+    fun syncTor() {
+        TorController.applyForRelays(context, TorManager.anyOnion(settings.getRelayUrls()))
     }
 
     CryptoScaffold(
@@ -73,7 +74,7 @@ fun RelaySettingsScreen(navController: NavController) {
                 onSelect = { index ->
                     useCustom = index == 1
                     settings.setUsingCustomRelay(useCustom)
-                    ensureTorIfOnion()
+                    syncTor()
                 }
             )
 
@@ -108,7 +109,7 @@ fun RelaySettingsScreen(navController: NavController) {
                     onSelect = { index ->
                         connMode = if (index == 0) ConnectionMode.TOR else ConnectionMode.CLOUDFLARE
                         settings.setConnectionMode(connMode)
-                        ensureTorIfOnion()
+                        syncTor()
                     }
                 )
                 Text(
@@ -131,7 +132,7 @@ fun RelaySettingsScreen(navController: NavController) {
                 onValueChange = {
                     fallbacks = it
                     settings.setRelayFallbackUrls(it)
-                    ensureTorIfOnion()
+                    syncTor()
                 },
                 label = { Text(stringResource(R.string.relay_fallback_label)) },
                 placeholder = { Text("http://…\nhttp://…") },

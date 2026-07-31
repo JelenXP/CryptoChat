@@ -689,7 +689,13 @@ object ChatEnvelope {
             val totalSize = buf.long
             val mime = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
             val name = ByteArray(buf.short.toInt() and 0xFFFF).also { buf.get(it) }
-            if (totalChunks <= 0 || totalSize < 0) return null
+            // Meze proti podvrženému manifestu: víc kousků/bajtů, než appka vůbec umí
+            // přijmout. Protějšek je posílá uvnitř GCM (autentizované), ale může být
+            // buggy/škodlivý; bez tohohle by `assemble` nikdy nedošlo k `total`, přenos
+            // by se zasekl napořád na „přijímá se" a tmp adresář by ležel na disku až
+            // do `purgeStale`. Neplatný manifest → null (jako totalChunks<=0) = Corrupt.
+            if (totalChunks <= 0 || totalChunks > MediaTransfers.MAX_CHUNKS) return null
+            if (totalSize < 0 || totalSize > ChatMediaStore.MAX_FILE_BYTES) return null
             // Název i MIME plně řídí protějšek. Očisti je od obousměrných
             // přepínačů a řídicích znaků, ať RLO (U+202E) nezamaskuje příponu
             // v bublině (na disk se ukládá zvlášť sanitizovaný název).

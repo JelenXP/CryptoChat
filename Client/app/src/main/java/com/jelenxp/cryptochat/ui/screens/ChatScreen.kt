@@ -128,6 +128,7 @@ import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.TorController
+import com.jelenxp.cryptochat.chat.TorManager
 import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
@@ -177,6 +178,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // výšce a chat nezablikal. Cache je teplá po průchodu seznamem (MainScreen volá
     // DraftStore.all). Studená cache → "" a dorovná se async efektem níž.
     var input by remember(id) { mutableStateOf(DraftStore.cachedDraft(id) ?: "") }
+    // Dotkl se uživatel pole? Latch proti TOCTOU v async načtení draftu (studená cache):
+    // kdyby uživatel v tom okně napsal a zase smazal text, `input.isEmpty()` by ho pustilo
+    // a async by pak vzkřísil starý draft. Nastavuje se jen na SKUTEČNÝ uživatelský vstup
+    // (programové `input = …` jde mimo onValueChange, a i kdyby watcher vystřelil, hodnota
+    // == input, takže `it != input` je false).
+    var userTouchedInput by remember(id) { mutableStateOf(false) }
     // Zpráva, kterou právě upravuji (vstupní pole nese její nový text). null = píšu novou.
     // Deklarované tady nahoře schválně: ukládací efekt draftu níž ho musí vidět, aby se
     // během úpravy rozepsaný koncept konverzace nepřepisoval textem upravované zprávy.
@@ -192,9 +199,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var draftLoaded by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
         val draft = withContext(Dispatchers.IO) { DraftStore(context).get(id) }
-        // Nastav jen do PRÁZDNÉHO pole: když už ho seed z cache naplnil (nebo mezitím
-        // uživatel začal psát), async načtení nesmí přepsat, co je v poli.
-        if (draft.isNotEmpty() && input.isEmpty()) input = draft
+        // Nastav jen do PRÁZDNÉHO a NEDOTČENÉHO pole: když už ho seed z cache naplnil
+        // nebo se uživatel pole dotkl (i když je teď prázdné, protože něco napsal a smazal),
+        // async načtení nesmí přepsat, co je v poli, ani vzkřísit smazaný draft.
+        if (draft.isNotEmpty() && input.isEmpty() && !userTouchedInput) input = draft
         draftLoaded = true
     }
     // Ukládej rozepsaný text debounced (400 ms po posledním úhozu). Prázdný text
@@ -398,7 +406,7 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             // Pro .onion relay nastartuj zabudovaný Tor (idempotentní) a popožeň
             // službu, ať pro čerstvě spárovaný kontakt nečekáme na hlídač.
             // ensureStarted dělá diskovou IO (getDir + stavba runtime) - mimo main.
-            if (relayUrl.contains(".onion")) withContext(Dispatchers.IO) { TorController.ensureStarted(context) }
+            if (TorManager.anyOnion(settings.getRelayUrls())) withContext(Dispatchers.IO) { TorController.ensureStarted(context) }
             TorForegroundService.ensureRunning(context)
             try {
                 // Přenačti historii při KAŽDÉM návratu do popředí. `changes` je
@@ -1104,7 +1112,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     // neukládají do slovníku ani nesynchronizují do cloudu.
                     IncognitoTextField(
                         value = input,
-                        onValueChange = { input = it },
+                        onValueChange = {
+                            if (it != input) userTouchedInput = true
+                            input = it
+                        },
                         hint = stringResource(R.string.chat_input_hint),
                         enabled = canChat,
                         modifier = Modifier.weight(1f)

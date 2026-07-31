@@ -149,7 +149,7 @@ object RelayClient {
         val fetched = if (TorManager.isOnion(target.host)) {
             // U long-pollu server drží spojení až waitSeconds - čtecí timeout
             // musí být o kus delší, ať ho nepřerušíme dřív než server odpoví.
-            val readTimeout = if (waitSeconds > 0) waitSeconds * 1000 + 10_000 else ONION_READ_TIMEOUT_MS
+            val readTimeout = longPollReadTimeoutMs(waitSeconds, ONION_READ_TIMEOUT_MS)
             val attempts = if (waitSeconds > 0) ONION_POLL_ATTEMPTS else ONION_ATTEMPTS
             val response = onionRequest(target, "GET", null, readTimeout, attempts, isolation = mailboxId, longPoll = waitSeconds > 0)
             when (response.code) {
@@ -158,7 +158,7 @@ object RelayClient {
                 else -> throw IOException("Relay GET vrátil HTTP ${response.code}")
             }
         } else {
-            directGet(baseUrl, mailboxId, query)
+            directGet(baseUrl, mailboxId, query, waitSeconds)
         }
         if (fetched.blobs.isNotEmpty()) {
             DiagnosticsLog.log(TAG, "vyzvednuto ${fetched.blobs.size} blobů")
@@ -368,8 +368,11 @@ object RelayClient {
         }
     }
 
-    private fun directGet(baseUrl: String, mailboxId: String, query: String = ""): Fetched {
-        val conn = openDirect(baseUrl, mailboxId, "GET", query)
+    private fun directGet(baseUrl: String, mailboxId: String, query: String = "", waitSeconds: Int = 0): Fetched {
+        // Long-poll (waitSeconds>0) drží spojení na serveru; čtecí timeout musí být
+        // delší než ta doba, jinak přímá cesta přeruší spojení dřív než server
+        // odpoví (viz longPollReadTimeoutMs) - přesně to kazilo Cloudflare mód.
+        val conn = openDirect(baseUrl, mailboxId, "GET", query, longPollReadTimeoutMs(waitSeconds, TIMEOUT_MS))
         return try {
             when (val code = conn.responseCode) {
                 204 -> Fetched(emptyList(), -1)
@@ -387,12 +390,18 @@ object RelayClient {
         }
     }
 
-    private fun openDirect(baseUrl: String, mailboxId: String, method: String, query: String = ""): HttpURLConnection {
+    private fun openDirect(
+        baseUrl: String,
+        mailboxId: String,
+        method: String,
+        query: String = "",
+        readTimeoutMs: Int = TIMEOUT_MS
+    ): HttpURLConnection {
         val url = URL(baseUrl.trimEnd('/') + "/m/" + mailboxId + query)
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
+            readTimeout = readTimeoutMs
             useCaches = false
         }
     }
@@ -610,6 +619,18 @@ object RelayClient {
     /** Rozbalí délkově rámované bloby: [4B big-endian délka][data]... */
     private fun unframe(data: ByteArray): List<ByteArray> = unframeBlobs(data)
 }
+
+/**
+ * Čtecí timeout (ms) pro GET podle délky long-pollu. Když server drží spojení
+ * [waitSeconds] s (long-poll), socket musí čekat DÉLE (o [slackMs]), jinak ho
+ * přeruší dřív, než server stihne odpovědět - a KAŽDÝ nečinný long-poll spadne
+ * na `SocketTimeoutException`. To platí stejně pro onion i přímou (clearnet /
+ * Cloudflare) cestu; přímá cesta dřív brala pevných 30 s a tím shodila celý
+ * smysl 60s long-pollu ve Cloudflare módu. Bez long-pollu ([waitSeconds] == 0)
+ * se vrátí [defaultMs]. Top-level `internal` kvůli testu bez sítě.
+ */
+internal fun longPollReadTimeoutMs(waitSeconds: Int, defaultMs: Int, slackMs: Int = 10_000): Int =
+    if (waitSeconds > 0) waitSeconds * 1000 + slackMs else defaultMs
 
 /**
  * Rozbalí délkově rámované bloby: `[4B big-endian délka][data]…`. Top-level a

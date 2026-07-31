@@ -148,6 +148,34 @@ object TorController {
         )
     }
 
+    /**
+     * Zastaví běžící Tor. Volá se při přepnutí na clearnet (Cloudflare / vlastní
+     * http adresa), kde už onion není potřeba. Bez tohohle by Tor po přepnutí dál
+     * držel okruhy a žral CPU/baterii až do konce procesu - přesně to, čemu se má
+     * volbou Cloudflare předejít. Idempotentní: když neběží, nic nedělá.
+     */
+    @Synchronized
+    fun stop() {
+        val rt = runtime ?: return
+        try {
+            rt.enqueue(Action.StopDaemon, OnFailure {}, OnSuccess.noOp())
+        } catch (e: Throwable) {
+            Log.w(TAG, "StopDaemon selhal (${e.javaClass.simpleName})")
+        }
+        forgetRuntime()
+        TorManager.resetBootstrap()
+        TorManager.markStopped()
+    }
+
+    /**
+     * Podle [needsTor] Tor zapne ([ensureStarted]) nebo vypne ([stop]). Pro místa,
+     * kde se mění efektivní adresa relaye (nastavení, hlídač služby): přepnutí na
+     * Cloudflare tak Tor i skutečně zastaví, ne jen přesměruje provoz.
+     */
+    fun applyForRelays(context: Context, needsTor: Boolean) {
+        if (needsTor) ensureStarted(context) else if (isRunning) stop()
+    }
+
     /** Zapomene neúspěšný runtime, aby šel start zkusit znovu. */
     @Synchronized
     private fun forgetRuntime() {

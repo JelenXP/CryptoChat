@@ -130,4 +130,25 @@ object TorManager {
      */
     fun isOnion(host: String): Boolean =
         host.trimEnd('.').endsWith(".onion", ignoreCase = true)
+
+    /**
+     * Je adresa relaye `.onion` (má se pro ni spustit Tor)? Vytáhne HOST z URL
+     * (stejně jako transport přes `URI.host`) a použije [isOnion] - tedy jeden
+     * jednotný predikát místo `url.contains(".onion")` na celém řetězci, který je
+     * case-sensitive a chytil by i `.onion` v CESTĚ clearnet adresy. Nerozparsovatelná
+     * URL = `false` (kvůli smetí Tor nespouštět; onion adresy jsou vždy validní URL).
+     */
+    fun urlIsOnion(url: String): Boolean {
+        val host = runCatching { java.net.URI(url.trim()).host }.getOrNull() ?: return false
+        return isOnion(host)
+    }
+
+    /**
+     * Má běžet Tor pro daný seznam efektivních adres? `true`, když je aspoň jedna
+     * `.onion`. Gating startu Toru se řídí TÍMHLE nad `getRelayUrls()` (primární +
+     * záložní), ne jen primární adresou - jinak by `.onion` ZÁLOHA pod clearnet
+     * primárkou nikdy nešla použít (Tor by se nespustil a onion request by jen
+     * čekal na timeout).
+     */
+    fun anyOnion(urls: List<String>): Boolean = urls.any { urlIsOnion(it) }
 }

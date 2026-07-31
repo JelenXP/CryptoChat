@@ -49,10 +49,22 @@ object MediaTransfers {
     fun hex(bytes: ByteArray): String =
         bytes.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
-    fun fromHex(value: String): ByteArray =
-        ByteArray(value.length / 2) {
-            ((value[it * 2].digitToInt(16) shl 4) or value[it * 2 + 1].digitToInt(16)).toByte()
+    /**
+     * Hex → bajty. Odolné vůči smetí (lichá délka / ne-hex znak): vrátí PRÁZDNÉ pole
+     * místo výjimky (projektový cíl - nepadat). Dnes ho krmí jen autentizovaný 32-znakový
+     * fileId ([hex] z 16 bajtů), takže „smetí" větev je pojistka pro budoucí volající,
+     * ne dosažitelný stav - proto ji hlídá test, ne runtime cesta.
+     */
+    fun fromHex(value: String): ByteArray {
+        if (value.length % 2 != 0) return ByteArray(0)
+        return try {
+            ByteArray(value.length / 2) {
+                ((value[it * 2].digitToInt(16) shl 4) or value[it * 2 + 1].digitToInt(16)).toByte()
+            }
+        } catch (e: IllegalArgumentException) {
+            ByteArray(0)   // digitToInt(16) hodí IAE na ne-hex znaku
         }
+    }
 
     private fun dir(context: Context, fileIdHex: String) =
         File(File(context.filesDir, TMP_DIR), fileIdHex)

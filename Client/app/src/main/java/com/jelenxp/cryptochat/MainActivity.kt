@@ -61,7 +61,9 @@ import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.AppChangelog
 import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.chat.TorManager
 import com.jelenxp.cryptochat.data.UpdateChecker
+import com.jelenxp.cryptochat.data.UpdateRoutePolicy
 import com.jelenxp.cryptochat.data.UpdateStartupPolicy
 import com.jelenxp.cryptochat.ui.lock.LockScreen
 import com.jelenxp.cryptochat.ui.onboarding.BackgroundOnboardingScreen
@@ -390,9 +392,15 @@ private fun StartupGate(content: @Composable () -> Unit) {
         // původní offline appky). Až budou vlastní veřejné releases, zapni ji.
         if (!FeatureFlags.UPDATE_CHECK_ENABLED) return@LaunchedEffect
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
-        // V Cloudflare módu (efektivní adresa není .onion) jde kontrola napřímo,
-        // v Tor módu přes Tor - stejný transport, jaký uživatel zvolil pro chat.
-        val viaTor = settings.getRelayUrl().contains(".onion")
+        // Přes co kontrolu poslat (soukromí): Tor módu → přes Tor, Cloudflare/clearnet
+        // → napřímo (relay IP stejně vidí), PRÁZDNÁ adresa (chat vypnutý) → přeskočit,
+        // ať clearnet dotaz neunikne z reálné IP bez volby uživatele. Viz UpdateRoutePolicy.
+        val relayUrl = settings.getRelayUrl()
+        val viaTor = when (UpdateRoutePolicy.route(relayUrl, TorManager.urlIsOnion(relayUrl))) {
+            UpdateRoutePolicy.Route.SKIP -> return@LaunchedEffect
+            UpdateRoutePolicy.Route.TOR -> true
+            UpdateRoutePolicy.Route.DIRECT -> false
+        }
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion, viaTor) }
             ?: return@LaunchedEffect
         // Rozhodnutí (pozastavení, zavření, připomínací interval) je v čisté
