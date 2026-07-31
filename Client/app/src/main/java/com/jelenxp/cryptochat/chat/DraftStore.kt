@@ -30,12 +30,19 @@ class DraftStore(
 
     /** Všechny drafty (dešifrované). Prázdná mapa při chybě/absenci. */
     fun all(): Map<String, String> = synchronized(lock) {
-        val stored = prefs.getString(KEY, null) ?: return emptyMap()
+        val stored = prefs.getString(KEY, null)
+        if (stored == null) {
+            plaintextCache = emptyMap()   // definitivně žádné drafty → cache je platná
+            return emptyMap()
+        }
+        // Dešifrování selhalo (přechodná chyba Keystore / poškození) - NEcachuj prázdno,
+        // ať synchronní náhled radši hlásí „nevím" (null) a volající načte znovu async.
         val json = crypto.decrypt(stored) ?: return emptyMap()
         return try {
             val obj = JSONObject(json)
             val out = HashMap<String, String>(obj.length())
             for (k in obj.keys()) obj.optString(k).takeIf { it.isNotEmpty() }?.let { out[k] = it }
+            plaintextCache = out
             out
         } catch (e: Exception) {
             Log.w(TAG, "Nečitelné drafty (${e.javaClass.simpleName})")
@@ -76,6 +83,7 @@ class DraftStore(
         }
         return try {
             prefs.edit().putString(KEY, encrypted).apply()
+            plaintextCache = map.toMap()   // drž cache v kroku s diskem (v procesu jsme jediný zapisovatel)
             true
         } catch (e: Exception) {
             Log.w(TAG, "Zápis draftů selhal (${e.javaClass.simpleName})")
@@ -88,5 +96,29 @@ class DraftStore(
         private const val PREFS_NAME = "crypto_chat_drafts"
         private const val KEY = "drafts"
         private val lock = Any()
+
+        /**
+         * Procesová cache dešifrovaných draftů (poslední výsledek [all]/[save]).
+         * `null` = ještě se v tomto procesu nenačetly. Aplikace je jediný zapisovatel,
+         * takže cache == disk; mění se jen pod [lock], čte se přes volatile referenci
+         * na NEMĚNNOU mapu (nikdy se nemutuje na místě), takže je čtení bez zámku bezpečné.
+         */
+        @Volatile
+        private var plaintextCache: Map<String, String>? = null
+
+        /**
+         * Synchronní náhled draftu z paměťové cache (BEZ Keystore, volatelné z hlavního
+         * vlákna). Umožní ChatScreenu vykreslit vstupní pole rovnou ve správné výšce, aby
+         * při otevření konverzace s víceřádkovým draftem nezablikal (pole by jinak narostlo
+         * až po async dešifrování). `MainScreen` cache naplní voláním [all], takže při
+         * běžném toku (seznam → klepnutí na kontakt) je teplá.
+         *
+         * @return text draftu; `""` když je cache teplá, ale kontakt draft nemá (jistota
+         *   „žádný draft"); `null` když cache ještě není naplněná - volající pak načte async.
+         */
+        fun cachedDraft(contactId: String): String? = plaintextCache?.let { it[contactId] ?: "" }
+
+        /** Jen pro testy: shodí procesovou cache, ať jde ověřit „studený" stav ([cachedDraft] == null). */
+        internal fun clearCacheForTest() { plaintextCache = null }
     }
 }

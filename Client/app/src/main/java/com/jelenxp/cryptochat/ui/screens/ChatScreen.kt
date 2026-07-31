@@ -172,7 +172,11 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         unreadAtOpen = withContext(Dispatchers.IO) { repo.getUnreadCount(id) }
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
     }
-    var input by remember { mutableStateOf("") }
+    // Seed vstupního pole rovnou z paměťové cache draftů (BEZ Keystore, synchronně),
+    // ať pole při otevření konverzace s víceřádkovým draftem začne HNED ve správné
+    // výšce a chat nezablikal. Cache je teplá po průchodu seznamem (MainScreen volá
+    // DraftStore.all). Studená cache → "" a dorovná se async efektem níž.
+    var input by remember(id) { mutableStateOf(DraftStore.cachedDraft(id) ?: "") }
     // Zpráva, kterou právě upravuji (vstupní pole nese její nový text). null = píšu novou.
     // Deklarované tady nahoře schválně: ukládací efekt draftu níž ho musí vidět, aby se
     // během úpravy rozepsaný koncept konverzace nepřepisoval textem upravované zprávy.
@@ -188,7 +192,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     var draftLoaded by remember(id) { mutableStateOf(false) }
     LaunchedEffect(id) {
         val draft = withContext(Dispatchers.IO) { DraftStore(context).get(id) }
-        if (draft.isNotEmpty()) input = draft
+        // Nastav jen do PRÁZDNÉHO pole: když už ho seed z cache naplnil (nebo mezitím
+        // uživatel začal psát), async načtení nesmí přepsat, co je v poli.
+        if (draft.isNotEmpty() && input.isEmpty()) input = draft
         draftLoaded = true
     }
     // Ukládej rozepsaný text debounced (400 ms po posledním úhozu). Prázdný text
