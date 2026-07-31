@@ -373,8 +373,6 @@
     <string name="conn_cf_con">Cloudflare and the server can see your IP</string>
     <string name="conn_choice_continue">Continue</string>
     <string name="conn_choice_footer">You can change this anytime in settings.</string>
-    <!-- TEMPORARY (remove): reopen the connection screen from chat-server settings -->
-    <string name="conn_reopen_temp">Show connection screen</string>
     <string name="relay_custom_desc">Use your own server address.</string>
     <string name="relay_custom_label">Server address</string>
     <string name="relay_custom_help">For example http://192.168.1.10:8787 on a local network, or a .onion address over Tor. Leave empty to turn the chat server off.</string>

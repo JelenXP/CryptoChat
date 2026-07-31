@@ -24,10 +24,10 @@ import com.jelenxp.cryptochat.ui.components.SegmentedControl
 
 /**
  * Nastavení serveru chatu. Záměrně minimalistické - jen dvě volby (výchozí /
- * vlastní) přes [SegmentedControl], stejně jako ostatní volby v appce. Spojení
- * se netestuje ručně: appka ho testuje sama po startu a stav ukazuje ikona
- * cloudu na hlavní obrazovce. Nastavení se ukládá průběžně (bez tlačítka Uložit
- * a bez toastů), jako ostatní přepínače v Nastavení.
+ * vlastní) přes [SegmentedControl], stejně jako ostatní volby v appce. U výchozího
+ * serveru navíc přepínač způsobu připojení (Tor / Cloudflare). Spojení se netestuje
+ * ručně: appka ho testuje sama po startu a stav ukazuje ikona cloudu na hlavní
+ * obrazovce. Nastavení se ukládá průběžně (bez tlačítka Uložit a bez toastů).
  */
 @Composable
 fun RelaySettingsScreen(navController: NavController) {
@@ -37,9 +37,6 @@ fun RelaySettingsScreen(navController: NavController) {
     var useCustom by remember { mutableStateOf(settings.isUsingCustomRelay()) }
     var customUrl by remember { mutableStateOf(settings.getRelayCustomUrl()) }
     var connMode by remember { mutableStateOf(settings.getConnectionMode()) }
-    // DOČASNÉ (odstranit): znovuotevření úvodní obrazovky volby připojení jako
-    // celoobrazovkový překryv, ať jde ověřit její vzhled i po prvním potvrzení.
-    var showChoiceScreen by remember { mutableStateOf(false) }
 
     // Po přepnutí na .onion adresu (výchozí přes Tor i vlastní .onion) nastartuj
     // Tor, ať se stihne nabootovat, než se otestuje spojení. Čte efektivní adresu
@@ -49,126 +46,105 @@ fun RelaySettingsScreen(navController: NavController) {
         if (settings.getRelayUrl().contains(".onion")) TorController.ensureStarted(context)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        CryptoScaffold(
-            title = stringResource(R.string.relay_title),
-            onBack = { navController.popBackStack() }
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Spacer(Modifier.height(4.dp))
-                InfoCard(
-                    icon = Icons.Default.CloudQueue,
-                    text = stringResource(R.string.relay_info)
-                )
+    CryptoScaffold(
+        title = stringResource(R.string.relay_title),
+        onBack = { navController.popBackStack() }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Spacer(Modifier.height(4.dp))
+            InfoCard(
+                icon = Icons.Default.CloudQueue,
+                text = stringResource(R.string.relay_info)
+            )
 
-                SegmentedControl(
-                    options = listOf(
-                        stringResource(R.string.relay_mode_default),
-                        stringResource(R.string.relay_mode_custom)
-                    ),
-                    selectedIndex = if (useCustom) 1 else 0,
-                    onSelect = { index ->
-                        useCustom = index == 1
-                        settings.setUsingCustomRelay(useCustom)
-                        ensureTorIfOnion()
-                    }
-                )
-
-                if (useCustom) {
-                    OutlinedTextField(
-                        value = customUrl,
-                        onValueChange = {
-                            customUrl = it
-                            settings.setRelayCustomUrl(it)
-                        },
-                        label = { Text(stringResource(R.string.relay_custom_label)) },
-                        placeholder = { Text("http://…") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = stringResource(R.string.relay_custom_help),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    // Způsob připojení k VÝCHOZÍMU serveru: Tor (soukromí) vs. Cloudflare
-                    // (rychlost). U vlastní adresy o transportu rozhoduje sama adresa,
-                    // takže se tenhle přepínač ukazuje jen tady.
-                    SegmentedControl(
-                        options = listOf(
-                            stringResource(R.string.conn_tor_title),
-                            stringResource(R.string.conn_cf_title)
-                        ),
-                        selectedIndex = if (connMode == ConnectionMode.TOR) 0 else 1,
-                        onSelect = { index ->
-                            connMode = if (index == 0) ConnectionMode.TOR else ConnectionMode.CLOUDFLARE
-                            settings.setConnectionMode(connMode)
-                            ensureTorIfOnion()
-                        }
-                    )
-                    Text(
-                        text = stringResource(
-                            if (connMode == ConnectionMode.TOR) R.string.relay_default_desc_tor
-                            else R.string.relay_default_desc_cloudflare
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.relay_mode_default),
+                    stringResource(R.string.relay_mode_custom)
+                ),
+                selectedIndex = if (useCustom) 1 else 0,
+                onSelect = { index ->
+                    useCustom = index == 1
+                    settings.setUsingCustomRelay(useCustom)
+                    ensureTorIfOnion()
                 }
+            )
 
-                // Záložní relaye (failover). Platí nad primárním (výchozím i vlastním);
-                // když primární neodpoví, odeslání zkusí tyhle v pořadí a příjem je řídce
-                // prohledává. Jeden na řádek.
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                var fallbacks by remember { mutableStateOf(settings.getRelayFallbackText()) }
+            if (useCustom) {
                 OutlinedTextField(
-                    value = fallbacks,
+                    value = customUrl,
                     onValueChange = {
-                        fallbacks = it
-                        settings.setRelayFallbackUrls(it)
-                        ensureTorIfOnion()
+                        customUrl = it
+                        settings.setRelayCustomUrl(it)
                     },
-                    label = { Text(stringResource(R.string.relay_fallback_label)) },
-                    placeholder = { Text("http://…\nhttp://…") },
-                    minLines = 2,
+                    label = { Text(stringResource(R.string.relay_custom_label)) },
+                    placeholder = { Text("http://…") },
+                    singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = stringResource(R.string.relay_fallback_help),
+                    text = stringResource(R.string.relay_custom_help),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                // DOČASNÉ (odstranit po ověření vzhledu): znovu otevře celou úvodní
-                // obrazovku volby připojení, ať jde její ikony/rozvržení zkontrolovat
-                // i po prvním potvrzení volby.
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                OutlinedButton(
-                    onClick = { showChoiceScreen = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.conn_reopen_temp))
-                }
-                Spacer(Modifier.height(8.dp))
+            } else {
+                // Způsob připojení k VÝCHOZÍMU serveru: Tor (soukromí) vs. Cloudflare
+                // (rychlost). U vlastní adresy o transportu rozhoduje sama adresa,
+                // takže se tenhle přepínač ukazuje jen tady.
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.conn_tor_title),
+                        stringResource(R.string.conn_cf_title)
+                    ),
+                    selectedIndex = if (connMode == ConnectionMode.TOR) 0 else 1,
+                    onSelect = { index ->
+                        connMode = if (index == 0) ConnectionMode.TOR else ConnectionMode.CLOUDFLARE
+                        settings.setConnectionMode(connMode)
+                        ensureTorIfOnion()
+                    }
+                )
+                Text(
+                    text = stringResource(
+                        if (connMode == ConnectionMode.TOR) R.string.relay_default_desc_tor
+                        else R.string.relay_default_desc_cloudflare
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-        }
 
-        // DOČASNÉ (odstranit): překryv s úvodní obrazovkou volby připojení.
-        if (showChoiceScreen) {
-            ConnectionChoiceScreen(onDone = {
-                showChoiceScreen = false
-                connMode = settings.getConnectionMode()
-            })
+            // Záložní relaye (failover). Platí nad primárním (výchozím i vlastním);
+            // když primární neodpoví, odeslání zkusí tyhle v pořadí a příjem je řídce
+            // prohledává. Jeden na řádek.
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            var fallbacks by remember { mutableStateOf(settings.getRelayFallbackText()) }
+            OutlinedTextField(
+                value = fallbacks,
+                onValueChange = {
+                    fallbacks = it
+                    settings.setRelayFallbackUrls(it)
+                    ensureTorIfOnion()
+                },
+                label = { Text(stringResource(R.string.relay_fallback_label)) },
+                placeholder = { Text("http://…\nhttp://…") },
+                minLines = 2,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = stringResource(R.string.relay_fallback_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
