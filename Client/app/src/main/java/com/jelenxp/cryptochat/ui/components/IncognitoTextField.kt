@@ -66,15 +66,9 @@ fun IncognitoTextField(
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             factory = { ctx ->
                 EditText(ctx).apply {
-                    val self = this
                     background = null
-                    // Svislé odsazení: jeden řádek zůstane opticky vycentrovaný v min.
-                    // výšce (40 dp, 8+22+8 ≈ 38 < 40), víc řádků roste odshora.
-                    setPadding(0, 8, 0, 8)
-                    // TOP, ne CENTER_VERTICAL: u víceřádkového vstupu musí text růst
-                    // odshora a pole scrollovat za kurzorem. Se středovou gravitací
-                    // zůstával nový (spodní) řádek schovaný.
-                    gravity = Gravity.TOP
+                    setPadding(0, 0, 0, 0)
+                    gravity = Gravity.CENTER_VERTICAL
                     textSize = 16f
                     this.maxLines = maxLines
                     // Víceřádkový text + velká písmena na začátku vět (jako dřív
@@ -90,12 +84,6 @@ fun IncognitoTextField(
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                         override fun afterTextChanged(e: Editable?) {
                             currentOnValueChange.value(e?.toString() ?: "")
-                            // Vynuť přeměření hostitele: AndroidView si jinak drží výšku
-                            // z prvního složení, takže pole při psaní NEROSTE a další
-                            // řádek se jen ořízne (neukáže) - maxLines mu přitom říká
-                            // „vejde se", tak ani nescrolluje. Po dorostení na maxLines
-                            // se pak pole samo scrolluje za kurzorem.
-                            self.requestLayout()
                         }
                     })
                 }
@@ -111,6 +99,28 @@ fun IncognitoTextField(
                 et.hint = hint
                 et.setTextColor(textColor)
                 et.setHintTextColor(hintColor)
+                // Spolehlivě posuň pohled tak, aby zůstal vidět kurzor (aktuální řádek).
+                // Vlastní auto-scroll EditTextu je uvnitř AndroidView nespolehlivý
+                // (~50/50) kvůli časování měření - tady ho po dokončení layoutu
+                // dopočítáme sami. Mění jen scrollY, ne výšku, takže layout ani
+                // zalamování textu se nedotýká. Přesně to, co dřív dělal Compose
+                // OutlinedTextField sám (viz docstring - proč EditText).
+                et.post {
+                    val layout = et.layout ?: return@post
+                    val len = et.text?.length ?: 0
+                    val line = layout.getLineForOffset(et.selectionEnd.coerceIn(0, len))
+                    val innerH = et.height - et.compoundPaddingTop - et.compoundPaddingBottom
+                    if (innerH <= 0) return@post
+                    val top = layout.getLineTop(line)
+                    val bottom = layout.getLineBottom(line)
+                    val cur = et.scrollY
+                    val next = when {
+                        top < cur -> top                       // řádek nad výřezem → nahoru
+                        bottom > cur + innerH -> bottom - innerH // řádek pod výřezem → dolů
+                        else -> cur
+                    }
+                    if (next != cur) et.scrollTo(0, next.coerceAtLeast(0))
+                }
             }
         )
     }
