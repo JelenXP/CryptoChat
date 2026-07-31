@@ -6,11 +6,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -91,7 +91,7 @@ fun ConnectionChoiceScreen(onDone: () -> Unit) {
 
                 Spacer(Modifier.height(24.dp))
                 OptionCard(
-                    icon = Icons.Filled.VerifiedUser,
+                    icon = Icons.Filled.Shield,
                     title = stringResource(R.string.conn_tor_title),
                     recommended = true,
                     subtitle = stringResource(R.string.conn_tor_subtitle),
@@ -102,7 +102,7 @@ fun ConnectionChoiceScreen(onDone: () -> Unit) {
                 )
                 Spacer(Modifier.height(12.dp))
                 OptionCard(
-                    icon = Icons.Filled.CloudQueue,
+                    icon = Icons.Filled.Bolt,
                     title = stringResource(R.string.conn_cf_title),
                     recommended = false,
                     subtitle = stringResource(R.string.conn_cf_subtitle),

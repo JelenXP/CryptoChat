@@ -66,9 +66,15 @@ fun IncognitoTextField(
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             factory = { ctx ->
                 EditText(ctx).apply {
+                    val self = this
                     background = null
-                    setPadding(0, 0, 0, 0)
-                    gravity = Gravity.CENTER_VERTICAL
+                    // Svislé odsazení: jeden řádek zůstane opticky vycentrovaný v min.
+                    // výšce (40 dp, 8+22+8 ≈ 38 < 40), víc řádků roste odshora.
+                    setPadding(0, 8, 0, 8)
+                    // TOP, ne CENTER_VERTICAL: u víceřádkového vstupu musí text růst
+                    // odshora a pole scrollovat za kurzorem. Se středovou gravitací
+                    // zůstával nový (spodní) řádek schovaný.
+                    gravity = Gravity.TOP
                     textSize = 16f
                     this.maxLines = maxLines
                     // Víceřádkový text + velká písmena na začátku vět (jako dřív
@@ -84,6 +90,12 @@ fun IncognitoTextField(
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                         override fun afterTextChanged(e: Editable?) {
                             currentOnValueChange.value(e?.toString() ?: "")
+                            // Vynuť přeměření hostitele: AndroidView si jinak drží výšku
+                            // z prvního složení, takže pole při psaní NEROSTE a další
+                            // řádek se jen ořízne (neukáže) - maxLines mu přitom říká
+                            // „vejde se", tak ani nescrolluje. Po dorostení na maxLines
+                            // se pak pole samo scrolluje za kurzorem.
+                            self.requestLayout()
                         }
                     })
                 }
