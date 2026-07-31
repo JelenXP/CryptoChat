@@ -291,12 +291,6 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                         quickActions = null
                         navController.navigate("user_detail/${c.id}")
                     }
-                    if (c.keyBase64 != null) {
-                        QuickRow(Icons.Default.VerifiedUser, stringResource(R.string.btn_verify_key)) {
-                            quickActions = null
-                            navController.navigate("verify/${c.id}")
-                        }
-                    }
                     QuickRow(Icons.Default.Delete, stringResource(R.string.btn_delete_contact), MaterialTheme.colorScheme.error) {
                         quickActions = null
                         deleteTarget = c

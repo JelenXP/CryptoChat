@@ -34,6 +34,7 @@ import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
+import com.jelenxp.cryptochat.ui.components.SegmentedControl
 import com.jelenxp.cryptochat.ui.lock.isDeviceSecureAuthAvailable
 import com.jelenxp.cryptochat.ui.lock.requestUnlock
 import com.jelenxp.cryptochat.ui.util.AppLocale
@@ -48,9 +49,6 @@ private const val LANG_ENGLISH = "en"
 
 /** Veřejná stránka s vydanými verzemi (otevře se v prohlížeči). */
 private const val GITHUB_URL = "https://github.com/JelenXP/CryptoChatServer-releases"
-
-/** Jak dlouho drží „pozastavit připomínání aktualizací" (30 dní). */
-private const val UPDATE_SNOOZE_DURATION_MS = 30L * 24 * 60 * 60 * 1000
 
 /** Stav ručně spuštěné kontroly aktualizací (zobrazuje se jako dialog). */
 private sealed interface ManualCheckState {
@@ -80,12 +78,7 @@ fun SettingsScreen(navController: NavController) {
     var selectedLanguage by remember { mutableStateOf(currentLanguageChoice()) }
     var appLockEnabled by remember { mutableStateOf(settingsRepository.isAppLockEnabled()) }
     var lockDelay by remember { mutableStateOf(settingsRepository.getLockDelay()) }
-    var keyCopyAllowed by remember { mutableStateOf(settingsRepository.isKeyCopyAllowed()) }
     var updateCheckEnabled by remember { mutableStateOf(settingsRepository.isUpdateCheckEnabled()) }
-    var updateSnoozeActive by remember {
-        mutableStateOf(settingsRepository.getUpdateSnoozeUntil() > System.currentTimeMillis())
-    }
-    var fileLimitEnabled by remember { mutableStateOf(settingsRepository.isFileSizeLimitEnabled()) }
 
     val scope = rememberCoroutineScope()
     val versionName = remember {
@@ -193,53 +186,35 @@ fun SettingsScreen(navController: NavController) {
                 onCheckedChange = { changeAppLock(it) }
             )
             // Prodleva zámku - za jak dlouho po odchodu na pozadí zamknout. Jen když
-            // je zámek zapnutý.
+            // je zámek zapnutý. Kompaktní segmentový přepínač (dřív to byl velký
+            // sloupec pěti řádků s RadioButtony přes celou obrazovku).
             if (appLockEnabled) {
                 AppCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             stringResource(R.string.settings_lock_delay_label),
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            style = MaterialTheme.typography.titleSmall
                         )
-                        val delayOptions = listOf(
-                            LockDelay.IMMEDIATELY to stringResource(R.string.lock_delay_immediately),
-                            LockDelay.SEC_10 to stringResource(R.string.lock_delay_10s),
-                            LockDelay.SEC_30 to stringResource(R.string.lock_delay_30s),
-                            LockDelay.MIN_1 to stringResource(R.string.lock_delay_1m),
-                            LockDelay.MIN_5 to stringResource(R.string.lock_delay_5m)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val delayOptions = LockDelay.entries
+                        val delayLabels = listOf(
+                            stringResource(R.string.lock_delay_immediately),
+                            stringResource(R.string.lock_delay_10s),
+                            stringResource(R.string.lock_delay_30s),
+                            stringResource(R.string.lock_delay_1m),
+                            stringResource(R.string.lock_delay_5m)
                         )
-                        delayOptions.forEach { (value, label) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .selectable(
-                                        selected = lockDelay == value,
-                                        onClick = { lockDelay = value; settingsRepository.setLockDelay(value) }
-                                    )
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = lockDelay == value,
-                                    onClick = { lockDelay = value; settingsRepository.setLockDelay(value) }
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(label)
+                        SegmentedControl(
+                            options = delayLabels,
+                            selectedIndex = delayOptions.indexOf(lockDelay).coerceAtLeast(0),
+                            onSelect = { i ->
+                                lockDelay = delayOptions[i]
+                                settingsRepository.setLockDelay(delayOptions[i])
                             }
-                        }
+                        )
                     }
                 }
             }
-            ToggleSettingCard(
-                title = stringResource(R.string.settings_key_copy_label),
-                description = stringResource(R.string.settings_key_copy_description),
-                checked = keyCopyAllowed,
-                onCheckedChange = {
-                    keyCopyAllowed = it
-                    settingsRepository.setKeyCopyAllowed(it)
-                }
-            )
 
             // 3) VZHLED (otevře samostatnou obrazovku)
             SectionHeader(stringResource(R.string.settings_section_appearance))
@@ -295,33 +270,7 @@ fun SettingsScreen(navController: NavController) {
                         settingsRepository.setUpdateCheckEnabled(it)
                     }
                 )
-                ToggleSettingCard(
-                    title = stringResource(R.string.settings_update_snooze_label),
-                    description = stringResource(R.string.settings_update_snooze_desc),
-                    checked = updateSnoozeActive,
-                    enabled = updateCheckEnabled,
-                    onCheckedChange = { on ->
-                        updateSnoozeActive = on
-                        if (on) {
-                            settingsRepository.setUpdateSnooze(
-                                System.currentTimeMillis() + UPDATE_SNOOZE_DURATION_MS
-                            )
-                        } else {
-                            settingsRepository.clearUpdateSnooze()
-                        }
-                    }
-                )
             }
-
-            ToggleSettingCard(
-                title = stringResource(R.string.settings_file_limit_label),
-                description = stringResource(R.string.settings_file_limit_desc),
-                checked = fileLimitEnabled,
-                onCheckedChange = {
-                    fileLimitEnabled = it
-                    settingsRepository.setFileSizeLimitEnabled(it)
-                }
-            )
 
             // 5) O APLIKACI (verze, novinky, ruční kontrola aktualizací, GitHub)
             SectionHeader(stringResource(R.string.settings_section_about))

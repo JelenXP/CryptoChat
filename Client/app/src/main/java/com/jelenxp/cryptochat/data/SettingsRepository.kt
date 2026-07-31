@@ -3,8 +3,8 @@ package com.jelenxp.cryptochat.data
 import android.content.Context
 
 /**
- * Jednoduché úložiště nastavení appky: zámek appky, povolení kopírování klíče
- * a nově i volby vzhledu (motiv, akcent, hustota, rohy, animace přechodů).
+ * Jednoduché úložiště nastavení appky: zámek appky a volby vzhledu (motiv,
+ * akcent, hustota, rohy, animace přechodů).
  */
 class SettingsRepository(context: Context) {
 
@@ -24,18 +24,6 @@ class SettingsRepository(context: Context) {
      */
     fun getLockDelay(): LockDelay = readEnum(KEY_LOCK_DELAY, LockDelay.SEC_10)
     fun setLockDelay(v: LockDelay) = writeEnum(KEY_LOCK_DELAY, v)
-
-    /**
-     * Povoleno kopírování tajného klíče do schránky? Záměrně výchozí `false` -
-     * schránka je riziková (můžou ji číst jiné aplikace), bezpečnější je sdílet
-     * klíč QR kódem. Netýká se ostatních (necitlivých) věcí - ty jdou kopírovat
-     * vždy.
-     */
-    fun isKeyCopyAllowed(): Boolean = prefs.getBoolean(KEY_KEY_COPY, false)
-
-    fun setKeyCopyAllowed(allowed: Boolean) {
-        prefs.edit().putBoolean(KEY_KEY_COPY, allowed).apply()
-    }
 
     // --- Vzhled ---
     // Ukládá se název enumu; při čtení bezpečný fallback na výchozí hodnotu,
@@ -80,37 +68,6 @@ class SettingsRepository(context: Context) {
         prefs.edit().putString(KEY_UPD_VERSION, version).putLong(KEY_UPD_AT, atMillis).apply()
     }
 
-    // --- Pozastavení připomínání aktualizací (na 30 dní) ---
-    // Kontrola nové verze běží dál (pokud není vypnutá výše); jen se během
-    // pozastavení nepřipomínají běžné aktualizace. Důležitá (`important`) verze
-    // se i tak připomene jednou - to hlídá `SnoozeImportantShown` (uloží se
-    // verze, která už během pozastavení byla ukázána).
-
-    /** Do kdy (epoch millis) je připomínání pozastavené; 0 = není. */
-    fun getUpdateSnoozeUntil(): Long = prefs.getLong(KEY_UPD_SNOOZE_UNTIL, 0L)
-
-    /** Zapne pozastavení do daného času a vynuluje značku ukázaného důležitého. */
-    fun setUpdateSnooze(untilMillis: Long) {
-        prefs.edit()
-            .putLong(KEY_UPD_SNOOZE_UNTIL, untilMillis)
-            .remove(KEY_UPD_SNOOZE_IMPORTANT)
-            .apply()
-    }
-
-    /** Vypne pozastavení (a zapomene značku ukázaného důležitého). */
-    fun clearUpdateSnooze() {
-        prefs.edit()
-            .remove(KEY_UPD_SNOOZE_UNTIL)
-            .remove(KEY_UPD_SNOOZE_IMPORTANT)
-            .apply()
-    }
-
-    /** Verze důležité aktualizace, která už během pozastavení byla připomenuta. */
-    fun getUpdateSnoozeImportantShown(): String? = prefs.getString(KEY_UPD_SNOOZE_IMPORTANT, null)
-    fun setUpdateSnoozeImportantShown(version: String) {
-        prefs.edit().putString(KEY_UPD_SNOOZE_IMPORTANT, version).apply()
-    }
-
     // Kdy naposled kontrolovala nové vydání služba na pozadí. Drží se zvlášť od
     // startovní kontroly, aby se z pozadí chodilo na síť nejvýš jednou za den -
     // víc probuzení a onion requestů by stálo baterii.
@@ -136,14 +93,6 @@ class SettingsRepository(context: Context) {
     fun getLastSeenVersionCode(): Int = prefs.getInt(KEY_LAST_SEEN_VC, 0)
     fun setLastSeenVersionCode(code: Int) {
         prefs.edit().putInt(KEY_LAST_SEEN_VC, code).apply()
-    }
-
-    // --- Limit velikosti šifrovaných souborů ---
-    // Výchozí zapnutý (strop 256 MB). Vypnutím jde šifrovat i větší soubory za
-    // cenu delšího zpracování a většího nároku na místo (viz upozornění v UI).
-    fun isFileSizeLimitEnabled(): Boolean = prefs.getBoolean(KEY_FILE_LIMIT, true)
-    fun setFileSizeLimitEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_FILE_LIMIT, enabled).apply()
     }
 
     // --- Relay (chat přes server) ---
@@ -235,7 +184,6 @@ class SettingsRepository(context: Context) {
         private const val PREFS_NAME = "crypto_chat_settings"
         private const val KEY_APP_LOCK = "app_lock_enabled"
         private const val KEY_LOCK_DELAY = "app_lock_delay"
-        private const val KEY_KEY_COPY = "key_copy_allowed"
         private const val KEY_THEME = "design_theme"
         private const val KEY_ACCENT = "design_accent"
         private const val KEY_DENSITY = "design_density"
@@ -245,13 +193,10 @@ class SettingsRepository(context: Context) {
         private const val KEY_UPD_CHECK = "update_check_enabled"
         private const val KEY_UPD_VERSION = "update_dismissed_version"
         private const val KEY_UPD_AT = "update_dismissed_at"
-        private const val KEY_UPD_SNOOZE_UNTIL = "update_snooze_until"
-        private const val KEY_UPD_SNOOZE_IMPORTANT = "update_snooze_important_shown"
         private const val KEY_UPD_LAST_CHECK = "update_last_check_at"
         private const val KEY_UPD_NOTIFIED = "update_notified_version"
         private const val KEY_UPD_FAILURES = "update_check_failures"
         private const val KEY_LAST_SEEN_VC = "last_seen_version_code"
-        private const val KEY_FILE_LIMIT = "file_size_limit_enabled"
         private const val KEY_RELAY_URL = "relay_url"
         private const val KEY_RELAY_CUSTOM = "relay_use_custom"
         private const val KEY_RELAY_FALLBACKS = "relay_fallbacks"

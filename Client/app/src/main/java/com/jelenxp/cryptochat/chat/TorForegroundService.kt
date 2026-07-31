@@ -307,9 +307,7 @@ class TorForegroundService : Service() {
                     latestVersion = info.latestVersion,
                     important = info.important,
                     notifiedVersion = settings.getUpdateNotifiedVersion(),
-                    dismissedVersion = settings.getUpdateDismissedVersion(),
-                    snoozeUntil = settings.getUpdateSnoozeUntil(),
-                    now = now
+                    dismissedVersion = settings.getUpdateDismissedVersion()
                 )
             ) {
                 return@launch

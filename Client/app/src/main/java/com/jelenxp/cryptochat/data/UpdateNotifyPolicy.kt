@@ -70,22 +70,17 @@ object UpdateNotifyPolicy {
      *  - o jedné verzi upozorňujeme **nejvýš jednou** ([notifiedVersion]),
      *  - verzi, kterou uživatel v appce zavřel ([dismissedVersion]), už
      *    nepřipomínáme vůbec - i kdyby byla označená jako důležitá; o té verzi
-     *    přece ví,
-     *  - pozastavené připomínání ([snoozeUntil]) mlčí u běžných verzí, ale
-     *    důležitou pustí (stejně jako startovní kontrola v `MainActivity`).
+     *    přece ví.
      */
     fun shouldNotify(
         latestVersion: String,
         important: Boolean,
         notifiedVersion: String?,
-        dismissedVersion: String?,
-        snoozeUntil: Long,
-        now: Long
+        dismissedVersion: String?
     ): Boolean {
         if (latestVersion.isBlank()) return false
         if (notifiedVersion == latestVersion) return false
         if (dismissedVersion == latestVersion) return false
-        if (snoozeUntil > now && !important) return false
         return true
     }
 }

@@ -16,41 +16,21 @@ package com.jelenxp.cryptochat.data
 object UpdateStartupPolicy {
 
     /**
-     * Co udělat s nalezenou verzí na startu.
-     * @property show ukázat obrazovku aktualizace
-     * @property markSnoozeImportantShown během pozastaveného připomínání si
-     *   důležitou verzi poznač jako připomenutou, ať se příště (další den)
-     *   neukáže znovu
-     */
-    data class Decision(val show: Boolean, val markSnoozeImportantShown: Boolean)
-
-    /**
      * Pravidla musí ctít, co si uživatel odklikl v aplikaci:
-     *  - během pozastavení ([snoozeUntil] v budoucnu) mlčíme u běžných verzí,
-     *    důležitou pustíme, ale jen jednou ([snoozeImportantShown]),
-     *  - mimo pozastavení: důležitou vždy; jinou hned, pokud ji uživatel nezavřel
-     *    ([dismissedVersion]); zavřenou znovu až po [remindIntervalMs].
+     *  - důležitou verzi ukaž vždy,
+     *  - jinou hned, pokud ji uživatel nezavřel ([dismissedVersion]),
+     *  - zavřenou verzi znovu až po [remindIntervalMs].
      */
     fun decide(
         important: Boolean,
         latestVersion: String,
         dismissedVersion: String?,
         dismissedAt: Long,
-        snoozeUntil: Long,
-        snoozeImportantShown: String?,
         remindIntervalMs: Long,
         now: Long
-    ): Decision {
-        val snoozeActive = snoozeUntil > now
-        val show = if (snoozeActive) {
-            important && snoozeImportantShown != latestVersion
-        } else {
-            when {
-                important -> true
-                latestVersion != dismissedVersion -> true
-                else -> now - dismissedAt >= remindIntervalMs
-            }
-        }
-        return Decision(show = show, markSnoozeImportantShown = show && snoozeActive && important)
+    ): Boolean = when {
+        important -> true
+        latestVersion != dismissedVersion -> true
+        else -> now - dismissedAt >= remindIntervalMs
     }
 }

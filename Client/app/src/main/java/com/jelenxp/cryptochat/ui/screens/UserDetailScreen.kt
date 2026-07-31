@@ -75,7 +75,6 @@ import com.jelenxp.cryptochat.chat.RatchetStore
 import com.jelenxp.cryptochat.chat.isMutedAt
 import com.jelenxp.cryptochat.crypto.CryptoManager
 import com.jelenxp.cryptochat.crypto.FileStreamCipher
-import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
@@ -121,7 +120,6 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
     val contact = viewModel.getContact(id)
     val key = contact?.keyBase64
     val secretKey = remember(key) { key?.let { runCatching { CryptoManager.keyFromBase64(it) }.getOrNull() } }
-    val settings = remember { SettingsRepository(context) }
     val focusManager = LocalFocusManager.current
     val clipboard = LocalClipboardManager.current
 
@@ -185,8 +183,8 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
         outcome = null; busy = false; progress = 0f; indeterminate = false
     }
 
-    fun maxBytes(): Long =
-        if (settings.isFileSizeLimitEnabled()) FileTransfer.DEFAULT_LIMIT_BYTES else Long.MAX_VALUE
+    // Strop šifrovaného souboru je napevno 256 MB (dřív volitelně v nastavení).
+    fun maxBytes(): Long = FileTransfer.DEFAULT_LIMIT_BYTES
 
     // --- Fotka profilu ---
     fun applyAvatar(uri: Uri) {
@@ -340,11 +338,6 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                             }
                         )
                         if (contact.keyBase64 != null) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.btn_verify_key)) },
-                                leadingIcon = { Icon(Icons.Default.VerifiedUser, null) },
-                                onClick = { menuOpen = false; navController.navigate("verify/$id") }
-                            )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.btn_rekey)) },
                                 leadingIcon = { Icon(Icons.Default.Autorenew, null) },
@@ -562,8 +555,6 @@ fun UserDetailScreen(id: String, navController: NavController, viewModel: Contac
                 }
             }
 
-            Spacer(Modifier.height(4.dp))
-            key?.let { VerifyLine(fingerprint = remember(it) { CryptoManager.fingerprint(it) }) { navController.navigate("verify/$id") } }
         }
     }
 
@@ -937,19 +928,6 @@ private fun SafetyNumberReveal(generation: Int, code: String) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun VerifyLine(fingerprint: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(6.dp))
-        Text(stringResource(R.string.detail_verify_code, fingerprint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

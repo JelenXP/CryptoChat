@@ -77,14 +77,11 @@
     <string name="settings_app_lock_unavailable">Nedostupné: zařízení nemá nastavený zámek obrazovky (PIN, vzor ani otisk prstu).</string>
     <string name="settings_lock_delay_label">Zamknout po</string>
     <string name="lock_delay_immediately">Ihned</string>
-    <string name="lock_delay_10s">10 sekundách</string>
-    <string name="lock_delay_30s">30 sekundách</string>
-    <string name="lock_delay_1m">1 minutě</string>
-    <string name="lock_delay_5m">5 minutách</string>
+    <string name="lock_delay_10s">10 s</string>
+    <string name="lock_delay_30s">30 s</string>
+    <string name="lock_delay_1m">1 min</string>
+    <string name="lock_delay_5m">5 min</string>
     <string name="error_app_lock_unavailable">Zařízení nemá nastavený PIN, vzor ani otisk prstu - zámek nelze zapnout.</string>
-
-    <string name="settings_key_copy_label">Povolit kopírování klíče do schránky</string>
-    <string name="settings_key_copy_description">Tajný klíč se normálně sdílí jen QR kódem. Schránku můžou číst jiné aplikace, takže tohle je rizikovější — zapni jen když opravdu potřebuješ klíč někam vložit.</string>
 
     <!-- Lock screen -->
     <string name="lock_screen_title">Aplikace je uzamčena</string>
@@ -213,12 +210,9 @@
     <string name="btn_update_later">Později</string>
     <string name="settings_update_check_label">Kontrolovat aktualizace</string>
     <string name="settings_update_check_desc">Při startu ověřit na GitHubu novější verzi. Vypnutím zabráníš jakémukoli přístupu k síti.</string>
-    <string name="settings_update_snooze_label">Pozastavit připomínání na 30 dní</string>
-    <string name="settings_update_snooze_desc">Na 30 dní přestane připomínat aktualizace. Na pozadí je dál kontroluje a důležitou aktualizaci i tak jednou zobrazí.</string>
 
     <!-- Ověření kontaktu (otisk klíče) -->
     <string name="verify_title">Ověřit kontakt</string>
-    <string name="btn_verify_key">Ověřit klíč</string>
     <string name="verify_intro">Porovnej tento kód s %1$s jiným kanálem, než kterým proběhla výměna klíče. Když se na obou stranách shoduje, máte stejný klíč a nikdo ho nepodvrhl.</string>
     <string name="verify_hint">Kód je odvozený ze sdíleného klíče a nic o něm neprozrazuje.</string>
     <string name="verify_mark_verified">Označit jako ověřené</string>
@@ -325,9 +319,6 @@
     <string name="choice_text">Textová zpráva</string>
     <string name="choice_file">Soubor</string>
 
-    <!-- Nastavení limitu velikosti souborů -->
-    <string name="settings_file_limit_label">Limit velikosti souborů (256 MB)</string>
-    <string name="settings_file_limit_desc">Ve výchozím zapnuto. Vypnutím půjdou šifrovat i větší soubory — může to ale trvat déle a zabrat hodně místa i paměti.</string>
 
     <!-- Detail kontaktu (spojená obrazovka šifrovat/dešifrovat) -->
     <string name="menu_more">Více</string>
@@ -354,7 +345,6 @@
     <string name="detail_pick_enc_hint">Foto, PDF, cokoliv</string>
     <string name="detail_pick_dec_hint">Zašifrovaný soubor od tohoto kontaktu</string>
     <string name="detail_pick_other">Vybrat jiný</string>
-    <string name="detail_verify_code">Ověřeno · kód %1$s</string>
 
     <!-- Náhled animace (Nastavení vzhledu) -->
     <string name="design_preview_hint">Změna stylu nebo rychlosti přehraje přechod na celé této obrazovce.</string>

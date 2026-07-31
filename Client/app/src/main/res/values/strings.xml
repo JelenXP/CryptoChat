@@ -76,15 +76,12 @@
     <string name="settings_app_lock_description">Require PIN/fingerprint when opening the app.</string>
     <string name="settings_app_lock_unavailable">Not available: your device has no screen lock (PIN, pattern, or fingerprint) set up.</string>
     <string name="settings_lock_delay_label">Lock after</string>
-    <string name="lock_delay_immediately">Immediately</string>
-    <string name="lock_delay_10s">10 seconds</string>
-    <string name="lock_delay_30s">30 seconds</string>
-    <string name="lock_delay_1m">1 minute</string>
-    <string name="lock_delay_5m">5 minutes</string>
+    <string name="lock_delay_immediately">Now</string>
+    <string name="lock_delay_10s">10 s</string>
+    <string name="lock_delay_30s">30 s</string>
+    <string name="lock_delay_1m">1 min</string>
+    <string name="lock_delay_5m">5 min</string>
     <string name="error_app_lock_unavailable">Your device has no PIN, pattern, or fingerprint set up - app lock can\'t be enabled.</string>
-
-    <string name="settings_key_copy_label">Allow copying the key to clipboard</string>
-    <string name="settings_key_copy_description">The secret key is normally shared only via QR code. The clipboard can be read by other apps, so enabling this is riskier — turn it on only if you really need to paste the key elsewhere.</string>
 
     <!-- Lock screen -->
     <string name="lock_screen_title">App is locked</string>
@@ -213,12 +210,9 @@
     <string name="btn_update_later">Later</string>
     <string name="settings_update_check_label">Check for updates</string>
     <string name="settings_update_check_desc">Check GitHub for a new version on start. Turn off to avoid any network access.</string>
-    <string name="settings_update_snooze_label">Pause update reminders for 30 days</string>
-    <string name="settings_update_snooze_desc">Stop reminding you about updates for 30 days. It still checks in the background, and an important update is still shown once.</string>
 
     <!-- Verify contact (key fingerprint) -->
     <string name="verify_title">Verify contact</string>
-    <string name="btn_verify_key">Verify key</string>
     <string name="verify_intro">Compare this code with %1$s over a different channel than the one you used for the key exchange. If it matches on both sides, you share the same key and nobody has swapped it.</string>
     <string name="verify_hint">The code is derived from your shared key and reveals nothing about it.</string>
     <string name="verify_mark_verified">Mark as verified</string>
@@ -325,9 +319,6 @@
     <string name="choice_text">Text message</string>
     <string name="choice_file">File</string>
 
-    <!-- File size limit setting -->
-    <string name="settings_file_limit_label">Limit file size (256 MB)</string>
-    <string name="settings_file_limit_desc">On by default. Turn off to encrypt larger files — it can take longer and use a lot of storage and memory.</string>
 
     <!-- Contact detail (combined encrypt/decrypt screen) -->
     <string name="menu_more">More</string>
@@ -354,7 +345,6 @@
     <string name="detail_pick_enc_hint">Photo, PDF, anything</string>
     <string name="detail_pick_dec_hint">Encrypted file from this contact</string>
     <string name="detail_pick_other">Choose another</string>
-    <string name="detail_verify_code">Verified · code %1$s</string>
 
     <!-- Animation preview (Design settings) -->
     <string name="design_preview_hint">Changing the style or speed replays the transition on this whole screen.</string>

@@ -389,20 +389,15 @@ private fun StartupGate(content: @Composable () -> Unit) {
         // Rozhodnutí (pozastavení, zavření, připomínací interval) je v čisté
         // funkci vedle obrazovky - stejná pravidla jako UpdateNotifyPolicy na
         // pozadí, ale testovatelná a bez duplicitní logiky v composable.
-        val decision = UpdateStartupPolicy.decide(
+        val show = UpdateStartupPolicy.decide(
             important = result.important,
             latestVersion = result.latestVersion,
             dismissedVersion = settings.getUpdateDismissedVersion(),
             dismissedAt = settings.getUpdateDismissedAt(),
-            snoozeUntil = settings.getUpdateSnoozeUntil(),
-            snoozeImportantShown = settings.getUpdateSnoozeImportantShown(),
             remindIntervalMs = UPDATE_REMIND_INTERVAL_MS,
             now = System.currentTimeMillis()
         )
-        if (decision.show) {
-            if (decision.markSnoozeImportantShown) {
-                settings.setUpdateSnoozeImportantShown(result.latestVersion)
-            }
+        if (show) {
             updateInfo = result
             updateEligible = true
         }

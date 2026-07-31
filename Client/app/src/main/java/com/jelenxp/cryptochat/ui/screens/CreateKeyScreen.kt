@@ -18,13 +18,11 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.CryptoManager
-import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.CopyableField
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
 import com.jelenxp.cryptochat.ui.qr.QrCard
 import com.jelenxp.cryptochat.ui.qr.generateQrBitmap
-import com.jelenxp.cryptochat.ui.util.copyToClipboard
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 
 @Composable
@@ -39,10 +37,6 @@ fun CreateKeyScreen(
     val keyBase64 = remember { CryptoManager.keyToBase64(CryptoManager.generateKey()) }
     val qrBitmap = remember(keyBase64) { generateQrBitmap(keyBase64).asImageBitmap() }
     val copyLabel = stringResource(R.string.label_key_base64)
-    val toastCopied = stringResource(R.string.toast_key_copied)
-    // Kopírování klíče do schránky je citlivé - povolené jen když si to
-    // uživatel výslovně zapnul v nastavení (jinak se klíč sdílí QR kódem).
-    val keyCopyAllowed = remember { SettingsRepository(context).isKeyCopyAllowed() }
 
     CryptoScaffold(
         title = stringResource(R.string.title_key_for, name),
@@ -73,13 +67,10 @@ fun CreateKeyScreen(
             CopyableField(
                 label = copyLabel,
                 value = keyBase64,
-                // Když je kopírování klíče vypnuté, pole je jen ke čtení (bez
-                // tlačítka) - klíč se sdílí QR kódem výše. Když je povolené,
-                // označíme kopii jako citlivou (skryje se ze schránkového
-                // náhledu/historie na Androidu 13+).
-                onCopy = if (keyCopyAllowed) {
-                    { context.copyToClipboard("key", keyBase64, toastCopied, sensitive = true) }
-                } else null
+                // Klíč se zásadně sdílí QR kódem výše, do schránky se nekopíruje
+                // (schránka je riziková - můžou ji číst jiné aplikace). Pole je
+                // proto jen ke čtení, bez tlačítka kopírovat.
+                onCopy = null
             )
 
             Button(

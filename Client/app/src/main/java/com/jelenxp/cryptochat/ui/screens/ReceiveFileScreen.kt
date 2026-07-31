@@ -28,7 +28,6 @@ import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.crypto.CryptoManager
 import com.jelenxp.cryptochat.crypto.FileStreamCipher
-import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.AppCard
 import com.jelenxp.cryptochat.ui.components.CryptoScaffold
 import com.jelenxp.cryptochat.ui.components.InfoCard
@@ -62,7 +61,6 @@ fun ReceiveFileScreen(id: String, navController: NavController, viewModel: Conta
     val contact = viewModel.getContact(id)
     val key = contact?.keyBase64
     val secretKey = remember(key) { key?.let { runCatching { CryptoManager.keyFromBase64(it) }.getOrNull() } }
-    val settings = remember { SettingsRepository(context) }
 
     LaunchedEffect(Unit) { FileTransfer.clearTemp(context) }
 
@@ -89,7 +87,8 @@ fun ReceiveFileScreen(id: String, navController: NavController, viewModel: Conta
         val sk = secretKey ?: return@rememberLauncherForActivityResult
         if (uri == null) return@rememberLauncherForActivityResult
         val size = FileTransfer.fileSize(context, uri)
-        val maxBytes = if (settings.isFileSizeLimitEnabled()) FileTransfer.DEFAULT_LIMIT_BYTES else Long.MAX_VALUE
+        // Strop dešifrovaného souboru je napevno 256 MB (dřív volitelně v nastavení).
+        val maxBytes = FileTransfer.DEFAULT_LIMIT_BYTES
 
         if (size != null && size > maxBytes) {
             error = errorTooLarge
