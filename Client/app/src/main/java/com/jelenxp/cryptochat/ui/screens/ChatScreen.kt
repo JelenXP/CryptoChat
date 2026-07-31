@@ -1849,17 +1849,21 @@ private fun MessageBubble(
     val deleted = message.deleted
     // Smazaná zpráva je vždy neutrální šedá (i moje odchozí), ať „Deleted" čte
     // jako šedý text - ne bílý na tyrkysové bublině.
+    // Vlastní (odchozí) bublina má světlý odstín podle zvoleného accentu, aby se
+    // volba accentu v konverzaci projevila (viz [AccentColor.bubble]). Text i
+    // citace v ní jsou tmavé ([onBubble]); přijatá bublina zůstává neutrální.
+    val outAccent = LocalDesign.current.accent
     val bubbleColor = when {
         deleted -> MaterialTheme.colorScheme.surfaceVariant
-        outgoing -> MaterialTheme.colorScheme.primary
+        outgoing -> outAccent.bubble
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val textColor = when {
         deleted -> MaterialTheme.colorScheme.onSurfaceVariant
-        outgoing -> MaterialTheme.colorScheme.onPrimary
+        outgoing -> outAccent.onBubble
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val accent = if (outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+    val accent = if (outgoing) outAccent.onBubble else MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(
         topStart = 16.dp, topEnd = 16.dp,
         bottomStart = if (outgoing) 16.dp else 4.dp,
