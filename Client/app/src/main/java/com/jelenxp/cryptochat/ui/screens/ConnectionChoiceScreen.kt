@@ -10,7 +10,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -91,7 +91,7 @@ fun ConnectionChoiceScreen(onDone: () -> Unit) {
 
                 Spacer(Modifier.height(24.dp))
                 OptionCard(
-                    icon = Icons.Filled.Shield,
+                    icon = Icons.Filled.Security,
                     title = stringResource(R.string.conn_tor_title),
                     recommended = true,
                     subtitle = stringResource(R.string.conn_tor_subtitle),
