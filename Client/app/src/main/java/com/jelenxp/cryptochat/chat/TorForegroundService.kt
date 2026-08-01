@@ -281,6 +281,11 @@ class TorForegroundService : Service() {
         if (!FeatureFlags.UPDATE_CHECK_ENABLED) return
         val settings = SettingsRepository(ctx)
         if (!settings.isUpdateCheckEnabled()) return
+        // Úsporný profil (mobilní data): kontrolu verzí na pozadí NEDĚLÁME vůbec -
+        // je to čistě volitelná věc, zprávy na ní nezávisí. Na neměřené síti (WiFi)
+        // běží dál jako dosud; na měřené ji zastane až kontrola při otevření appky
+        // (gatovaná na 1× za UPDATE_CHECK_INTERVAL_MS, viz StartupGate).
+        if (currentNetworkProfile(ctx) == NetworkProfile.SAVER) return
         val now = System.currentTimeMillis()
         when (
             UpdateNotifyPolicy.decide(now, settings.getUpdateLastCheckAt(), UPDATE_CHECK_INTERVAL_MS)
@@ -420,9 +425,11 @@ class TorForegroundService : Service() {
                 continue
             }
             try {
-                // long-poll: drží se, dokud nedorazí zpráva (nebo ~60 s)
+                // long-poll: drží se, dokud nedorazí zpráva (nebo ~170 s). Profil
+                // (FULL/SAVER) se čte čerstvý každý cyklus, ať se přepnutí sítě
+                // (WiFi ↔ mobil) projeví hned - NetworkCallback smyčku probouzí.
                 val pollStart = System.currentTimeMillis()
-                val result = RelaySync.poll(ctx, contact)
+                val result = RelaySync.poll(ctx, contact, currentNetworkProfile(ctx))
                 // Notifikaci NE pro konverzaci, kterou má uživatel otevřenou -
                 // tu si zprávu zobrazí sama. Kontroluje se AŽ TEĎ, protože poll
                 // mohl běžet ještě z doby, než uživatel chat otevřel.
@@ -500,12 +507,17 @@ class TorForegroundService : Service() {
             networkGeneration.first { it != startGen }
         } != null
         // Návrat sítě = rozumný důvod zkusit hned od začátku, ne dál zdvojnásobovat.
-        return if (wokenByNetwork) BACKOFF_START_MS else (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_MS)
+        // Růst uloženého backoffu se stropuje NEJVYŠŠÍM možným stropem (SAVER), aby
+        // hodnota vůbec mohla vyrůst až tam; skutečné čekání pak clampuje `max`
+        // z maxBackoffMs (podle profilu i obrazovky).
+        return if (wokenByNetwork) BACKOFF_START_MS else (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_SAVER_MS)
     }
 
     /**
      * Strop backoffu. Při zhasnuté obrazovce ho pustíme výš - uživatel stejně
      * zprávu hned nečte a zbytečné pokusy o spojení jsou v tu chvíli nejdražší.
+     * Na měřené síti (SAVER) ještě výš, ať se během výpadku relaye nepálí data
+     * (a baterie) opakovaným stavěním Tor okruhů.
      */
     private fun maxBackoffMs(): Long {
         val interactive = try {
@@ -513,7 +525,9 @@ class TorForegroundService : Service() {
         } catch (e: Exception) {
             true
         }
-        return if (interactive) BACKOFF_MAX_SCREEN_ON_MS else BACKOFF_MAX_SCREEN_OFF_MS
+        if (interactive) return BACKOFF_MAX_SCREEN_ON_MS
+        return if (currentNetworkProfile(this) == NetworkProfile.SAVER)
+            BACKOFF_MAX_SCREEN_OFF_SAVER_MS else BACKOFF_MAX_SCREEN_OFF_MS
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -625,6 +639,15 @@ class TorForegroundService : Service() {
 
         /** Strop backoffu při zhasnuté obrazovce (šetříme nejvíc). */
         private const val BACKOFF_MAX_SCREEN_OFF_MS = 5L * 60 * 1000
+
+        /**
+         * Strop backoffu při zhasnuté obrazovce na měřené síti ([NetworkProfile.SAVER]).
+         * Ještě delší než [BACKOFF_MAX_SCREEN_OFF_MS] - během výpadku relaye míň
+         * marných (a nejdražších) stavění Tor okruhů. Cenou je, že po obnově relaye
+         * dorazí první zpráva až o tolik později; rozsvícení obrazovky i návrat sítě
+         * čekání resetují, takže se to týká jen telefonu v kapse za výpadku.
+         */
+        private const val BACKOFF_MAX_SCREEN_OFF_SAVER_MS = 10L * 60 * 1000
 
         /** Po kolika pollech za sebou označit spojení za nedostupné (indikátor). */
         private const val UNREACHABLE_AFTER_FAILS = 2

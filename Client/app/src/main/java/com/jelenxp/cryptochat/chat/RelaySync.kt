@@ -56,10 +56,14 @@ object RelaySync {
     // Long-poll: server podrží GET aktuální schránky až tolik sekund, než dorazí
     // zpráva. Musí sedět pod čtecím timeoutem RelayClientu i pod serverovým stropem.
     //
-    // Delší čekání = míň probuzení = míň vybité baterie (60 s místo 25 s ušetří
-    // ~60 % round-tripů). Doručení se tím nezdrží: PUT probudí čekající GET hned.
-    // Nechodíme na plný serverový strop (90 s), ať nečinný stream nezabije NAT.
-    private const val LONGPOLL_SECONDS = 60
+    // Delší čekání = míň znovupřipojení = míň dat i vybité baterie (170 s místo
+    // 60 s ušetří ~65 % round-tripů). Doručení se tím nezdrží: PUT probudí čekající
+    // GET hned. Sedíme 10 s pod serverovým stropem (CC_LONGPOLL_MAX = 180 s).
+    // Proč nečinný stream nezabije NAT: přes Tor drží connection-level padding
+    // (~1,5-9,5 s) spojení ke guardovi živé, takže carrier NAT mapping nevyprší;
+    // 170 s je navíc pod ~4-5min mezí holého TCP, takže je bezpečné i v Cloudflare
+    // (clearnet) módu bez Toru. Jednotné pro FULL i SAVER profil (viz NetworkProfile).
+    private const val LONGPOLL_SECONDS = 170
 
     // Jak dlouho po přelomu epochy ještě kontrolovat PŘEDCHOZÍ schránku. Mimo
     // tohle okno je kontrola zbytečná - a stála by druhý onion request v každém
@@ -85,6 +89,13 @@ object RelaySync {
      * (viz `finishPoll`), tohle je jen pojistka pro asymetrický výpadek.
      */
     private const val SECONDARY_SWEEP_MS = 3L * 60 * 1000
+
+    /**
+     * Úsporná varianta [SECONDARY_SWEEP_MS] pro [NetworkProfile.SAVER] (mobilní
+     * data): řidší sweep záložních relayí. Uplatní se jen s nakonfigurovanými
+     * zálohami; cenou je pomalejší failover příjmu při výpadku primárního relaye.
+     */
+    private const val SECONDARY_SWEEP_SAVER_MS = 10L * 60 * 1000
 
     /** Kdy (ms) se u kontaktu naposledy prohledávaly záložní relaye. */
     private val secondarySweptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -1157,7 +1168,7 @@ object RelaySync {
      * Vyzvedne nové zprávy pro daný kontakt a uloží je do historie. Vrací počet
      * nově přijatých zpráv a příznak, zda spojení selhalo (viz [PollResult]).
      */
-    fun poll(context: Context, contact: Contact): PollResult {
+    fun poll(context: Context, contact: Contact, profile: NetworkProfile = NetworkProfile.FULL): PollResult {
         val key = contact.keyBase64 ?: return PollResult(0, false)
         val baseUrl = SettingsRepository(context).getRelayUrl()
         if (baseUrl.isBlank()) return PollResult(0, false)
@@ -1165,6 +1176,9 @@ object RelaySync {
         val repo = repoFor(context)
         val dir = recvDir(contact)
         val epoch = currentEpoch()
+        // Jak řídce sweepovat záložní relaye: na měřené síti řidčeji (úspora dat).
+        val secondarySweepMs =
+            if (profile == NetworkProfile.SAVER) SECONDARY_SWEEP_SAVER_MS else SECONDARY_SWEEP_MS
         val ratchetStore = RatchetStore(context, storageCrypto)
         // Bootstrap ratchetu, jakmile protějšek inzeruje, že umí major 4 (a jen pro
         // kontakty s definovanou rolí - jinak by se směry schránek kryly). `is Absent`:
@@ -1793,7 +1807,7 @@ object RelaySync {
             val nowMs = System.currentTimeMillis()
             val lastSwept = secondarySweptAt[contact.id]
             val sweep = allowSweep && fallbacks.isNotEmpty() &&
-                (!reachable || lastSwept == null || nowMs - lastSwept >= SECONDARY_SWEEP_MS)
+                (!reachable || lastSwept == null || nowMs - lastSwept >= secondarySweepMs)
             if (sweep) {
                 // Stav záloh NESMÍ ovlivnit backoff/dostupnost primárního (mrtvá
                 // záloha by jinak shodila reachable a nutila backoff i při zdravém

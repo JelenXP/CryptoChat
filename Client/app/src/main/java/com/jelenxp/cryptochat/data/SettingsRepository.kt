@@ -47,6 +47,16 @@ class SettingsRepository(context: Context) {
     fun getAnimSpeed(): AnimSpeed = readEnum(KEY_ANIM_SPEED, AnimSpeed.NORMAL)
     fun setAnimSpeed(v: AnimSpeed) = writeEnum(KEY_ANIM_SPEED, v)
 
+    // --- Úspora dat na pozadí ---
+
+    /**
+     * Kdy má chat na pozadí přepnout do úsporného režimu (delší long-poll, delší
+     * backoff, žádná kontrola aktualizací na síti). Výchozí [SaverMode.AUTO] =
+     * šetřit jen na měřené síti (mobilní data). Viz [decideNetworkProfile].
+     */
+    fun getSaverMode(): SaverMode = readEnum(KEY_SAVER_MODE, SaverMode.AUTO)
+    fun setSaverMode(v: SaverMode) = writeEnum(KEY_SAVER_MODE, v)
+
     // --- Upozornění na aktualizaci ---
 
     /**
@@ -213,6 +223,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_CORNERS = "design_corners"
         private const val KEY_ANIM_STYLE = "design_anim_style"
         private const val KEY_ANIM_SPEED = "design_anim_speed"
+        private const val KEY_SAVER_MODE = "data_saver_mode"
         private const val KEY_UPD_CHECK = "update_check_enabled"
         private const val KEY_UPD_VERSION = "update_dismissed_version"
         private const val KEY_UPD_AT = "update_dismissed_at"
@@ -251,3 +262,10 @@ class SettingsRepository(context: Context) {
  * i server vidí IP). Viz [SettingsRepository.getConnectionMode].
  */
 enum class ConnectionMode { TOR, CLOUDFLARE }
+
+/**
+ * Kdy chat na pozadí šetří data. [AUTO] = jen na měřené síti (mobilní data),
+ * [ALWAYS] = vždy, [NEVER] = nikdy (vždy plná rychlost). Pořadí = pořadí v
+ * segmentovém přepínači v Nastavení. Viz [SettingsRepository.getSaverMode].
+ */
+enum class SaverMode { AUTO, ALWAYS, NEVER }

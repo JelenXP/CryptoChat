@@ -176,6 +176,14 @@
     <string name="speed_fast">Rychlá</string>
     <string name="speed_normal">Normální</string>
     <string name="speed_slow">Pomalá</string>
+    <!-- Data na pozadí (úspora dat) -->
+    <string name="settings_section_data_usage">Data na pozadí</string>
+    <string name="settings_saver_label">Šetřit data na pozadí</string>
+    <string name="settings_saver_desc">Drží spojení otevřené déle místo častého znovupřipojování, takže kontrola nových zpráv na pozadí spotřebuje míň dat. Na mobilních datech to může zprávy na pozadí zdržet o pár sekund.</string>
+    <string name="saver_mode_auto">Automaticky</string>
+    <string name="saver_mode_always">Vždy</string>
+    <string name="saver_mode_never">Nikdy</string>
+    <string name="settings_saver_auto_hint">Automaticky šetří jen na mobilních datech (měřené sítě).</string>
     <!-- Záloha / import-export -->
     <string name="settings_section_data">Data</string>
     <string name="settings_backup_label">Záloha</string>

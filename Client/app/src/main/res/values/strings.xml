@@ -176,6 +176,14 @@
     <string name="speed_fast">Fast</string>
     <string name="speed_normal">Normal</string>
     <string name="speed_slow">Slow</string>
+    <!-- Background data usage (data saver) -->
+    <string name="settings_section_data_usage">Background data</string>
+    <string name="settings_saver_label">Save data in background</string>
+    <string name="settings_saver_desc">Holds the connection open longer instead of reconnecting often, so checking for new messages in the background uses less data. On mobile data this can delay background messages by a few seconds.</string>
+    <string name="saver_mode_auto">Automatic</string>
+    <string name="saver_mode_always">Always</string>
+    <string name="saver_mode_never">Never</string>
+    <string name="settings_saver_auto_hint">Automatic saves data only on mobile data (metered networks).</string>
     <!-- Backup / import-export -->
     <string name="settings_section_data">Data</string>
     <string name="settings_backup_label">Backup</string>

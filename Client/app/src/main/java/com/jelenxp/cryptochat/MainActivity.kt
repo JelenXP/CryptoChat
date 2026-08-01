@@ -56,7 +56,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.jelenxp.cryptochat.chat.NetworkProfile
 import com.jelenxp.cryptochat.chat.TorForegroundService
+import com.jelenxp.cryptochat.chat.currentNetworkProfile
 import com.jelenxp.cryptochat.data.AnimStyle
 import com.jelenxp.cryptochat.data.AppChangelog
 import com.jelenxp.cryptochat.data.FeatureFlags
@@ -348,6 +350,13 @@ private fun AppLockGate(content: @Composable () -> Unit) {
 private const val UPDATE_REMIND_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
 
 /**
+ * Na měřené síti ([NetworkProfile.SAVER]) se kontrola verzí při otevření appky
+ * dělá nejvýš 1× za tuhle dobu (na neměřené jako dosud - při každém otevření).
+ * Na pozadí je na měřené síti kontrola úplně vypnutá, tahle ji zastane. 6 h.
+ */
+private const val UPDATE_SAVER_MIN_INTERVAL_MS = 6L * 60 * 60 * 1000
+
+/**
  * Startovní upozornění (po odemčení). Nejdřív jednorázové „Novinky" po
  * aktualizaci ([ChangelogScreen]), pak kontrola nové verze na GitHub Releases
  * ([UpdateScreen]). Vždy jen jedno okno naráz.
@@ -392,6 +401,15 @@ private fun StartupGate(content: @Composable () -> Unit) {
         // původní offline appky). Až budou vlastní veřejné releases, zapni ji.
         if (!FeatureFlags.UPDATE_CHECK_ENABLED) return@LaunchedEffect
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
+        // Na měřené síti (úsporný profil) šetři data: kontroluj při startu nejvýš
+        // 1× za UPDATE_SAVER_MIN_INTERVAL_MS. Na pozadí je tam kontrola úplně
+        // vypnutá (viz maybeNotifyAboutUpdate), tohle ji zastupuje. Na neměřené
+        // síti (WiFi) beze změny - kontrola při každém otevření.
+        if (currentNetworkProfile(context) == NetworkProfile.SAVER) {
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - settings.getUpdateLastCheckAt() < UPDATE_SAVER_MIN_INTERVAL_MS) return@LaunchedEffect
+            settings.setUpdateLastCheckAt(nowMs)
+        }
         // Přes co kontrolu poslat (soukromí): Tor módu → přes Tor, Cloudflare/clearnet
         // → napřímo (relay IP stejně vidí), PRÁZDNÁ adresa (chat vypnutý) → přeskočit,
         // ať clearnet dotaz neunikne z reálné IP bez volby uživatele. Viz UpdateRoutePolicy.

@@ -104,10 +104,13 @@ RATE_LIMIT_WINDOW = int(os.environ.get("CC_RATE_LIMIT_WINDOW", "60"))          #
 # tolik sekund a odpovime hned, jak dorazi zprava (min round-tripu pres Tor,
 # skoro okamzite doruceni). Strop drzime pod ctecim timeoutem klienta.
 #
-# Cim delsi cekani, tim min probuzeni klienta = min vybite baterie: 90 s misto
-# 25 s snizi pocet round-tripu na ctvrtinu, aniz by se zdrzelo doruceni (PUT
-# cekajici GET probudi okamzite). Vlakno navic nic nestoji - jen ceka na Condition.
-LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "90"))                     # sekundy
+# Cim delsi cekani, tim min znovupripojeni klienta = min dat i vybite baterie:
+# 180 s misto 90 s znovu puli pocet round-tripu, aniz by se zdrzelo doruceni (PUT
+# cekajici GET probudi okamzite). Klient chodi na 170 s (10 s rezerva pod stropem).
+# Bezpecne i na mobilu: pres Tor drzi connection-level padding spojeni ke guardovi
+# zive (carrier NAT mapping nevyprsi), a 180 s je pod ~4-5min mezi holeho TCP.
+# Vlakno navic nic nestoji - jen ceka na Condition; soubezne long-polly hlida MAX_LONGPOLL.
+LONGPOLL_MAX = int(os.environ.get("CC_LONGPOLL_MAX", "180"))                    # sekundy
 
 # --- Timeouty spojeni (obrana proti slowloris / necinnemu keep-alive) --------
 #

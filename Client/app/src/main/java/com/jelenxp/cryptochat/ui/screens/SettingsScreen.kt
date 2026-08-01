@@ -30,6 +30,7 @@ import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.data.FeatureFlags
 import com.jelenxp.cryptochat.data.LockDelay
+import com.jelenxp.cryptochat.data.SaverMode
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.data.UpdateChecker
 import com.jelenxp.cryptochat.ui.components.AppCard
@@ -79,6 +80,7 @@ fun SettingsScreen(navController: NavController) {
     var appLockEnabled by remember { mutableStateOf(settingsRepository.isAppLockEnabled()) }
     var lockDelay by remember { mutableStateOf(settingsRepository.getLockDelay()) }
     var updateCheckEnabled by remember { mutableStateOf(settingsRepository.isUpdateCheckEnabled()) }
+    var saverMode by remember { mutableStateOf(settingsRepository.getSaverMode()) }
 
     val scope = rememberCoroutineScope()
     val versionName = remember {
@@ -251,7 +253,47 @@ fun SettingsScreen(navController: NavController) {
                 }
             }
 
-            // 4) DATA (záloha kontaktů + kontrola aktualizací)
+            // 4) DATA NA POZADÍ (úspora dat na měřené síti)
+            SectionHeader(stringResource(R.string.settings_section_data_usage))
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        stringResource(R.string.settings_saver_label),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        stringResource(R.string.settings_saver_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val saverModes = SaverMode.entries
+                    val saverLabels = listOf(
+                        stringResource(R.string.saver_mode_auto),
+                        stringResource(R.string.saver_mode_always),
+                        stringResource(R.string.saver_mode_never)
+                    )
+                    SegmentedControl(
+                        options = saverLabels,
+                        selectedIndex = saverModes.indexOf(saverMode).coerceAtLeast(0),
+                        onSelect = { i ->
+                            saverMode = saverModes[i]
+                            settingsRepository.setSaverMode(saverModes[i])
+                        }
+                    )
+                    if (saverMode == SaverMode.AUTO) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.settings_saver_auto_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            // 5) DATA (záloha kontaktů + kontrola aktualizací)
             SectionHeader(stringResource(R.string.settings_section_data))
             NavCard(
                 icon = Icons.Default.SettingsBackupRestore,
