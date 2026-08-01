@@ -529,9 +529,12 @@ def _restore_handoff(path):
         return
     try:
         n = STORE.restore(_deserialize_state(data))
-        print(f"  handoff: obnoveno {n} schranek")
+        # stderr, ne stdout: stdout je bufferovany a SIGTERM handler konci os._exit
+        # (bez flush), takze na stdout by se hlaska do journalu nikdy nedostala.
+        print(f"  handoff: obnoveno {n} schranek", file=sys.stderr, flush=True)
     except Exception as e:  # noqa: BLE001 - poskozeny handoff nesmi shodit start
-        print(f"  handoff: soubor poskozeny, preskakuji ({type(e).__name__})")
+        print(f"  handoff: soubor poskozeny, preskakuji ({type(e).__name__})",
+              file=sys.stderr, flush=True)
     finally:
         try:
             os.unlink(path)
