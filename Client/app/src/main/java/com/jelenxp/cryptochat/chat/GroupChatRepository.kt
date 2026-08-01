@@ -38,17 +38,33 @@ class GroupChatRepository(
      */
     fun appendIfAbsent(groupId: String, message: GroupChatMessage): AppendResult = synchronized(lock) {
         val current = loadForWriteLocked(groupId) ?: return AppendResult.FAILED
-        if (current.any { it.msgIdHex == message.msgIdHex }) return AppendResult.DUPLICATE
+        // Dedup klíč = (odesílatel, msgId), a JEN mezi PŘÍCHOZÍMI. `msgId` volí
+        // odesílatel, takže dedup jen podle msgId by dovolil insiderovi kolizí
+        // potlačit cizí zprávu (nález fáze 3). Různí odesílatelé se stejným msgId =
+        // dvě různé zprávy. Odchozí (null odesílatel) se nededuplikují.
+        if (current.any { !it.outgoing && it.senderMemberIdHex == message.senderMemberIdHex && it.msgIdHex == message.msgIdHex }) {
+            return AppendResult.DUPLICATE
+        }
         return if (saveLocked(groupId, current + message)) AppendResult.ADDED else AppendResult.FAILED
     }
 
-    /** Nastaví stav odchozí zprávy (SENDING→SENT→DELIVERED/FAILED). */
+    /**
+     * Nastaví stav ODCHOZÍ zprávy (SENDING→SENT→DELIVERED/FAILED). Míří jen na
+     * odchozí (moje) zprávy — příchozí se stejným `msgId` od jiného odesílatele se
+     * nesmí splést. **DELIVERED se nedegraduje** (terminální stav, viz upgrade-only
+     * logika 1:1 `ChatRepository`).
+     */
     fun setStatus(groupId: String, msgIdHex: String, status: GroupChatMessage.Status): MutationResult =
         synchronized(lock) {
             val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
-            val idx = current.indexOfFirst { it.msgIdHex == msgIdHex }
+            val idx = current.indexOfFirst { it.outgoing && it.msgIdHex == msgIdHex }
             if (idx < 0) return MutationResult.NOT_FOUND
-            val next = current.toMutableList().also { it[idx] = it[idx].copy(status = status) }
+            val cur = current[idx]
+            if (cur.status == GroupChatMessage.Status.DELIVERED && status != GroupChatMessage.Status.DELIVERED) {
+                return MutationResult.UPDATED // pozdější retry/souběh doručenek nesmí shodit DELIVERED
+            }
+            if (cur.status == status) return MutationResult.UPDATED
+            val next = current.toMutableList().also { it[idx] = cur.copy(status = status) }
             return if (saveLocked(groupId, next)) MutationResult.UPDATED else MutationResult.FAILED
         }
 
@@ -83,10 +99,18 @@ class GroupChatRepository(
         return try {
             val array = JSONArray()
             for (m in messages) array.put(toJson(m))
-            prefs.edit().putString(key(groupId), crypto.encrypt(array.toString())).commit()
+            // commit() a HLÍDÁME návratovku — false BEZ výjimky (plný disk) by jinak
+            // vypadal jako úspěch → příchozí zpráva se ACKne relayi, ten ji smaže, a po
+            // restartu je pryč (jen paměťová cache). Fáze 4 na tomhle staví.
+            val committed = prefs.edit().putString(key(groupId), crypto.encrypt(array.toString())).commit()
+            if (!committed) {
+                cache.remove(groupId)
+                return false
+            }
             cache[groupId] = messages
             true
         } catch (_: Exception) {
+            cache.remove(groupId)
             false
         }
     }

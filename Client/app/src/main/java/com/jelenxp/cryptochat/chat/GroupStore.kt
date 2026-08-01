@@ -78,11 +78,20 @@ class GroupStore(
             val array = JSONArray()
             for (g in groups) array.put(toJson(g))
             val encrypted = crypto.encrypt(array.toString())
-            prefs.edit().putString(KEY, encrypted).commit()
+            // commit() (durabilní, ne apply()) — a HLÍDÁME jeho návratovku: může vrátit
+            // false BEZ výjimky (plný disk / poškozené prefs). Bez téhle kontroly by se
+            // neúspěch tvářil jako úspěch a po restartu by skupina/GS byla nenávratně pryč
+            // (v paměti jen cache). Fáze 4 na tomhle staví ACK-až-po-durabilním-zápisu.
+            val committed = prefs.edit().putString(KEY, encrypted).commit()
+            if (!committed) {
+                cache = null
+                return false
+            }
             cache = groups
             true
         } catch (_: Exception) {
-            // Zápis selhal (plný disk / Keystore) — cache i disk zůstávají beze změny.
+            // Zápis selhal (plný disk / Keystore) — zahoď cache, ať nemaskuje disk.
+            cache = null
             false
         }
     }
