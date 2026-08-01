@@ -96,9 +96,13 @@ object GroupAdmin {
         val rb = Base64Util.encode(GroupRoster.encode(newRoster))
         val rsig = GroupRoster.sign(newRoster, group.mySignPrivateKeyBase64)
         val newGroup = group.copy(groupEpoch = newEpoch, rosterBytesBase64 = rb, rosterSigBase64 = rsig, usedMemberIds = group.usedMemberIds + newId)
-        // Nováček dostane AKTUÁLNÍ GS (nerotuje se). Existující jen adoptují roster (mají GS).
-        val bundle = Bundle(newId, payload(group.groupId, newEpoch, group.gsBase64, group.mySignPublicKeyBase64, newId))
-        return Result(newGroup, rb, rsig, listOf(bundle))
+        // Bundle jde všem členům (kromě admina) přes 1:1 — GS se nerotuje, jen se
+        // roznese nový roster. Nováček dostane přidělený memberId, existující null
+        // (použijí svoje uložené). Doručení uniformní přes applyBundle (žádný gossip).
+        val bundles = newRoster.members.filter { it.memberIdHex != group.myMemberId }.map { m ->
+            Bundle(m.memberIdHex, payload(group.groupId, newEpoch, group.gsBase64, group.mySignPublicKeyBase64, if (m.memberIdHex == newId) newId else null))
+        }
+        return Result(newGroup, rb, rsig, bundles)
     }
 
     /** Odebere člena S rotací GS (nový GS, bump epochy). Balík s NOVÝM GS dostanou zbývající. */
