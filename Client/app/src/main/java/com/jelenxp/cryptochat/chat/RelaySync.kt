@@ -1533,6 +1533,16 @@ object RelaySync {
                         }
                     }
 
+                    // Skupinová řídicí zpráva (join handshake / bundle) doručená přes 1:1
+                    // kanál - NENÍ do historie. Celá logika je v GroupCtrlReceiver, ať je
+                    // zásah do 1:1 roury minimální. Durabilní selhání (zápis) → nepotvrdit
+                    // dávku (blob dorazí znovu).
+                    is ChatEnvelope.Opened.GroupControl -> {
+                        if (!GroupCtrlReceiver.handle(context, contact.id, opened.subtype, opened.bytes, storageCrypto)) {
+                            allSafe = false
+                        }
+                    }
+
                     // Reakce: není to zpráva do historie, jen se přilepí k cílové
                     // zprávě. Schválně NEjde přes arrived() - nesmí zvýšit počet
                     // nepřečtených ani vyvolat notifikaci.

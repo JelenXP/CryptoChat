@@ -146,6 +146,18 @@ object ChatEnvelope {
             val rekeyIdHex: String,
             val kem: ByteArray
         ) : Opened
+
+        /**
+         * Řídicí zpráva SKUPINOVÝCH chatů přes 1:1 ([WireExt.TYPE_GROUP_CTRL]). Není
+         * to zpráva pro historii - [subtype] je INVITE/PUBKEYS/BUNDLE, [bytes] je
+         * artefakt (pozvánka / pubkeys / [GroupBundle]), který rozparsuje volající
+         * ([RelaySync] → [GroupControl]).
+         */
+        data class GroupControl(
+            override val timestamp: Long,
+            val subtype: Int,
+            val bytes: ByteArray
+        ) : Opened
     }
 
     /**
@@ -460,6 +472,24 @@ object ChatEnvelope {
     }
 
     /**
+     * Vnitřní plaintext SKUPINOVÉ řídicí zprávy přes 1:1: TĚLO = artefakt (pozvánka /
+     * pubkeys / [GroupBundle]), trailer nese [WireExt.TYPE_GROUP_CTRL] + subtype.
+     * Pozná se podle traileru (jako rekey), `kind` je TEXT. Padding do košů jako text.
+     */
+    internal fun buildGroupCtrlPayload(subtype: Int, bytes: ByteArray, timestamp: Long): ByteArray {
+        val trailer = WireExt.Builder()
+            .putGroupCtrl(subtype)
+            .putMaxMajor(WireCompat.MAX_READABLE_MAJOR)
+            .putCapabilities(WireExt.LOCAL_CAPABILITIES)
+            .build()
+        val padded = ByteArray(bucketFor(HEADER + bytes.size + trailer.size))
+        writeHeader(padded, KIND_TEXT, timestamp, bytes.size)
+        System.arraycopy(bytes, 0, padded, HEADER, bytes.size)
+        System.arraycopy(trailer, 0, padded, HEADER + bytes.size, trailer.size)
+        return padded
+    }
+
+    /**
      * Vnitřní plaintext obecné zprávy typu [kind] s daty, zarovnaný na
      * [paddedSize] (nuly za daty). [paddedSize] musí být >= `HEADER + data.size`;
      * `coerceAtLeast` je jen pojistka pro případ, že by koš byl menší (nemá nastat).
@@ -582,6 +612,19 @@ object ChatEnvelope {
             return Result.Ok(
                 senderMinor,
                 Opened.Rekey(timestamp, rk.subtype, rk.rekeyIdHex, data),
+                trailer.msgIdHex,
+                maxMajor = trailer.maxMajor,
+                capabilities = trailer.capabilities
+            )
+        }
+
+        // Skupinová řídicí zpráva (join handshake / bundle): tělo je artefakt, pozná se
+        // podle TYPE_GROUP_CTRL v traileru (NEprázdné tělo, jako rekey). Gatuje se
+        // CAP_GROUPS, takže starší verze sem KEM/bundle bajty jako „text" nedostane.
+        trailer?.groupCtrlSubtype?.let { sub ->
+            return Result.Ok(
+                senderMinor,
+                Opened.GroupControl(timestamp, sub, data),
                 trailer.msgIdHex,
                 maxMajor = trailer.maxMajor,
                 capabilities = trailer.capabilities

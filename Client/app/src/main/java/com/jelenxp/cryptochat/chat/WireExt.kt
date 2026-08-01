@@ -109,6 +109,20 @@ object WireExt {
      */
     const val TYPE_DELETE = 10
 
+    /**
+     * Řídicí zpráva SKUPINOVÝCH chatů přes 1:1 kanál. Tělo zprávy nese artefakt
+     * (INVITE/PUBKEYS malé, BUNDLE ~12,5 kB), hodnota TLV = `[1B subtype]`. Posílá se
+     * JEN protějšku s [CAP_GROUPS] (starší appka by tělo zobrazila jako text), takže
+     * gatuj přes `peerHasCapability`, ne minor. Pozná se stejně jako rekey — podle
+     * traileru, testuje se před textovou větví (má NEprázdné tělo). Čísla se nerecyklují.
+     */
+    const val TYPE_GROUP_CTRL = 11
+
+    /** Subtypy [TYPE_GROUP_CTRL] (join handshake). Čísla se nerecyklují. */
+    const val GROUP_CTRL_INVITE = 0   // admin→nováček: pozvánka (jméno, počet, adminPub) pro kartu
+    const val GROUP_CTRL_PUBKEYS = 1  // nováček→admin: jeho skupinové pubkeys po „Přijmout"
+    const val GROUP_CTRL_BUNDLE = 2   // admin→člen: GroupBundle (GS + podepsaný roster)
+
     /** Fáze re-key handshake (subtype v [TYPE_REKEY]). Čísla se nerecyklují. */
     const val REKEY_OFFER = 0
     const val REKEY_ACCEPT = 1
@@ -142,6 +156,8 @@ object WireExt {
     const val CAP_REKEY = 1
     const val CAP_RECEIPTS = 2
     const val CAP_EDIT_DELETE = 3
+    // | 4   | GROUPS    | umí skupinové chaty (přijme řídicí TYPE_GROUP_CTRL) |
+    const val CAP_GROUPS = 4
 
     /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
     val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS, CAP_EDIT_DELETE)
@@ -506,6 +522,10 @@ object WireExt {
                 if (v.size != 1 + REKEY_ID_BYTES) return null
                 return RekeyData(v[0].toInt() and 0xFF, toHex(v.copyOfRange(1, 1 + REKEY_ID_BYTES)))
             }
+
+        /** Subtype skupinové řídicí zprávy (INVITE/PUBKEYS/BUNDLE), nebo null. Artefakt je v těle. */
+        val groupCtrlSubtype: Int?
+            get() = first(TYPE_GROUP_CTRL)?.takeIf { it.size == 1 }?.let { it[0].toInt() and 0xFF }
     }
 
     /** Skládá trailer k odeslání. */
@@ -563,6 +583,9 @@ object WireExt {
             System.arraycopy(rekeyId, 0, v, 1, REKEY_ID_BYTES)
             return put(TYPE_REKEY, v)
         }
+
+        /** Marker skupinové řídicí zprávy: `[1B subtype]`. Artefakt jde v těle zprávy. */
+        fun putGroupCtrl(subtype: Int): Builder = put(TYPE_GROUP_CTRL, byteArrayOf(subtype.toByte()))
 
         /** Prázdné pole, když není co posílat - pak se trailer vůbec nezapíše. */
         fun build(): ByteArray {
