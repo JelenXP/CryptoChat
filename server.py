@@ -30,6 +30,7 @@ import io
 import os
 import re
 import secrets
+import signal
 import socket
 import struct
 import sys
@@ -387,6 +388,44 @@ class MailboxStore:
         self._total_bytes -= sum(len(b) for _seq, b in items)
         return items
 
+    def export_live(self):
+        """Snapshot zivych schranek pro handoff pri restartu (plynula aktualizace).
+
+        Vraci list[(mailbox_id, zbytkovy_ttl_s, list[bytes])] - jen neprazdne a
+        neprosle schranky. Bezpecne pod zamkem. Zbytkovy TTL (ne absolutni cas),
+        protoze `expires` je od time.monotonic(), ktery se pri restartu resetuje.
+        """
+        now = time.monotonic()
+        out = []
+        with self._cond:
+            for mid, box in self._boxes.items():
+                remaining = box["expires"] - now
+                if remaining <= 0 or not box["blobs"]:
+                    continue
+                out.append((mid, remaining, [b for _seq, b in box["blobs"]]))
+        return out
+
+    def restore(self, entries):
+        """Nacte schranky z handoffu (viz [export_live]). Prepocita expiraci na
+        aktualni cas, preskoci prazdne/prosle. Vraci pocet obnovenych schranek.
+        Volat JEN pri startu, drive nez server prijme prvni request."""
+        now = time.monotonic()
+        restored = 0
+        with self._cond:
+            for mid, remaining, blobs in entries:
+                if remaining <= 0 or not blobs:
+                    continue
+                dq = deque()
+                size = 0
+                for b in blobs:
+                    self._next_seq += 1
+                    dq.append((self._next_seq, b))
+                    size += len(b)
+                self._boxes[mid] = {"blobs": dq, "expires": now + remaining}
+                self._total_bytes += size
+                restored += 1
+        return restored
+
     def purge_expired(self):
         """Odstrani expirovane schranky. Vola se periodicky z uklidoveho vlakna."""
         now = time.monotonic()
@@ -398,6 +437,119 @@ class MailboxStore:
 
 
 STORE = MailboxStore()
+
+
+# --- Handoff pri restartu (plynula aktualizace serveru) -----------------------
+# Rizeny restart (systemctl restart pri deployi) by jinak zahodil vsechny
+# neprevzate zpravy z RAM. Kdyz je nastaveno CC_HANDOFF, server pri SIGTERM zapise
+# zive schranky do tohoto souboru a novy proces je pri startu nacte -> deploy je
+# bezztratovy a nemusi cekat na "prazdnou" chvili. Cesta MUSI byt na tmpfs (RAM),
+# napr. systemd RuntimeDirectory /run/cryptochat-relay, aby se sifrovana data nikdy
+# nedostala na fyzicky disk. Prazdna hodnota (default) = funkce vypnuta, nic se
+# nikam nezapisuje (zachovava "vse jen v pameti" pro ad-hoc spusteni bez systemd).
+# Kryje jen rizeny restart/stop; tvrdy pad (SIGKILL/OOM/vypadek proudu) zaskoci
+# klientsky resend. Prvni deploy, ktery tenhle handler zavede, bezi jeste na stare
+# verzi bez nej - ten jeden restart je naposledy natvrdo, bezztratovo az od dalsiho.
+HANDOFF_PATH = os.environ.get("CC_HANDOFF", "").strip()
+
+# Format handoff souboru (binarni, bez zavislosti): MAGIC, pak pocet schranek a
+# pro kazdou id + zbytkovy TTL (s) + bloby delkove ramcovane. Verze v MAGICu -
+# nekompatibilni format novy proces proste zahodi (viz _restore_handoff).
+_HANDOFF_MAGIC = b"CCHO1\n"
+
+
+def _serialize_state(entries):
+    """entries -> bytes. entries = list[(mailbox_id, zbytkovy_ttl_s, list[bytes])]."""
+    buf = bytearray(_HANDOFF_MAGIC)
+    buf += struct.pack(">I", len(entries))
+    for mid, remaining, blobs in entries:
+        mid_b = mid.encode("ascii")
+        buf += struct.pack(">H", len(mid_b))
+        buf += mid_b
+        buf += struct.pack(">I", max(0, int(remaining)))
+        buf += struct.pack(">I", len(blobs))
+        for b in blobs:
+            buf += struct.pack(">I", len(b))
+            buf += b
+    return bytes(buf)
+
+
+def _deserialize_state(data):
+    """bytes -> entries (viz [_serialize_state]). Vyhodi vyjimku na poskozenem
+    vstupu - volajici ji chyti a handoff zahodi."""
+    if not data.startswith(_HANDOFF_MAGIC):
+        raise ValueError("spatny handoff magic")
+    off = len(_HANDOFF_MAGIC)
+    (n_boxes,) = struct.unpack_from(">I", data, off)
+    off += 4
+    entries = []
+    for _ in range(n_boxes):
+        (mlen,) = struct.unpack_from(">H", data, off)
+        off += 2
+        mid = data[off:off + mlen].decode("ascii")
+        off += mlen
+        (ttl,) = struct.unpack_from(">I", data, off)
+        off += 4
+        (n_blobs,) = struct.unpack_from(">I", data, off)
+        off += 4
+        blobs = []
+        for _ in range(n_blobs):
+            (blen,) = struct.unpack_from(">I", data, off)
+            off += 4
+            blobs.append(data[off:off + blen])
+            off += blen
+        entries.append((mid, float(ttl), blobs))
+    return entries
+
+
+def _save_handoff(path):
+    """Zapise zive schranky do handoffu. Atomicky (tmp + os.replace), aby pad
+    uprostred zapisu nenechal novemu procesu poloviscny soubor. Rezim 0600."""
+    data = _serialize_state(STORE.export_live())
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _restore_handoff(path):
+    """Pri startu nacte handoff z minule instance (pokud existuje) a SMAZE ho,
+    ať se tataz data nenactou podruhe. Poskozeny soubor start neshodi."""
+    if not path:
+        return
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    try:
+        n = STORE.restore(_deserialize_state(data))
+        print(f"  handoff: obnoveno {n} schranek")
+    except Exception as e:  # noqa: BLE001 - poskozeny handoff nesmi shodit start
+        print(f"  handoff: soubor poskozeny, preskakuji ({type(e).__name__})")
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _handle_sigterm(signum, frame):
+    """SIGTERM (systemctl restart/stop): snapshotni zive schranky do handoffu a
+    skonci HNED. os._exit misto navratu: jsme v signalnim handleru v hlavnim
+    vlakne blokovanem v serve_forever - volat odtud server.shutdown() by deadlocklo.
+    Handoff uz je fsyncnuty, takze os._exit o nej neprijde."""
+    if HANDOFF_PATH:
+        try:
+            _save_handoff(HANDOFF_PATH)
+        except Exception:
+            pass  # radeji spadnout na resend nez zaseknout restart
+    os._exit(0)
 
 
 # --- Rate limiter -------------------------------------------------------------
@@ -1146,6 +1298,12 @@ def run_setup_wizard():
 
 def main():
     server = RelayServer((HOST, PORT), RelayHandler)
+
+    # Plynula aktualizace: nacti zive schranky z minule instance (pokud po
+    # predchozim SIGTERM zbyl handoff), pak zaridit, ať tenhle proces pri SIGTERM
+    # taky snapshot udela. Registrace SIGTERM az po restore - drive neni co ulozit.
+    _restore_handoff(HANDOFF_PATH)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     stop_event = threading.Event()
     purger = threading.Thread(target=_purge_loop, args=(stop_event,), daemon=True)

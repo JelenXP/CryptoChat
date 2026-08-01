@@ -31,7 +31,17 @@ Environment=CC_PORT=8787
 # Environment=CC_TTL_SECONDS=86400
 # Environment=CC_MAX_BLOB_SIZE=524288
 
-# Zpevneni (server nic nezapisuje na disk, tak mu to sebereme):
+# Plynula aktualizace (handoff): pri restartu si server predava neprevzate zpravy
+# pres soubor v teto slozce, jinak by je restart pri deployi ztratil. RuntimeDirectory
+# = /run/cryptochat-relay je tmpfs (RAM, nikdy na fyzicky disk); Preserve=restart
+# ji nechá prezit restart (ale ne stop). Bez tohoto by handoff nemel kam zapisovat
+# (viz ProtectSystem=strict nize) a funkce se tise preskoci.
+RuntimeDirectory=cryptochat-relay
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+Environment=CC_HANDOFF=/run/cryptochat-relay/handoff
+
+# Zpevneni (server krome handoffu v /run/ nic na disk nezapisuje):
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
