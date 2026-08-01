@@ -68,7 +68,9 @@ object GroupCrypto {
      * base64url bez výplně.
      */
     fun recovId(groupIdHex: String, memberIdHex: String, sealPublicKeyBase64: String, weekEpoch: Long): String {
-        val ikm = hexToBytes(groupIdHex) + hexToBytes(memberIdHex) + Base64Util.decode(sealPublicKeyBase64)
+        // Length-prefix částí IKM: bez něj by nefixní délky (posun hranice mezi poli)
+        // mohly vyrobit kolizi adres recovery schránek dvou různých členů.
+        val ikm = lengthPrefixed(hexToBytes(groupIdHex), hexToBytes(memberIdHex), Base64Util.decode(sealPublicKeyBase64))
         val info = "$INFO_RECOVERY|week=$weekEpoch"
         return b64url(hkdf(ikm, info, MAILBOX_ID_BYTES))
     }
@@ -106,6 +108,23 @@ object GroupCrypto {
     // --- pomocné ---
 
     private fun randomBytes(n: Int): ByteArray = ByteArray(n).also { SecureRandom().nextBytes(it) }
+
+    /** Spojí části do `[4B délka][část]...` — jednoznačné i pro nefixní délky. */
+    private fun lengthPrefixed(vararg parts: ByteArray): ByteArray {
+        var total = 0
+        for (p in parts) total += 4 + p.size
+        val out = ByteArray(total)
+        var pos = 0
+        for (p in parts) {
+            out[pos] = ((p.size ushr 24) and 0xFF).toByte()
+            out[pos + 1] = ((p.size ushr 16) and 0xFF).toByte()
+            out[pos + 2] = ((p.size ushr 8) and 0xFF).toByte()
+            out[pos + 3] = (p.size and 0xFF).toByte()
+            System.arraycopy(p, 0, out, pos + 4, p.size)
+            pos += 4 + p.size
+        }
+        return out
+    }
 
     private fun b64url(bytes: ByteArray): String = urlEncoder.encodeToString(bytes)
 

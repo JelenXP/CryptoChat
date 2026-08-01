@@ -35,8 +35,9 @@ import javax.crypto.spec.SecretKeySpec
  *    s [com.jelenxp.cryptochat.crypto.PostQuantumKem].
  *
  * **Doménová separace podpisů:** [sign]/[verify] berou `label` (typ objektu) a
- * podepisují `label || 0x00 || data`. Různé labely = různé prefixy → podpis zprávy
- * nejde vydávat za podpis rosteru (obojí dělá tentýž Ed25519 klíč admina).
+ * podepisují `[4B délka labelu] || label || data`. Délkový prefix (ne jen oddělovač)
+ * je jednoznačný i pro label obsahující libovolný bajt → podpis zprávy nejde vydávat
+ * za podpis rosteru (obojí dělá tentýž Ed25519 klíč admina).
  *
  * Čistě JVM (BouncyCastle low-level + `javax.crypto`), bez Androidu → testovatelné.
  */
@@ -51,10 +52,6 @@ object GroupIdentity {
     private const val IV_BYTES = 12
     private const val GCM_TAG_BITS = 128
     private const val AES_KEY_BYTES = 32
-
-    // Oddělovač mezi doménovým labelem a daty v podepisovaném bufferu. Labely
-    // neobsahují 0x00, takže dvojice (label, data) je jednoznačně rozlišitelná.
-    private const val LABEL_SEPARATOR: Byte = 0
 
     /** Ed25519 pár (Base64, 32 B veřejný / 32 B soukromý). */
     data class SignKeyPair(val publicKeyBase64: String, val privateKeyBase64: String)
@@ -110,10 +107,13 @@ object GroupIdentity {
 
     private fun domainMessage(label: String, data: ByteArray): ByteArray {
         val labelBytes = label.toByteArray(Charsets.UTF_8)
-        val out = ByteArray(labelBytes.size + 1 + data.size)
-        System.arraycopy(labelBytes, 0, out, 0, labelBytes.size)
-        out[labelBytes.size] = LABEL_SEPARATOR
-        System.arraycopy(data, 0, out, labelBytes.size + 1, data.size)
+        val out = ByteArray(4 + labelBytes.size + data.size)
+        out[0] = ((labelBytes.size ushr 24) and 0xFF).toByte()
+        out[1] = ((labelBytes.size ushr 16) and 0xFF).toByte()
+        out[2] = ((labelBytes.size ushr 8) and 0xFF).toByte()
+        out[3] = (labelBytes.size and 0xFF).toByte()
+        System.arraycopy(labelBytes, 0, out, 4, labelBytes.size)
+        System.arraycopy(data, 0, out, 4 + labelBytes.size, data.size)
         return out
     }
 

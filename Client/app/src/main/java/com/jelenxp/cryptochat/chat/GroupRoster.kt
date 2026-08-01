@@ -24,6 +24,7 @@ object GroupRoster {
     const val LABEL = "CryptoChat/group/roster/v1"
 
     private const val FORMAT_VERSION = 1
+    private const val ED25519_PUBLIC_KEY_BYTES = 32
 
     data class Member(
         val memberIdHex: String,
@@ -82,17 +83,34 @@ object GroupRoster {
         val edKeys = HashSet<String>()
         val sealKeys = HashSet<String>()
         for (m in roster.members) {
-            if (m.memberIdHex.isEmpty() || m.ed25519PublicKeyBase64.isEmpty() || m.sealPublicKeyBase64.isEmpty()) return false
+            if (m.memberIdHex.isEmpty()) return false
+            // Klíče se dekódují a validují — neplatný Base64 nebo špatná délka
+            // Ed25519 = poškozený/škodlivý roster.
+            val ed = decodeOrNull(m.ed25519PublicKeyBase64) ?: return false
+            val seal = decodeOrNull(m.sealPublicKeyBase64) ?: return false
+            if (ed.size != ED25519_PUBLIC_KEY_BYTES || seal.isEmpty()) return false
             if (!ids.add(m.memberIdHex)) return false
-            if (!edKeys.add(m.ed25519PublicKeyBase64)) return false
-            if (!sealKeys.add(m.sealPublicKeyBase64)) return false
+            // Dedup nad DEKÓDOVANÝMI bajty, ne base64 řetězcem — dvě různé base64
+            // reprezentace téhož klíče nesmí projít jako „unikátní" (rozbilo by to
+            // atribuci odesílatele / jedinečnost seal klíče).
+            if (!edKeys.add(GroupCrypto.bytesToHex(ed))) return false
+            if (!sealKeys.add(GroupCrypto.bytesToHex(seal))) return false
         }
         return ids.contains(roster.adminMemberIdHex)
     }
 
+    private fun decodeOrNull(base64: String): ByteArray? =
+        try { com.jelenxp.cryptochat.crypto.Base64Util.decode(base64) } catch (_: Exception) { null }
+
     // --- kanonická serializace (deterministická) ---
 
-    /** Deterministická binární serializace — vstup pro podpis i drát/úložiště. */
+    /**
+     * Deterministická binární serializace — vstup pro podpis i drát/úložiště.
+     * Pořadí členů se NEřadí: kanonickým artefaktem je **přijatý byte-obraz**
+     * (co admin podepsal), který roura ukládá a nad kterým počítá roster-hash
+     * (§1.3/crypto#14). Nikdy neporovnávej roster-hash nad RE-serializovaným
+     * objektem — hashuj přijaté bajty, ať pořadí členů nespustí falešné varování.
+     */
     fun encode(roster: Roster): ByteArray {
         val out = ByteArrayOutputStream()
         out.write(FORMAT_VERSION)
