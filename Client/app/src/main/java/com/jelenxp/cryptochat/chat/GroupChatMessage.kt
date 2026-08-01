@@ -15,6 +15,11 @@ data class GroupChatMessage(
     val status: Status,
     val kind: Kind = Kind.TEXT,
     val mediaPath: String? = null,
+    /**
+     * U ODCHOZÍ zprávy: memberId příjemců, kteří ještě NEpotvrdili doručení
+     * (podepsanou doručenkou). Prázdné = doručeno všem → [Status.DELIVERED].
+     */
+    val pendingRecipients: Set<String> = emptySet(),
 ) {
     /** Odchozí = poslal jsem já. */
     val outgoing: Boolean get() = senderMemberIdHex == null

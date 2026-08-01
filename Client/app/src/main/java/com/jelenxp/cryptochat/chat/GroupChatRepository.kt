@@ -68,6 +68,25 @@ class GroupChatRepository(
             return if (saveLocked(groupId, next)) MutationResult.UPDATED else MutationResult.FAILED
         }
 
+    /**
+     * Zaznamená doručenku: příjemce [recipientMemberIdHex] potvrdil moji odchozí
+     * zprávu [msgIdHex]. Ubyde z `pendingRecipients`; když je pak prázdné (doručeno
+     * všem), přepne na [GroupChatMessage.Status.DELIVERED]. Idempotentní (duplicitní
+     * doručenka nic nezmění). Míří jen na ODCHOZÍ zprávy.
+     */
+    fun markDeliveredBy(groupId: String, msgIdHex: String, recipientMemberIdHex: String): MutationResult =
+        synchronized(lock) {
+            val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
+            val idx = current.indexOfFirst { it.outgoing && it.msgIdHex == msgIdHex }
+            if (idx < 0) return MutationResult.NOT_FOUND
+            val cur = current[idx]
+            if (recipientMemberIdHex !in cur.pendingRecipients) return MutationResult.UPDATED // idempotent
+            val newPending = cur.pendingRecipients - recipientMemberIdHex
+            val newStatus = if (newPending.isEmpty()) GroupChatMessage.Status.DELIVERED else cur.status
+            val next = current.toMutableList().also { it[idx] = cur.copy(pendingRecipients = newPending, status = newStatus) }
+            return if (saveLocked(groupId, next)) MutationResult.UPDATED else MutationResult.FAILED
+        }
+
     // --- interní ---
 
     private fun loadLocked(groupId: String): List<GroupChatMessage> = loadForWriteLocked(groupId) ?: emptyList()
@@ -123,6 +142,7 @@ class GroupChatRepository(
         put("st", m.status.name)
         put("kind", m.kind.name)
         put("media", m.mediaPath)
+        put("pending", JSONArray(m.pendingRecipients.toList()))
     }
 
     private fun fromJson(o: JSONObject): GroupChatMessage? {
@@ -131,6 +151,8 @@ class GroupChatRepository(
             .getOrDefault(GroupChatMessage.Status.SENT)
         val kind = runCatching { GroupChatMessage.Kind.valueOf(o.optString("kind", "TEXT")) }
             .getOrDefault(GroupChatMessage.Kind.TEXT)
+        val pending = HashSet<String>()
+        o.optJSONArray("pending")?.let { for (i in 0 until it.length()) pending.add(it.optString(i)) }
         return GroupChatMessage(
             msgIdHex = mid,
             senderMemberIdHex = if (o.isNull("from")) null else o.optString("from"),
@@ -139,6 +161,7 @@ class GroupChatRepository(
             status = status,
             kind = kind,
             mediaPath = if (o.isNull("media")) null else o.optString("media"),
+            pendingRecipients = pending,
         )
     }
 

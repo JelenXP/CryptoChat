@@ -57,6 +57,9 @@ object GroupEnvelope {
     const val KIND_TEXT: Byte = 0
     const val KIND_IMAGE: Byte = 1
 
+    /** Doručenka (delivery receipt): `data` = 16 B potvrzeného `msgId`. Řídicí, nejde do historie. */
+    const val KIND_RECEIPT: Byte = 2
+
     private const val LABEL_MSG = "CryptoChat/group/msg/v1"
 
     /** Rozbalený obsah skupinové zprávy. */
@@ -64,6 +67,9 @@ object GroupEnvelope {
         val timestamp: Long
         data class Text(override val timestamp: Long, val text: String) : Opened
         data class Image(override val timestamp: Long, val bytes: ByteArray) : Opened
+
+        /** Doručenka: potvrzuje přijetí zprávy [ackedMsgIdHex]. Nejde do historie. */
+        data class Receipt(override val timestamp: Long, val ackedMsgIdHex: String) : Opened
     }
 
     /**
@@ -229,7 +235,11 @@ object GroupEnvelope {
         val content = when (kind) {
             KIND_TEXT -> Opened.Text(timestamp, String(data, Charsets.UTF_8))
             KIND_IMAGE -> Opened.Image(timestamp, data)
-            else -> return Result.Unreadable // neznámý kind → karanténa (řídicí kindy přijdou později)
+            KIND_RECEIPT -> {
+                if (data.size != MSG_ID_BYTES) return Result.Unreadable
+                Opened.Receipt(timestamp, GroupCrypto.bytesToHex(data))
+            }
+            else -> return Result.Unreadable // neznámý kind → karanténa
         }
         return Result.Ok(header.senderMemberIdHex, header.groupEpoch, header.msgNo, GroupCrypto.bytesToHex(msgId), content)
     }

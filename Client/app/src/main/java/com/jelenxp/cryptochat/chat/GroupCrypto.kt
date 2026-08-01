@@ -84,6 +84,19 @@ object GroupCrypto {
         return hkdf(Base64Util.decode(sharedGroupKeyBase64), info, SENDER_KEY_BYTES)
     }
 
+    /**
+     * Klíč zprávy odesílatele na pozici `msgNo` (0 = první). Posune řetěz z kořene
+     * o `msgNo` kroků a vrátí klíč té pozice — příjemce tak odvodí stejný klíč jako
+     * odesílatel, i když zprávy dorazí přeházené. O(msgNo) HKDF (stateless z kořene;
+     * FS je na úrovni epochy, viz `GROUP_CHAT_PLAN.md` §1.4).
+     */
+    fun messageKeyAt(rootKey: ByteArray, msgNo: Int): ByteArray {
+        require(msgNo >= 0) { "msgNo nesmí být záporné." }
+        var chain = rootKey
+        repeat(msgNo) { chain = senderStep(chain).nextChainKey }
+        return senderStep(chain).messageKey
+    }
+
     /** Jeden krok odesílacího řetězu: z `chainKey` odvodí (klíč zprávy, další chainKey). */
     data class SenderStep(val messageKey: ByteArray, val nextChainKey: ByteArray)
 
@@ -104,6 +117,9 @@ object GroupCrypto {
 
     /** Náhodné 8 B ID člena (hex). Nikdy se nerecykluje (viz `GROUP_CHAT_PLAN.md` P20). */
     fun randomMemberId(): String = bytesToHex(randomBytes(8))
+
+    /** Náhodné 16 B ID zprávy (hex) — stabilní napříč zařízeními a resendy (dedup). */
+    fun randomMsgId(): String = bytesToHex(randomBytes(16))
 
     // --- pomocné ---
 
