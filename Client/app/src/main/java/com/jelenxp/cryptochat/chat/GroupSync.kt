@@ -26,6 +26,18 @@ object GroupSync {
 
     private const val DAY_MS = 86_400_000L
 
+    /**
+     * Horní mez `msgNo` z otevřené (NEautentizované) hlavičky. `messageKeyAt` je
+     * O(msgNo) HKDF a `msgNo` řídí relay/insider PŘED ověřením — bez stropu by blob
+     * s `msgNo ≈ 2^31` zamrazil poll (miliardy HKDF). Analogie 1:1 `DoubleRatchet.SKIP_MAX`.
+     * Strop je velkorysý strop reálného provozu na epochu (zprávy + doručenky); nad
+     * něj = útok/junk → zahodit bez derivace. (Nález auditu fáze 4 #1 — kritická.)
+     */
+    private const val MAX_RECV_MSG_NO = 100_000
+
+    /** Strop velikosti OBSAHU odchozí zprávy (pod per-blob limitem relaye ~2 MB). */
+    private const val MAX_CONTENT_BYTES = 1_900_000
+
     data class SendResult(val msgIdHex: String, val sent: Int, val failed: Int)
     data class PollResult(val received: Int, val failed: Int)
 
@@ -45,21 +57,35 @@ object GroupSync {
         context: Context, group: Group, kind: Byte, data: ByteArray, text: String,
         mediaPath: String?, chatKind: GroupChatMessage.Kind, baseUrl: String, nowMs: Long,
     ): SendResult {
+        val msgId = GroupCrypto.randomMsgId()
+        val recipients = group.otherMembers().map { it.memberIdHex }
+
+        // Strop velikosti (#5): přerostlá zpráva by relay odmítl (413) a věčně by se
+        // resendovala. Ulož ji jako FAILED (ať ji uživatel vidí) a NEODESÍLEJ.
+        if (data.size > MAX_CONTENT_BYTES) {
+            repo(context).appendIfAbsent(
+                group.groupId,
+                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.FAILED, chatKind, mediaPath)
+            )
+            return SendResult(msgId, 0, recipients.size)
+        }
+
+        // Nejdřív DURABILNĚ ulož odchozí zprávu (SENDING). Když zápis SELŽE, neodešleme
+        // nic (#2) — jinak by příjemci zprávu dostali, ale u odesílatele by v historii
+        // nebyla (trvalý desync + falešný `sent>0`).
+        if (repo(context).appendIfAbsent(
+                group.groupId,
+                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.SENDING, chatKind, mediaPath, recipients.toSet())
+            ) == GroupChatRepository.AppendResult.FAILED
+        ) {
+            return SendResult(msgId, 0, recipients.size)
+        }
+
         val epoch = group.groupEpoch
         val msgNo = GroupSendCounter.next(context, group.groupId, epoch)
-        val msgId = GroupCrypto.randomMsgId()
         val msgKey = GroupCrypto.messageKeyAt(
             GroupCrypto.senderRootKey(group.gsBase64, group.groupId, group.myMemberId, epoch), msgNo
         )
-        val recipients = group.otherMembers().map { it.memberIdHex }
-
-        // Nejdřív ulož odchozí zprávu (SENDING, pending = všichni příjemci), ať se
-        // neztratí, i kdyby fan-out spadl uprostřed.
-        repo(context).appendIfAbsent(
-            group.groupId,
-            GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.SENDING, chatKind, mediaPath, recipients.toSet())
-        )
-
         val day = dayEpoch(nowMs)
         var sent = 0
         var failed = 0
@@ -152,9 +178,14 @@ object GroupSync {
         if (!ReplayGuard.isNew(context, gid, blob)) return Outcome.HANDLED
 
         val header = GroupEnvelope.readHeader(blob) ?: return quarantineOrFail(context, gid, blob, fromQuarantine)
-        // Epoch filtr: jiná epocha než moje aktuální → neumím odvodit klíč (starý GS
-        // smazán / jsem pozadu). NIKDY neACKovat-mazat — odlož do karantény (fáze 5:
-        // vyšší epocha spustí resync).
+        // Strop msgNo (#1, kritická): `msgNo` je v NEautentizované hlavičce a
+        // `messageKeyAt` je O(msgNo). Absurdní hodnota = útok/junk → zahoď BEZ derivace
+        // (ACK-delete). Legitimní zpráva takový msgNo nikdy nenese (viz MAX_RECV_MSG_NO).
+        if (header.msgNo > MAX_RECV_MSG_NO) return Outcome.HANDLED
+        // Epoch filtr: jiná epocha než moje → neumím odvodit klíč (starý GS smazán /
+        // jsem pozadu). Odlož do LOKÁLNÍ karantény a zkoušej znovu; po resyncu (fáze 5)
+        // se epocha srovná a blob se dobere. Pozor: karanténa má strop (30 dní / 30 ks /
+        // 24 MB) — resync musí proběhnout dřív, než odložený blob vyprší.
         if (header.groupEpoch != group.groupEpoch) return quarantineOrFail(context, gid, blob, fromQuarantine)
 
         // Pubkey odesílatele STRIKTNĚ podle memberId z hlavičky (jinak padá anti-impersonation).
@@ -200,7 +231,12 @@ object GroupSync {
                         sendReceipt(context, group, ok.senderMemberIdHex, ok.msgIdHex, baseUrl, nowMs)
                         Outcome.HANDLED
                     }
-                    GroupChatRepository.AppendResult.FAILED -> Outcome.FAILED_WRITE
+                    GroupChatRepository.AppendResult.FAILED -> {
+                        // Ukliď právě uloženou osiřelou fotku (#3) — jinak by ji každý
+                        // retry ukládal znovu (hromadění ~1,9 MB souborů).
+                        mediaPath?.let { runCatching { java.io.File(it).delete() } }
+                        Outcome.FAILED_WRITE
+                    }
                 }
             }
         }
