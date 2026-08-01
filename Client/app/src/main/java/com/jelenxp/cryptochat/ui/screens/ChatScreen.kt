@@ -760,8 +760,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
         replyTo = ChatScreenLogic.survivingReply(messages, replyTo)
         // Upravovaná zpráva mezitím zmizela nebo ji někdo smazal (i pro všechny) -
         // režim úpravy zruš a rozepsaný text zahoď, ať se neuloží do neexistujícího.
+        // Rozhodnutí je v ChatScreenLogic (nález 2026-08-01-v2.7.0-10), ať jde otestovat.
         editing?.let { e ->
-            if (messages.none { it.id == e.id && !it.deleted }) cancelEditing()
+            if (!ChatScreenLogic.survivingEdit(messages, e.id)) cancelEditing()
         }
     }
 

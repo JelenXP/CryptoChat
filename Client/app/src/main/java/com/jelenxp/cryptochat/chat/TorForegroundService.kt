@@ -3,8 +3,10 @@ package com.jelenxp.cryptochat.chat
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
@@ -76,12 +78,40 @@ class TorForegroundService : Service() {
     /** Registrovaný callback změn sítě (odregistruje se v [onDestroy]). */
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    /** Registrovaný receiver rozsvícení obrazovky (odregistruje se v [onDestroy]). */
+    private var screenReceiver: BroadcastReceiver? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         ChatNotifications.ensureChannels(this)
         registerNetworkCallback()
+        registerScreenReceiver()
+    }
+
+    /**
+     * Rozsvícení obrazovky = uživatel je u telefonu → probuď poll smyčky z backoffu,
+     * ať čekající zpráva (po výpadku relaye) dorazí hned, ne až po (až 10min) backoffu.
+     * Stejný wake jako návrat sítě: bumpne [networkGeneration] (probudí [sleepBackoff])
+     * a popožene hlídač. Efekt má JEN když je nějaká smyčka v backoffu (za výpadku) -
+     * úspěšný long-poll networkGeneration neobservuje. ACTION_SCREEN_ON jde registrovat
+     * jen dynamicky (ne v manifestu).
+     */
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        val rcv = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                networkGeneration.value = networkGeneration.value + 1
+                wake.trySend(Unit)
+            }
+        }
+        try {
+            registerReceiver(rcv, IntentFilter(Intent.ACTION_SCREEN_ON))
+            screenReceiver = rcv
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "registrace screen receiveru selhala (${e.javaClass.simpleName})")
+        }
     }
 
     /**
@@ -500,17 +530,19 @@ class TorForegroundService : Service() {
     private suspend fun sleepBackoff(current: Long): Long {
         val max = maxBackoffMs()
         val startGen = networkGeneration.value
-        // Spí max podle backoffu, ale probudí se HNED, jakmile se vrátí síť -
-        // jinak by po výpadku zpráva čekala celý (až 5min) backoff, i když je síť
-        // dávno zpět. `first { … }` se vrátí null jen když vyprší timeout.
-        val wokenByNetwork = withTimeoutOrNull(current.coerceAtMost(max)) {
+        // Spí max podle backoffu, ale probudí se HNED, jakmile se vrátí síť NEBO uživatel
+        // rozsvítí obrazovku (obojí bumpne networkGeneration - viz NetworkCallback a
+        // registerScreenReceiver) - jinak by po výpadku zpráva čekala celý (až 10min)
+        // backoff, i když je síť dávno zpět nebo je uživatel u telefonu. `first { … }`
+        // se vrátí null jen když vyprší timeout.
+        val wokenEarly = withTimeoutOrNull(current.coerceAtMost(max)) {
             networkGeneration.first { it != startGen }
         } != null
-        // Návrat sítě = rozumný důvod zkusit hned od začátku, ne dál zdvojnásobovat.
+        // Návrat sítě / rozsvícení = rozumný důvod zkusit hned od začátku, ne dál zdvojnásobovat.
         // Růst uloženého backoffu se stropuje NEJVYŠŠÍM možným stropem (SAVER), aby
         // hodnota vůbec mohla vyrůst až tam; skutečné čekání pak clampuje `max`
         // z maxBackoffMs (podle profilu i obrazovky).
-        return if (wokenByNetwork) BACKOFF_START_MS else (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_SAVER_MS)
+        return if (wokenEarly) BACKOFF_START_MS else (current * 2).coerceAtMost(BACKOFF_MAX_SCREEN_OFF_SAVER_MS)
     }
 
     /**
@@ -566,6 +598,8 @@ class TorForegroundService : Service() {
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) }
         }
         networkCallback = null
+        screenReceiver?.let { rcv -> runCatching { unregisterReceiver(rcv) } }
+        screenReceiver = null
         scope.cancel()
     }
 

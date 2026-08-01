@@ -189,6 +189,22 @@ object RelaySync {
      * legacy grace a beacon). JEN pro testy - jinak by stav z jednoho testu ovlivnil
      * „první poll" v dalším (stejný singleton [RelaySync] v rámci JVM).
      */
+    /**
+     * Vyčistí per-kontakt gating stav pollu (beacon, prev-epocha, legacy grace, sweep,
+     * resend) při SMAZÁNÍ nebo RE-PAIRINGu kontaktu. Bez tohohle by starý stamp přežil
+     * a po znovupoužití téhož `id` (re-pairing) gatoval čerstvý ratchet - „první poll
+     * čte beacon vždy" by potlačil stále platný stamp a deep-recovery by čekala interval.
+     */
+    fun clearContactPollState(contactId: String) {
+        prevEpochChecked.remove(contactId)
+        prevEpochCheckedAt.remove(contactId)
+        legacyGraceCheckedAt.remove(contactId)
+        beaconCheckedAt.remove(contactId)
+        secondarySweptAt.remove(contactId)
+        // receiptResendAt má klíč "contactId:messageId" - smaž všechny té konverzace.
+        receiptResendAt.keys.removeIf { it.startsWith("$contactId:") }
+    }
+
     internal fun resetPollStateForTests() {
         prevEpochChecked.clear()
         prevEpochCheckedAt.clear()

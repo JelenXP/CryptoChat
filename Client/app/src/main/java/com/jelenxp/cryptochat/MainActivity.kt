@@ -401,15 +401,6 @@ private fun StartupGate(content: @Composable () -> Unit) {
         // původní offline appky). Až budou vlastní veřejné releases, zapni ji.
         if (!FeatureFlags.UPDATE_CHECK_ENABLED) return@LaunchedEffect
         if (!settings.isUpdateCheckEnabled()) return@LaunchedEffect   // uživatel kontrolu vypnul
-        // Na měřené síti (úsporný profil) šetři data: kontroluj při startu nejvýš
-        // 1× za UPDATE_SAVER_MIN_INTERVAL_MS. Na pozadí je tam kontrola úplně
-        // vypnutá (viz maybeNotifyAboutUpdate), tohle ji zastupuje. Na neměřené
-        // síti (WiFi) beze změny - kontrola při každém otevření.
-        if (currentNetworkProfile(context) == NetworkProfile.SAVER) {
-            val nowMs = System.currentTimeMillis()
-            if (nowMs - settings.getUpdateLastCheckAt() < UPDATE_SAVER_MIN_INTERVAL_MS) return@LaunchedEffect
-            settings.setUpdateLastCheckAt(nowMs)
-        }
         // Přes co kontrolu poslat (soukromí): Tor módu → přes Tor, Cloudflare/clearnet
         // → napřímo (relay IP stejně vidí), PRÁZDNÁ adresa (chat vypnutý) → přeskočit,
         // ať clearnet dotaz neunikne z reálné IP bez volby uživatele. Viz UpdateRoutePolicy.
@@ -418,6 +409,16 @@ private fun StartupGate(content: @Composable () -> Unit) {
             UpdateRoutePolicy.Route.SKIP -> return@LaunchedEffect
             UpdateRoutePolicy.Route.TOR -> true
             UpdateRoutePolicy.Route.DIRECT -> false
+        }
+        // Na měřené síti (úsporný profil) šetři data: kontroluj při startu nejvýš 1× za
+        // UPDATE_SAVER_MIN_INTERVAL_MS. Na pozadí je tam kontrola úplně vypnutá (viz
+        // maybeNotifyAboutUpdate), tohle ji zastupuje. Na neměřené síti (WiFi) beze změny.
+        // AŽ ZA SKIP checkem, ať prázdná adresa (chat vypnutý) nespálí 6h okno zbytečným
+        // razítkem. Profil se čte na IO (binder IPC ConnectivityManager).
+        if (withContext(Dispatchers.IO) { currentNetworkProfile(context) } == NetworkProfile.SAVER) {
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - settings.getUpdateLastCheckAt() < UPDATE_SAVER_MIN_INTERVAL_MS) return@LaunchedEffect
+            settings.setUpdateLastCheckAt(nowMs)
         }
         val result = withContext(Dispatchers.IO) { UpdateChecker.check(currentVersion, viaTor) }
             ?: return@LaunchedEffect

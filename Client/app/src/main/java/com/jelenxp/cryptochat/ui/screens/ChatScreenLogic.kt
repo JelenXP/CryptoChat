@@ -31,6 +31,15 @@ object ChatScreenLogic {
         replyTo?.takeIf { r -> messages.any { it.id == r.id } }
 
     /**
+     * Má režim úpravy PŘEŽÍT? True, jen když upravovaná zpráva ([editingId]) v seznamu
+     * pořád je a NENÍ smazaná (i pro všechny). Jinak se má úprava zrušit - jinak by se
+     * rozepsaný text uložil do neexistující / náhrobkové zprávy. [editingId] == null
+     * (neupravuje se) → false (nic k přežití).
+     */
+    fun survivingEdit(messages: List<ChatMessage>, editingId: String?): Boolean =
+        editingId != null && messages.any { it.id == editingId && !it.deleted }
+
+    /**
      * Vybrané zprávy, které v seznamu pořád jsou. Smazané/zmizelé se z výběru
      * vypustí - jinak by lišta výběru tvrdila víc, než kolik je co vybrat.
      */

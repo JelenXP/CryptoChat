@@ -13,6 +13,7 @@ import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.PendingMutations
 import com.jelenxp.cryptochat.chat.PendingReactions
 import com.jelenxp.cryptochat.chat.RatchetStore
+import com.jelenxp.cryptochat.chat.RelaySync
 import com.jelenxp.cryptochat.chat.ReplayGuard
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.data.Contact
@@ -91,6 +92,10 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
             // Ratchet klíče konverzace jsou CITLIVĚJŠÍ než replay otisky, které se
             // mazaly - bez tohohle by root/chain klíč zůstal na disku.
             runCatching { RatchetStore(ctx).clear(id) }
+            // In-memory gating stav pollu (beacon/prev-epocha/legacy grace/sweep/resend):
+            // bez tohohle by starý stamp přežil a po re-použití stejného id gatoval
+            // nový kontakt (odložená deep-recovery). Viz [RelaySync.clearContactPollState].
+            runCatching { RelaySync.clearContactPollState(id) }
             runCatching { TrustStore(ctx).clear(id) }
             runCatching { DraftStore(ctx).clear(id) }
             runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, id) }
@@ -111,6 +116,10 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     private fun clearRatchetIfKeyChanged(existing: Contact?, id: String?, newKey: String) {
         if (existing != null && id != null && existing.keyBase64 != newKey) {
             runCatching { RatchetStore(getApplication()).clear(id) }
+            // Re-pairing znovupoužívá stejné id: zahoď i gating stav pollu, ať čerstvý
+            // ratchet (recvEpoch=0) hned dožene deep-offline přes beacon (jinak by ho
+            // starý stamp gatoval o interval). Viz [RelaySync.clearContactPollState].
+            runCatching { RelaySync.clearContactPollState(id) }
         }
     }
 

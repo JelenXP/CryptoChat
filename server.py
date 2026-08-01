@@ -27,6 +27,7 @@ Konfigurace pres promenne prostredi (viz nize), vse ma rozumny vychozi stav.
 """
 
 import io
+import math
 import os
 import re
 import secrets
@@ -415,14 +416,25 @@ class MailboxStore:
             for mid, remaining, blobs in entries:
                 if remaining <= 0 or not blobs:
                     continue
+                size = sum(len(b) for b in blobs)
+                # Duplicitni mid (jen v POSKOZENEM handoffu - export_live iteruje
+                # dict, takze jsou unikatni): odecti bajty stareho boxu, jinak by
+                # _total_bytes trvale nabobtnalo -> predcasna eviction / falesne "full".
+                old = self._boxes.get(mid)
+                old_size = sum(len(b) for _seq, b in old["blobs"]) if old else 0
+                # Respektuj stropy (operator mohl mezi restarty limit SNIZIT): box
+                # navic nad MAX_BOXES nebo pres pametovy strop radeji preskoc, nez ho
+                # tise obnovit a nechat _evict_locked pri prvnim putu zahodit ZIVE zpravy.
+                if old is None and len(self._boxes) >= MAX_BOXES:
+                    continue
+                if self._total_bytes - old_size + size > MAX_TOTAL_BYTES:
+                    continue
                 dq = deque()
-                size = 0
                 for b in blobs:
                     self._next_seq += 1
                     dq.append((self._next_seq, b))
-                    size += len(b)
                 self._boxes[mid] = {"blobs": dq, "expires": now + remaining}
-                self._total_bytes += size
+                self._total_bytes += size - old_size
                 restored += 1
         return restored
 
@@ -466,7 +478,7 @@ def _serialize_state(entries):
         mid_b = mid.encode("ascii")
         buf += struct.pack(">H", len(mid_b))
         buf += mid_b
-        buf += struct.pack(">I", max(0, int(remaining)))
+        buf += struct.pack(">I", max(0, math.ceil(remaining)))
         buf += struct.pack(">I", len(blobs))
         for b in blobs:
             buf += struct.pack(">I", len(b))
@@ -507,7 +519,13 @@ def _save_handoff(path):
     uprostred zapisu nenechal novemu procesu poloviscny soubor. Rezim 0600."""
     data = _serialize_state(STORE.export_live())
     tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW (kde existuje - na Linuxu ano) proti symlink podvrhu; stary .tmp
+    # po padu nejdriv odstran, at O_TRUNC nepise pres pripadny cizi cil.
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
         f.flush()
@@ -521,7 +539,9 @@ def _restore_handoff(path):
     if not path:
         return
     try:
-        with open(path, "rb") as f:
+        # O_NOFOLLOW: nenasleduj symlink (defense-in-depth na tmpfs vlastnene service userem).
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as f:
             data = f.read()
     except FileNotFoundError:
         return
