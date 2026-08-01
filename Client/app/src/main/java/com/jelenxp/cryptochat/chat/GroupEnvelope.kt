@@ -17,25 +17,26 @@ import javax.crypto.spec.SecretKeySpec
  *  \_______________ otevřená hlavička (čitelná před dešifrováním) _______________/
  * ```
  * Otevřená hlavička je **routing hint** — příjemce z ní pozná odesílatele a epochu,
- * aby zvolil správný sender-key řetěz (viz [GroupCrypto.senderRootKey]/[GroupCrypto.senderStep]).
- * Sama je NEautentizovaná, ale je celá svázaná v AAD, takže ji relay nemůže přehodit.
+ * aby zvolil správný sender-key řetěz. Sama je NEautentizovaná, ale je celá svázaná
+ * v AAD, takže ji relay nemůže přehodit.
  *
- * Otevřený obsah (uvnitř šifry, chráněný GCM tagem), zarovnaný paddingem do košů
- * [ChatEnvelope.bucketFor] (text) / [ChatEnvelope.mediaBucketFor] (fotka):
+ * Otevřený obsah (uvnitř šifry, chráněný GCM tagem), zarovnaný paddingem do košů:
  * ```
- * [1B kind][8B ts BE][4B dataLen BE][data][2B sigLen BE][Ed25519 podpis][výplň 0]
+ * [1B kind][16B msgId][8B ts BE][4B dataLen BE][data][2B sigLen BE][Ed25519 podpis][výplň 0]
  * ```
- * **Podpis odesílatele** (Ed25519, [GroupIdentity]) je klíčová obrana: `GS` zná
- * každý člen, takže bez podpisu by kdokoli podvrhl zprávu cizí identitou. Podpis
- * pokrývá `groupId | senderMemberId | epoch | msgNo | kind | ts | data` (NE příjemce,
- * takže je společný pro všech N−1 kopií; příjemce sváže AAD).
+ * **`msgId`** je stabilní ID zprávy napříč zařízeními i resendy: dedup historie i
+ * potvrzování doručenek je msgId-based (viz `GROUP_CHAT_PLAN.md` §1.8, v3.1-#1/#6).
+ * Resend re-podepíše čerstvým `msgNo`, ale zachová `msgId`.
  *
- * **Náhodný IV per blob** — nikdy odvozený z klíče (viz `GROUP_CHAT_PLAN.md` crypto#3):
- * i když má sender-key v epoše stabilní klíč a N−1 kopií se liší jen recipient-AAD,
- * čerstvý IV vylučuje opakování (key, IV) = GCM forbidden attack.
+ * **Podpis odesílatele** (Ed25519, [GroupIdentity]) je klíčová obrana: `GS` (a tedy
+ * i `messageKey`) zná KAŽDÝ člen, takže GCM integrita NEchrání proti insiderovi —
+ * ten umí dešifrovat i znovu-zašifrovat s platným tagem. Jediná obrana proti podvrhu
+ * je podpis. Pokrývá `groupId | senderMemberId | epoch | msgNo | msgId | kind | ts |
+ * data` (NE příjemce → společný pro všech N−1 kopií; příjemce sváže AAD).
  *
- * Klíč zprávy (`messageKey`) i verifikační pubkey odesílatele dodává volající (roura),
- * takže obálka je čistě JVM a plně testovatelná.
+ * **Náhodný IV per blob** — nikdy odvozený z klíče (crypto#3): i když je sender-key
+ * v epoše stabilní a N−1 kopií se liší jen recipient-AAD, čerstvý IV vylučuje
+ * opakování (key, IV) = GCM forbidden attack.
  */
 object GroupEnvelope {
 
@@ -46,10 +47,11 @@ object GroupEnvelope {
     private const val GCM_TAG_BYTES = 16
 
     private const val SENDER_ID_BYTES = 8
+    const val MSG_ID_BYTES = 16
     // major(1) + senderMemberId(8) + groupEpoch(8) + msgNo(4)
     private const val OPEN_HEADER = 1 + SENDER_ID_BYTES + 8 + 4
-    // kind(1) + ts(8) + dataLen(4)
-    private const val INNER_HEADER = 1 + 8 + 4
+    // kind(1) + msgId(16) + ts(8) + dataLen(4)
+    private const val INNER_HEADER = 1 + MSG_ID_BYTES + 8 + 4
     private const val SIG_LEN_FIELD = 2
 
     const val KIND_TEXT: Byte = 0
@@ -65,8 +67,8 @@ object GroupEnvelope {
     }
 
     /**
-     * Výsledek [open]. `Ok` nese identitu odesílatele a pozici pro rouru;
-     * `Unreadable` = cizí klíč / poškození / neplatný podpis / neznámý kind →
+     * Výsledek [open]. `Ok` nese identitu odesílatele, `msgId` (dedup) a pozici pro
+     * rouru; `Unreadable` = cizí klíč / poškození / neplatný podpis / neznámý kind →
      * karanténa a zkusit znovu (nikdy se nesmí tiše ztratit).
      */
     sealed interface Result {
@@ -74,6 +76,7 @@ object GroupEnvelope {
             val senderMemberIdHex: String,
             val groupEpoch: Long,
             val msgNo: Int,
+            val msgIdHex: String,
             val content: Opened,
         ) : Result
 
@@ -106,13 +109,15 @@ object GroupEnvelope {
     /**
      * Zapečetí skupinovou zprávu. `messageKey` je per-zpráva klíč odesílatele
      * (z [GroupCrypto.senderStep]); `senderSignPrivateKeyBase64` je Ed25519 privát
-     * odesílatele. Vrací hotový blob k zápisu do příchozí schránky příjemce.
+     * odesílatele; `msgIdHex` je stabilní ID (16 B) generované jednou a zachované
+     * i při resendu. Vrací hotový blob k zápisu do příchozí schránky příjemce.
      */
     fun seal(
         kind: Byte,
         data: ByteArray,
         timestamp: Long,
         msgNo: Int,
+        msgIdHex: String,
         messageKey: ByteArray,
         senderSignPrivateKeyBase64: String,
         senderMemberIdHex: String,
@@ -121,12 +126,14 @@ object GroupEnvelope {
         recipientMemberIdHex: String,
     ): ByteArray {
         require(msgNo >= 0) { "msgNo nesmí být záporné." }
+        val msgId = GroupCrypto.hexToBytes(msgIdHex)
+        require(msgId.size == MSG_ID_BYTES) { "msgId musí mít $MSG_ID_BYTES B." }
         val openHeader = openHeaderBytes(senderMemberIdHex, groupEpoch, msgNo)
 
         val sig = com.jelenxp.cryptochat.crypto.Base64Util.decode(
             GroupIdentity.sign(
                 senderSignPrivateKeyBase64, LABEL_MSG,
-                sigData(groupIdHex, senderMemberIdHex, groupEpoch, msgNo, kind, timestamp, data)
+                sigData(groupIdHex, senderMemberIdHex, groupEpoch, msgNo, msgId, kind, timestamp, data)
             )
         )
 
@@ -134,7 +141,8 @@ object GroupEnvelope {
         val bucket = if (kind == KIND_TEXT) ChatEnvelope.bucketFor(preLen) else ChatEnvelope.mediaBucketFor(preLen)
         val plaintext = ByteArray(bucket)
         plaintext[0] = kind
-        ByteBuffer.wrap(plaintext, 1, INNER_HEADER - 1).putLong(timestamp).putInt(data.size)
+        System.arraycopy(msgId, 0, plaintext, 1, MSG_ID_BYTES)
+        ByteBuffer.wrap(plaintext, 1 + MSG_ID_BYTES, 12).putLong(timestamp).putInt(data.size)
         System.arraycopy(data, 0, plaintext, INNER_HEADER, data.size)
         var pos = INNER_HEADER + data.size
         plaintext[pos] = ((sig.size ushr 8) and 0xFF).toByte()
@@ -154,7 +162,8 @@ object GroupEnvelope {
 
     /**
      * Dešifruje a ověří skupinový blob. `messageKey` odvodí volající z pozice v
-     * hlavičce; `senderSignPublicKeyBase64` je Ed25519 pubkey odesílatele z rosteru.
+     * hlavičce; `senderSignPublicKeyBase64` MUSÍ volající dohledat **striktně podle
+     * [Header.senderMemberIdHex]** z rosteru — jinak padá obrana proti impersonaci.
      * Ověří GCM (klíč, AAD = groupId+příjemce+hlavička) i podpis odesílatele; při
      * jakékoli neshodě vrací [Result.Unreadable].
      */
@@ -194,7 +203,8 @@ object GroupEnvelope {
     ): Result {
         if (plaintext.size < INNER_HEADER) return Result.Unreadable
         val kind = plaintext[0]
-        val buf = ByteBuffer.wrap(plaintext, 1, INNER_HEADER - 1)
+        val msgId = plaintext.copyOfRange(1, 1 + MSG_ID_BYTES)
+        val buf = ByteBuffer.wrap(plaintext, 1 + MSG_ID_BYTES, 12)
         val timestamp = buf.long
         val dataLen = buf.int
         // Odečítat, ne přičítat — INNER_HEADER + dataLen by u obřího dataLen přeteklo.
@@ -205,13 +215,13 @@ object GroupEnvelope {
         if (pos + SIG_LEN_FIELD > plaintext.size) return Result.Unreadable
         val sigLen = ((plaintext[pos].toInt() and 0xFF) shl 8) or (plaintext[pos + 1].toInt() and 0xFF)
         pos += SIG_LEN_FIELD
-        if (sigLen < 0 || pos + sigLen > plaintext.size) return Result.Unreadable
+        if (pos + sigLen > plaintext.size) return Result.Unreadable
         val sig = plaintext.copyOfRange(pos, pos + sigLen)
 
         // Ověř podpis odesílatele nad autentizovaným kontextem (anti-impersonation).
         val ok = GroupIdentity.verify(
             senderSignPublicKeyBase64, LABEL_MSG,
-            sigData(groupIdHex, header.senderMemberIdHex, header.groupEpoch, header.msgNo, kind, timestamp, data),
+            sigData(groupIdHex, header.senderMemberIdHex, header.groupEpoch, header.msgNo, msgId, kind, timestamp, data),
             com.jelenxp.cryptochat.crypto.Base64Util.encode(sig)
         )
         if (!ok) return Result.Unreadable
@@ -221,7 +231,7 @@ object GroupEnvelope {
             KIND_IMAGE -> Opened.Image(timestamp, data)
             else -> return Result.Unreadable // neznámý kind → karanténa (řídicí kindy přijdou později)
         }
-        return Result.Ok(header.senderMemberIdHex, header.groupEpoch, header.msgNo, content)
+        return Result.Ok(header.senderMemberIdHex, header.groupEpoch, header.msgNo, GroupCrypto.bytesToHex(msgId), content)
     }
 
     private fun openHeaderBytes(senderMemberIdHex: String, groupEpoch: Long, msgNo: Int): ByteArray {
@@ -248,14 +258,15 @@ object GroupEnvelope {
         senderMemberIdHex: String,
         groupEpoch: Long,
         msgNo: Int,
+        msgId: ByteArray,
         kind: Byte,
         timestamp: Long,
         data: ByteArray,
     ): ByteArray {
         val gid = GroupCrypto.hexToBytes(groupIdHex)
         val sid = GroupCrypto.hexToBytes(senderMemberIdHex)
-        val fixed = ByteArray(8 + 4 + 1 + 8) // epoch + msgNo + kind + ts
-        ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(kind).putLong(timestamp)
+        val fixed = ByteArray(8 + 4 + MSG_ID_BYTES + 1 + 8) // epoch + msgNo + msgId + kind + ts
+        ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(msgId).put(kind).putLong(timestamp)
         return gid + sid + fixed + data
     }
 }
