@@ -21,9 +21,16 @@ data class GroupKeyPayload(
     val adminPublicKeyBase64: String,
     val assignedMemberIdHex: String?,
 ) {
-    /** Self-konzistence: `gsCommit` musí odpovídat `GS`, `groupId` a epoše. */
-    fun isSelfConsistent(): Boolean =
+    /**
+     * Self-konzistence: `gsCommit` musí odpovídat `GS`, `groupId` a epoše. Odolné
+     * proti poškozenému `GS` (neplatný Base64) — vrací false, NIKDY nevyhazuje (jinak
+     * by podvržený 1:1 payload shodil poll smyčku fáze 6).
+     */
+    fun isSelfConsistent(): Boolean = try {
         GroupCrypto.gsCommit(gsBase64, groupIdHex, epoch) == gsCommit
+    } catch (_: Exception) {
+        false
+    }
 
     companion object {
         private const val FORMAT_VERSION = 1
@@ -51,6 +58,10 @@ data class GroupKeyPayload(
                 val admin = r.readString()
                 val assigned = r.readString().ifEmpty { null }
                 if (!r.atEnd()) return null
+                // Zamítni zjevně poškozený payload hned: GS musí být 32 B Base64,
+                // groupId neprázdný hex, admin klíč a commit neprázdné, epoch ≥ 0.
+                if (epoch < 0 || gid.isEmpty() || commit.isEmpty() || admin.isEmpty()) return null
+                if (Base64Util.decode(gs).size != 32) return null
                 GroupKeyPayload(gid, epoch, gs, commit, admin, assigned)
             } catch (_: Exception) {
                 null

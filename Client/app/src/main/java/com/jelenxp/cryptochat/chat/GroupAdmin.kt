@@ -42,6 +42,11 @@ object GroupAdmin {
     /** Vytvoří skupinu. Admin si vygeneruje vlastní Ed25519+ML-KEM klíče. */
     fun create(groupName: String, adminName: String, initialMembers: List<MemberSpec>): Result {
         require(initialMembers.size + 1 <= GroupRoster.MAX_GROUP_MEMBERS) { "Skupina má strop ${GroupRoster.MAX_GROUP_MEMBERS} členů." }
+        // Klíče členů musí být navzájem různé (jinak by roster neprošel validací u příjemců, #4).
+        run {
+            val ed = HashSet<String>(); val seal = HashSet<String>()
+            for (m in initialMembers) require(ed.add(m.ed25519PublicKeyBase64) && seal.add(m.sealPublicKeyBase64)) { "Duplicitní klíče členů." }
+        }
         val groupId = GroupCrypto.randomGroupId()
         val gs = randomGs()
         val epoch = 0L
@@ -80,6 +85,10 @@ object GroupAdmin {
         require(group.amIAdmin) { "Členství smí měnit jen admin." }
         val roster = group.roster() ?: error("Poškozený roster.")
         require(roster.members.size + 1 <= GroupRoster.MAX_GROUP_MEMBERS) { "Skupina má strop ${GroupRoster.MAX_GROUP_MEMBERS} členů." }
+        // Duplicitní klíče by roster učinily nevalidním (dedup) → odmítne ho každý příjemce (#4).
+        require(roster.members.none { it.ed25519PublicKeyBase64 == newMember.ed25519PublicKeyBase64 || it.sealPublicKeyBase64 == newMember.sealPublicKeyBase64 }) {
+            "Člen s těmito klíči už ve skupině je."
+        }
         val newEpoch = group.groupEpoch + 1
         val newId = freshMemberId(group.usedMemberIds)
         val members = roster.members + GroupRoster.Member(newId, newMember.displayName, newMember.ed25519PublicKeyBase64, newMember.sealPublicKeyBase64)

@@ -48,12 +48,23 @@ object GroupControl {
         if (existing != null && existing.adminPublicKeyBase64 != payload.adminPublicKeyBase64) return ApplyResult.INVALID
         if (existing != null && payload.epoch <= existing.groupEpoch) return ApplyResult.STALE
 
-        val myMemberId = existing?.myMemberId ?: payload.assignedMemberIdHex ?: return ApplyResult.INVALID
-        val mine = roster.members.firstOrNull { it.memberIdHex == myMemberId } ?: return ApplyResult.REMOVED
-        // Roster musí odpovídat MÝM klíčům (admin použil moje pubkeys).
-        if (mine.ed25519PublicKeyBase64 != mySign.publicKeyBase64 || mine.sealPublicKeyBase64 != mySeal.publicKeyBase64) return ApplyResult.INVALID
+        // Kdo jsem v novém rosteru? Přednostně STÁVAJÍCÍ identita; pokud tam už není,
+        // ale dorazil bootstrap/re-join balík s přiděleným memberId, který v rosteru
+        // JE, vezmi ten — řeší re-add odebraného člena s novým memberId (#2). Jinak
+        // jsem odebrán.
+        val existingId = existing?.myMemberId?.takeIf { id -> roster.members.any { it.memberIdHex == id } }
+        val assignedId = payload.assignedMemberIdHex?.takeIf { id -> roster.members.any { it.memberIdHex == id } }
+        val reuseStoredKeys = existingId != null
+        val myMemberId = existingId ?: assignedId ?: return ApplyResult.REMOVED
 
-        return applied(store.upsert(buildGroup(payload, rosterBytesBase64, rosterSigBase64, roster, myMemberId, mySign, mySeal, existing)))
+        val mine = roster.members.first { it.memberIdHex == myMemberId }
+        // Roster musí sedět na MOJE klíče (stávající uložené při update, nebo čerstvé z joinu).
+        val signPub = if (reuseStoredKeys) existing!!.mySignPublicKeyBase64 else mySign.publicKeyBase64
+        val sealPub = if (reuseStoredKeys) existing!!.mySealPublicKeyBase64 else mySeal.publicKeyBase64
+        if (mine.ed25519PublicKeyBase64 != signPub || mine.sealPublicKeyBase64 != sealPub) return ApplyResult.INVALID
+
+        val group = buildGroup(payload, rosterBytesBase64, rosterSigBase64, roster, myMemberId, reuseStoredKeys, mySign, mySeal, existing)
+        return applied(store.upsert(group))
     }
 
     /**
@@ -84,16 +95,16 @@ object GroupControl {
 
     private fun buildGroup(
         payload: GroupKeyPayload, rb: String, rsig: String, roster: GroupRoster.Roster, myMemberId: String,
-        mySign: GroupIdentity.SignKeyPair, mySeal: GroupIdentity.SealKeyPair, existing: Group?,
+        reuseStoredKeys: Boolean, mySign: GroupIdentity.SignKeyPair, mySeal: GroupIdentity.SealKeyPair, existing: Group?,
     ): Group = Group(
         groupId = payload.groupIdHex, name = roster.name, avatarPath = existing?.avatarPath, groupEpoch = payload.epoch,
         gsBase64 = payload.gsBase64, rosterBytesBase64 = rb, rosterSigBase64 = rsig,
         adminPublicKeyBase64 = payload.adminPublicKeyBase64, myMemberId = myMemberId, adminMemberId = roster.adminMemberIdHex,
         amIAdmin = myMemberId == roster.adminMemberIdHex,
-        mySignPrivateKeyBase64 = existing?.mySignPrivateKeyBase64 ?: mySign.privateKeyBase64,
-        mySignPublicKeyBase64 = existing?.mySignPublicKeyBase64 ?: mySign.publicKeyBase64,
-        mySealPrivateKeyBase64 = existing?.mySealPrivateKeyBase64 ?: mySeal.privateKeyBase64,
-        mySealPublicKeyBase64 = existing?.mySealPublicKeyBase64 ?: mySeal.publicKeyBase64,
+        mySignPrivateKeyBase64 = if (reuseStoredKeys) existing!!.mySignPrivateKeyBase64 else mySign.privateKeyBase64,
+        mySignPublicKeyBase64 = if (reuseStoredKeys) existing!!.mySignPublicKeyBase64 else mySign.publicKeyBase64,
+        mySealPrivateKeyBase64 = if (reuseStoredKeys) existing!!.mySealPrivateKeyBase64 else mySeal.privateKeyBase64,
+        mySealPublicKeyBase64 = if (reuseStoredKeys) existing!!.mySealPublicKeyBase64 else mySeal.publicKeyBase64,
         usedMemberIds = (existing?.usedMemberIds ?: emptySet()) + roster.members.map { it.memberIdHex },
     )
 
