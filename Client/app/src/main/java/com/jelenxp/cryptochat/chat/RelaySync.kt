@@ -115,6 +115,21 @@ object RelaySync {
     private val legacyGraceCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * Jak často se v idle (target==re) smí přečíst BEACON (ukazatel epochy odesílatele).
+     * Beacon chrání jen VZÁCNÝ skok o víc než jednu epochu (dlouhé offline / >64 zpráv);
+     * běžný jednokrokový posun chytá sousední epocha `re+1`, kterou negatujeme. Dřív se
+     * beacon četl KAŽDÝ idle cyklus. Interval je hluboko pod TTL relaye (24 h) a i bez
+     * beaconu se do vzdálené epochy appka dojde po krocích přes `re+1` (1 epocha/cyklus),
+     * takže gatování = pomalejší dohnání skoku, NIKDY ztráta. Profilově: na měřené síti
+     * (SAVER) řidčeji. První poll po startu čte beacon vždy (viz [shouldCheckBeaconAt]).
+     */
+    private const val BEACON_RECHECK_MS = 5L * 60 * 1000
+    private const val BEACON_RECHECK_SAVER_MS = 10L * 60 * 1000
+
+    /** Kdy (ms) se u kontaktu naposledy četl beacon (ratchet idle větev). */
+    private val beaconCheckedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
      * Jak stará (ms) musí být zpráva ve stavu SENDING, aby ji outbox považoval za
      * ZASEKLOU a zkusil znovu. Čerstvé SENDING právě posílá UI - to nechme být, ať
      * se nepošle dvakrát. FAILED se retryuje bez ohledu na stáří (viz [outboxNeedsSend]).
@@ -178,6 +193,7 @@ object RelaySync {
         prevEpochChecked.clear()
         prevEpochCheckedAt.clear()
         legacyGraceCheckedAt.clear()
+        beaconCheckedAt.clear()
         secondarySweptAt.clear()
         receiptResendAt.clear()
     }
@@ -549,21 +565,26 @@ object RelaySync {
 
     /**
      * Přečte beacon (ukazatel aktuální epochy odesílatele) z jeho stabilní schránky.
-     * Vrací nejvyšší inzerovanou epochu, nebo null (beacon není / nejde přečíst).
+     * Vrací [BeaconRead]: `reached` říká, zda GET dosáhl serveru (odlišuje síťovou chybu
+     * od prázdného beaconu - volající pak stampuje gate jen při úspěchu, jako prev-epocha),
+     * `epoch` je nejvyšší inzerovaná epocha nebo null (beacon není / nejde přečíst).
      *
      * **Beacon se NEackuje** (nemaže): kdyby se smazal a následné vyzvednutí vzdálené
      * epochy selhalo, přišli bychom o ukazatel a odesílatel ho znovu nezapíše, dokud
      * neposune epochu. Stará se o něj TTL relaye; `readBeacon` se navíc volá jen když
      * sousední epocha nic nepřinesla (ne za běžného provozu), takže nakupení je malé.
      */
-    private fun readBeacon(baseUrl: String, key: String, dir: Int): Int? {
+    private data class BeaconRead(val reached: Boolean, val epoch: Int?)
+
+    private fun readBeacon(baseUrl: String, key: String, dir: Int): BeaconRead {
         val fetched = try {
             transport.get(baseUrl, RelayCrypto.ratchetBeaconId(key, dir), 0)
         } catch (e: Exception) {
-            return null
+            return BeaconRead(reached = false, epoch = null)
         }
-        if (fetched.blobs.isEmpty()) return null
-        return fetched.blobs.mapNotNull { RatchetBeacon.open(it, key, dir) }.maxOrNull()
+        val epoch = if (fetched.blobs.isEmpty()) null
+            else fetched.blobs.mapNotNull { RatchetBeacon.open(it, key, dir) }.maxOrNull()
+        return BeaconRead(reached = true, epoch = epoch)
     }
 
     /**
@@ -1179,6 +1200,9 @@ object RelaySync {
         // Jak řídce sweepovat záložní relaye: na měřené síti řidčeji (úspora dat).
         val secondarySweepMs =
             if (profile == NetworkProfile.SAVER) SECONDARY_SWEEP_SAVER_MS else SECONDARY_SWEEP_MS
+        // Jak řídce číst beacon v idle: na měřené síti řidčeji.
+        val beaconRecheckMs =
+            if (profile == NetworkProfile.SAVER) BEACON_RECHECK_SAVER_MS else BEACON_RECHECK_MS
         val ratchetStore = RatchetStore(context, storageCrypto)
         // Bootstrap ratchetu, jakmile protějšek inzeruje, že umí major 4 (a jen pro
         // kontakty s definovanou rolí - jinak by se směry schránek kryly). `is Absent`:
@@ -1955,14 +1979,18 @@ object RelaySync {
                 }
             }
             var target = ratchetStore.load(contact.id)?.recvEpoch ?: re
-            if (target == re) {
+            if (target == re && shouldCheckBeaconAt(now, beaconCheckedAt[contact.id], beaconRecheckMs)) {
                 // Sousední epocha nic nepřinesla → odesílatel mohl utéct dál (dlouhé
                 // offline). Beacon (ukazatel z neměnného M) řekne, na kterou epochu.
-                // Čte se JEN v tomhle případě, ať se za běžného provozu neplatí navíc.
-                // (Beacon se ZÁMĚRNĚ NEgatuje časem: je potřeba i na pollu hned po
-                // předchozím - obnova vzdálené epochy nesmí čekat na „mezeru".)
-                val beaconEpoch = readBeacon(baseUrl, key, dir)
-                if (beaconEpoch != null && beaconEpoch > re) target = beaconEpoch
+                // Čte se JEN v tomhle případě (target==re) a navíc jen ŘÍDCE (gate) -
+                // chrání vzácný skok o víc epoch, běžný jednokrokový posun řeší `re+1`.
+                // První poll po startu čte vždy (lastCheckedAt==null); mezitím se do
+                // vzdálené epochy dojde po krocích přes `re+1`, takže gate = zpoždění
+                // dohnání skoku, ne ztráta (TTL 24 h >> interval).
+                val beacon = readBeacon(baseUrl, key, dir)
+                // Čas zaznamenej JEN když GET prošel (jinak zkus dřív - jako prev-epocha).
+                if (beacon.reached) beaconCheckedAt[contact.id] = now
+                if (beacon.epoch != null && beacon.epoch > re) target = beacon.epoch
             }
             // Long-poll cílové ratchet epochy (aktuální, sousední nebo z beaconu).
             received += fetch(RelayCrypto.ratchetMailboxId(key, dir, target), LONGPOLL_SECONDS, ratchet = true)
@@ -2092,6 +2120,16 @@ internal fun shouldCheckPrevEpochAt(
  * jednou za [recheckMs] - po startu se legacy dočte, dál je to řídká pojistka.
  */
 internal fun shouldCheckLegacyGraceAt(now: Long, lastCheckedAt: Long?, recheckMs: Long): Boolean =
+    lastCheckedAt == null || now - lastCheckedAt >= recheckMs
+
+/**
+ * Má se teď u ratchet kontaktu (v idle, target==re) přečíst BEACON? Čistá funkce.
+ * První poll ([lastCheckedAt] == null) VŽDY - po startu dožene deep-offline skok;
+ * pak už jen jednou za [recheckMs]. Interval je hluboko pod TTL relaye, takže gate
+ * zprávu neztratí, jen zpomalí dohnání VZÁCNÉHO skoku o víc epoch (běžný jednokrokový
+ * posun řeší sousední epocha `re+1`, kterou negatujeme).
+ */
+internal fun shouldCheckBeaconAt(now: Long, lastCheckedAt: Long?, recheckMs: Long): Boolean =
     lastCheckedAt == null || now - lastCheckedAt >= recheckMs
 
 /**
