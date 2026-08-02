@@ -46,8 +46,31 @@ object GroupSync {
      */
     private const val RESEND_MIN_AGE_MS = 90_000L
 
+    /**
+     * Nejstarší zpráva, kterou [flushOutbox] ještě přepošle. Po tomhle stropu resend
+     * skončí (zpráva zůstane „nepotvrzená" v UI) — jinak by trvale offline příjemce
+     * nutil resend do nekonečna a pomalu vyčerpal `msgNo` epochy (nález v3.2 #3). Design:
+     * doručenky jsou RECOVERY, ne detekce cenzora — resend má strop.
+     */
+    private const val RESEND_MAX_AGE_MS = 24L * 60 * 60 * 1000
+
     data class SendResult(val msgIdHex: String, val sent: Int, val failed: Int)
-    data class PollResult(val received: Int, val failed: Int)
+
+    /**
+     * [reachable] = server aspoň jednou ODPOVĚDĚL (get neselhal), i když pak selhal
+     * ZÁPIS do historie. Volající tak nesmíchá plný disk (server v pořádku) s
+     * nedostupným serverem — jako 1:1 [RelaySync] (nález v3.2 A3).
+     */
+    data class PollResult(val received: Int, val failed: Int, val reachable: Boolean = false)
+
+    /** Per-skupina: den, pro který se naposledy kontrolovala VČEREJŠÍ schránka (gate baterie). */
+    private val lastPrevInboxCheck = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Prvních 15 min po přelomu dne se včerejší schránka kontroluje pořád (překryv epoch). */
+    private const val PREV_INBOX_GRACE_MS = 15L * 60 * 1000
+
+    /** Jen pro testy: zahodí gate stav včerejší schránky. */
+    internal fun resetPrevInboxStateForTests() = lastPrevInboxCheck.clear()
 
     fun dayEpoch(nowMs: Long): Long = nowMs / DAY_MS
 
@@ -106,7 +129,9 @@ object GroupSync {
             // Backoff na 409/507 řeší volající (service) — put vrací jen úspěch/neúspěch.
             if (transport.put(baseUrl, inbox, blob)) sent++ else failed++
         }
-        if (failed == 0 && recipients.isNotEmpty()) {
+        // Solo skupina (jen já) nemá komu poslat → rovnou SENT, jinak by zpráva navždy
+        // visela na SENDING (nález v3.2 A10). U ostatních jen když se KAŽDÝ put povedl.
+        if (failed == 0) {
             repo(context).setStatus(group.groupId, msgId, GroupChatMessage.Status.SENT)
         }
         return SendResult(msgId, sent, failed)
@@ -116,6 +141,13 @@ object GroupSync {
     fun resend(context: Context, group: Group, msgIdHex: String, baseUrl: String, nowMs: Long): Int {
         val msg = repo(context).getMessages(group.groupId).firstOrNull { it.outgoing && it.msgIdHex == msgIdHex } ?: return 0
         if (msg.pendingRecipients.isEmpty()) return 0
+        // Odebraní členové už nejsou v rosteru: novým GS by zprávu stejně nerozšifrovali, a
+        // jejich doručenka nikdy nedorazí. Vyřaď je z pending (→ zpráva může dojít na DELIVERED)
+        // a NEposílej jim — jinak by resend do jejich schránky pálil msgNo donekonečna (nález v3.2 #3).
+        val roster = group.otherMembers().mapTo(HashSet()) { it.memberIdHex }
+        for (gone in msg.pendingRecipients - roster) repo(context).markDeliveredBy(group.groupId, msgIdHex, gone)
+        val targets = msg.pendingRecipients.filter { it in roster }
+        if (targets.isEmpty()) return 0
         val epoch = group.groupEpoch
         // Resend používá STEJNÝ msgId, ale ČERSTVÝ msgNo (viz plán v3.1-#1) — jinak by
         // ho příjemcův replay-guard mohl zahodit. Dedup u příjemce je msgId-based.
@@ -129,7 +161,7 @@ object GroupSync {
         else msg.text.toByteArray(Charsets.UTF_8)
         val day = dayEpoch(nowMs)
         var sent = 0
-        for (r in msg.pendingRecipients) {
+        for (r in targets) {
             val blob = GroupEnvelope.seal(kind, data, msg.timestamp, msgNo, msgIdHex, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, r)
             if (transport.put(baseUrl, GroupCrypto.inboxId(group.gsBase64, group.groupId, r, day), blob)) sent++
         }
@@ -147,7 +179,8 @@ object GroupSync {
         if (baseUrl.isBlank()) return 0
         val now = System.currentTimeMillis()
         val stuck = repo(context).getMessages(group.groupId).filter {
-            it.outgoing && it.pendingRecipients.isNotEmpty() && now - it.timestamp > RESEND_MIN_AGE_MS
+            it.outgoing && it.pendingRecipients.isNotEmpty() &&
+                (now - it.timestamp) in (RESEND_MIN_AGE_MS + 1) until RESEND_MAX_AGE_MS
         }
         var resent = 0
         for (m in stuck) resent += resend(context, group, m.msgIdHex, baseUrl, now)
@@ -172,17 +205,28 @@ object GroupSync {
             }
         }
 
-        // 2) Poll mojí příchozí schránky: dnešek (long-poll) + včerejšek (rychle, přelom dne).
+        // 2) Poll mojí příchozí schránky. VČEREJŠÍ schránku (překryv přelomu dne) NEkontroluj
+        // každý cyklus — byl by to druhý onion request navíc pořád dokola (nález v3.2 A1). Jen
+        // jednou za den + prvních PREV_INBOX_GRACE_MS po přelomu, jako 1:1 RelaySync.
         val day = dayEpoch(nowMs)
+        val msIntoDay = nowMs - day * DAY_MS
+        val checkPrev = msIntoDay < PREV_INBOX_GRACE_MS || lastPrevInboxCheck[gid] != day
         val inboxToday = GroupCrypto.inboxId(group.gsBase64, gid, group.myMemberId, day)
-        val inboxYesterday = GroupCrypto.inboxId(group.gsBase64, gid, group.myMemberId, day - 1)
-        for ((mbox, wait) in listOf(inboxToday to waitSeconds, inboxYesterday to 0)) {
+        val mailboxes = ArrayList<Pair<String, Int>>(2)
+        mailboxes.add(inboxToday to waitSeconds)
+        if (checkPrev) {
+            lastPrevInboxCheck[gid] = day
+            mailboxes.add(GroupCrypto.inboxId(group.gsBase64, gid, group.myMemberId, day - 1) to 0)
+        }
+        var reachable = false
+        for ((mbox, wait) in mailboxes) {
             val fetched = try {
                 transport.get(baseUrl, mbox, wait)
             } catch (_: Exception) {
                 failed++
                 continue
             }
+            reachable = true // server ODPOVĚDĚL (i kdyby pak selhal zápis, spojení je v pořádku)
             if (fetched.blobs.isEmpty()) continue
             var anyFailedWrite = false
             for (blob in fetched.blobs) {
@@ -195,7 +239,7 @@ object GroupSync {
             // ACK (relay smaže) JEN když KAŽDÝ blob dávky durabilně dopadl.
             if (!anyFailedWrite) transport.ack(baseUrl, mbox, fetched.ackSeq)
         }
-        return PollResult(received, failed)
+        return PollResult(received, failed, reachable)
     }
 
     private fun processBlob(context: Context, group: Group, blob: ByteArray, baseUrl: String, nowMs: Long, fromQuarantine: Boolean): Outcome {

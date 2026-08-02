@@ -571,21 +571,29 @@ class TorForegroundService : Service() {
             }
             try {
                 val pollStart = System.currentTimeMillis()
-                // Snímek ID PŘED pollem - co po pollu přibude (a je příchozí), je nové.
-                val before = repo.getMessages(gid).mapTo(HashSet()) { it.msgIdHex }
+                // Snímek historie PŘED pollem - co po pollu přibude (příchozí, klíč
+                // (odesílatel,msgId) jako dedup), je nové (viz GroupNotifyLogic).
+                val before = repo.getMessages(gid)
                 val result = GroupSync.poll(ctx, group, baseUrl, pollStart, GROUP_LONGPOLL_SECONDS)
                 if (result.received > 0 && ActiveChat.currentGroupId != gid) {
                     // Čerstvá skupina (jméno + roster pro jména odesílatelů) z úložiště -
                     // rotace/přejmenování smyčku nerestartuje kvůli jménu.
                     val fresh = GroupStore(ctx).getGroup(gid) ?: group
                     val names = fresh.members().associate { it.memberIdHex to it.displayName }
-                    val unseen = repo.getMessages(gid).filter { !it.outgoing && it.msgIdHex !in before }
+                    val unseen = GroupNotifyLogic.newIncoming(before, repo.getMessages(gid))
                     if (unseen.isNotEmpty()) {
                         ChatNotifications.notifyGroupMessage(ctx, gid, fresh.name, unseen, names)
                     }
                 }
                 if (result.failed > 0) {
-                    if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
+                    if (result.reachable) {
+                        // Server ODPOVĚDĚL, jen selhal zápis do historie (plný disk) — spojení
+                        // je v pořádku, indikátor nech „připojeno". Zpomal ale stejně (disk).
+                        failStreak = 0
+                        RelayStatus.markConnected()
+                    } else if (++failStreak >= UNREACHABLE_AFTER_FAILS) {
+                        RelayStatus.markUnreachable()
+                    }
                     updateNotification()
                     backoff = sleepBackoff(backoff)
                 } else {

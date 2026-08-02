@@ -47,8 +47,11 @@ object GroupActions {
         if (!group.amIAdmin) return false
         val store = GroupStore(context, crypto)
         val current = store.getGroup(group.groupId) ?: group
-        // Už připojený člen? Znovu ho nezveme (nezaložíme mu druhé pending).
-        if (GroupAdminState.memberIdForContact(context, current.groupId, contact.id, crypto) != null) return false
+        // Už připojený člen? Znovu ho nezveme. Ověřuj proti ROSTERU, ne jen proti mapě:
+        // po odebrání může v mapě zůstat zastaralá vazba (unbind je best-effort), a ta by
+        // jinak trvale bránila znovupozvání odebraného kontaktu (nález v3.2 #5).
+        val boundId = GroupAdminState.memberIdForContact(context, current.groupId, contact.id, crypto)
+        if (boundId != null && current.members().any { it.memberIdHex == boundId }) return false
         if (current.members().size >= GroupRoster.MAX_GROUP_MEMBERS) return false
         GroupAdminState.reserveInvite(context, current.groupId, contact.id, current.usedMemberIds, crypto) ?: return false
         val invite = GroupInvite(current.groupId, current.name, current.members().size, current.adminPublicKeyBase64)
@@ -113,13 +116,24 @@ object GroupActions {
         val group = store.getGroup(pubkeys.groupIdHex) ?: return true // neznámá skupina → zahodit
         if (!group.amIAdmin) return true                              // nejsem admin → zahodit
 
-        // Už člen? BUNDLE se nejspíš ztratil → pošli znovu jeho AKTUÁLNÍ balík.
-        if (GroupAdminState.memberIdForContact(context, group.groupId, fromContact.id, crypto) != null) {
-            sendGroupBundle(context, fromContact, currentPayload(group, assignedMemberId = null), group)
+        // Už promotovaný člen (mám ho v mapě)? První BUNDLE se nejspíš ztratil → pošli ho
+        // ZNOVU s JEHO memberId. Bez toho by nováček (bez uloženého Group) adoptoval balík
+        // s assignedMemberId=null jako REMOVED a UŽ NIKDY se nepřipojil (nález auditu v3.2 #1).
+        GroupAdminState.memberIdForContact(context, group.groupId, fromContact.id, crypto)?.let { memberId ->
+            sendGroupBundle(context, fromContact, currentPayload(group, assignedMemberId = memberId), group)
             return true
         }
-        // Nepozván → nevyžádané, zahodit (ale ACK, ať to relay nenabízí donekonečna).
+        // Musí být pozván (rezervovaný memberId), jinak nevyžádané → zahodit (ACK).
         val reservedId = GroupAdminState.pendingMemberId(context, group.groupId, fromContact.id, crypto) ?: return true
+
+        // Zotavení z rozpadlého joinu: addMember dřív uspěl (M UŽ je v rosteru), ale promote /
+        // doručení ne. Nepřidávej znovu (addMember by hodil kvůli duplicitnímu memberId) — jen
+        // dokonči vazbu a pošli balík. Selhání promote NEPOTVRDÍ (přijde znovu) — nález v3.2 #2.
+        if (group.members().any { it.memberIdHex == reservedId }) {
+            if (!GroupAdminState.promote(context, group.groupId, fromContact.id, reservedId, crypto)) return false
+            sendGroupBundle(context, fromContact, currentPayload(group, assignedMemberId = reservedId), group)
+            return true
+        }
 
         val spec = GroupAdmin.MemberSpec(pubkeys.displayName, pubkeys.ed25519PublicKeyBase64, pubkeys.sealPublicKeyBase64)
         val result = try {
@@ -128,7 +142,9 @@ object GroupActions {
             return true // plno / duplicitní klíče / poškozený roster → zahodit
         }
         if (!store.upsert(result.adminGroup)) return false // durabilní zápis selhal → PUBKEYS přijde znovu
-        GroupAdminState.promote(context, group.groupId, fromContact.id, reservedId, crypto)
+        // Vazba člen↔kontakt MUSÍ být durabilní: bez ní by se člen nedostal do routingu a při
+        // další rotaci GS by desynchronizoval. Selhání NEPOTVRDÍ — zotaví ho větev výše.
+        if (!GroupAdminState.promote(context, group.groupId, fromContact.id, reservedId, crypto)) return false
         distributeBundles(context, result, allContacts, newcomerId = reservedId, newcomerContact = fromContact, crypto = crypto)
         return true
     }

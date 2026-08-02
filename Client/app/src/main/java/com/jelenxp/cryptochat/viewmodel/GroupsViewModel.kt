@@ -53,9 +53,12 @@ class GroupsViewModel(application: Application) : AndroidViewModel(application) 
      * UI může rovnou navigovat. [myName] se uloží i jako profilové jméno. Vrací
      * skupinu, nebo null při selhání zápisu.
      */
-    fun createGroup(groupName: String, myName: String): Group? {
+    suspend fun createGroup(groupName: String, myName: String): Group? {
         if (myName.isNotBlank()) settings.setMyDisplayName(myName)
-        val group = GroupActions.createGroup(getApplication(), groupName.trim(), myName.trim())
+        // Keygen (Ed25519+ML-KEM) + Keystore-šifrovaný zápis NEsmí na hlavní vlákno (ANR).
+        val group = withContext(Dispatchers.IO) {
+            GroupActions.createGroup(getApplication(), groupName.trim(), myName.trim())
+        }
         if (group != null) _groups.value = _groups.value + group
         refresh()
         return group
@@ -106,6 +109,7 @@ class GroupsViewModel(application: Application) : AndroidViewModel(application) 
             runCatching { GroupAdminState.clear(ctx, groupId) }
             runCatching { ReplayGuard.clear(ctx, groupId) }
             runCatching { BlobQuarantine.clear(ctx, groupId) }
+            runCatching { com.jelenxp.cryptochat.ui.util.AvatarStore.deleteAvatars(ctx, groupId) }
             _groups.value = store.getGroups()
         }
         refresh()

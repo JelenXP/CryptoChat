@@ -18,7 +18,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +56,8 @@ fun CreateGroupScreen(navController: NavController, contactsVm: ContactsViewMode
     var groupName by remember { mutableStateOf("") }
     var myName by remember { mutableStateOf(groupsVm.myDisplayName()) }
     var selected by remember { mutableStateOf(setOf<String>()) }
+    var creating by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     CryptoScaffold(
         title = stringResource(R.string.new_group),
@@ -108,13 +112,16 @@ fun CreateGroupScreen(navController: NavController, contactsVm: ContactsViewMode
             item {
                 Button(
                     onClick = {
-                        val group = groupsVm.createGroup(groupName, myName) ?: return@Button
-                        capable.filter { it.id in selected }.forEach { groupsVm.invite(group, it) }
-                        navController.navigate("group_chat/${group.groupId}") {
-                            popUpTo("main")
+                        if (creating) return@Button
+                        creating = true
+                        scope.launch {
+                            val group = groupsVm.createGroup(groupName, myName)
+                            if (group == null) { creating = false; return@launch }
+                            capable.filter { it.id in selected }.forEach { groupsVm.invite(group, it) }
+                            navController.navigate("group_chat/${group.groupId}") { popUpTo("main") }
                         }
                     },
-                    enabled = groupName.isNotBlank() && myName.isNotBlank(),
+                    enabled = groupName.isNotBlank() && myName.isNotBlank() && !creating,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 ) {
                     Text(stringResource(R.string.create_group))

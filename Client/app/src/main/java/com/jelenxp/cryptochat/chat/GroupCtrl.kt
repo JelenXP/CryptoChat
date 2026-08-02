@@ -22,9 +22,10 @@ object GroupCtrlReceiver {
     fun handle(context: Context, fromContactId: String, subtype: Int, bytes: ByteArray, storageCrypto: StorageCrypto): Boolean {
         return try {
             when (subtype) {
-                // Pozvánka pro UI kartu — uložení best-effort, vždy ACK (poškozené zahodit).
+                // Pozvánka pro UI kartu. Poškozená (decode null) → ACK (zahodit); když se
+                // ale uložení NEPOVEDE (plné prefs), vrať false → přijde znovu (nález v3.2 #4).
                 WireExt.GROUP_CTRL_INVITE ->
-                    GroupInvite.decode(bytes)?.let { GroupInviteStore.save(context, fromContactId, it) }.let { true }
+                    GroupInvite.decode(bytes)?.let { GroupInviteStore.save(context, fromContactId, it) } ?: true
                 // Admin dostal pubkeys nováčka → přidej člena a rozešli bundly VŠEM.
                 WireExt.GROUP_CTRL_PUBKEYS -> handlePubkeys(context, fromContactId, bytes, storageCrypto)
                 WireExt.GROUP_CTRL_BUNDLE -> handleBundle(context, bytes, storageCrypto)

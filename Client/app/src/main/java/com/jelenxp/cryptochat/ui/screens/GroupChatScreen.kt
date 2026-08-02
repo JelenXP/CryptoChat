@@ -49,6 +49,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.ActiveChat
+import com.jelenxp.cryptochat.chat.ChatNotifications
 import com.jelenxp.cryptochat.chat.GroupChatMessage
 import com.jelenxp.cryptochat.chat.GroupChatRepository
 import com.jelenxp.cryptochat.chat.GroupSync
@@ -97,6 +98,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     androidx.compose.runtime.LaunchedEffect(groupId) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             ActiveChat.currentGroupId = groupId
+            ChatNotifications.cancelGroupMessage(ctx, groupId) // po otevření notifikaci zruš
             try {
                 while (true) {
                     messages = withContext(Dispatchers.IO) { GroupChatRepository(ctx).getMessages(groupId) }

@@ -1,6 +1,8 @@
 package com.jelenxp.cryptochat.ui.screens
 
 import com.jelenxp.cryptochat.chat.ChatMessage
+import com.jelenxp.cryptochat.chat.Group
+import com.jelenxp.cryptochat.chat.GroupChatMessage
 import com.jelenxp.cryptochat.data.Contact
 
 /**
@@ -38,6 +40,46 @@ object MainScreenLogic {
      */
     fun sortByActivity(contacts: List<Contact>, lastActivity: Map<String, Long>): List<Contact> =
         contacts.sortedByDescending { lastActivity[it.id] ?: Long.MIN_VALUE }
+
+    /** Položka hlavního seznamu: 1:1 kontakt NEBO skupina (mixed, řazeno podle aktivity). */
+    sealed interface HomeItem {
+        val key: String
+        val activity: Long
+
+        data class C(val contact: Contact, val preview: Pair<ChatMessage?, Int>?, val draft: String?) : HomeItem {
+            override val key get() = "c_${contact.id}"
+            override val activity get() = preview?.first?.timestamp ?: Long.MIN_VALUE
+        }
+
+        data class G(val group: Group, val last: GroupChatMessage?) : HomeItem {
+            override val key get() = "g_${group.groupId}"
+            override val activity get() = last?.timestamp ?: Long.MIN_VALUE
+        }
+    }
+
+    /**
+     * Sloučí kontakty a skupiny do JEDNOHO seznamu seřazeného podle poslední aktivity
+     * (nejnovější nahoře) — mixed jako běžný messenger. Kontakty jdou přes stávající
+     * [filterContacts]/[sortByActivity] (zachová chování 1:1 vyhledávání i řazení),
+     * skupiny se filtrují prostým match jména. Vytaženo z composable (pravidlo 2, nález A6).
+     */
+    fun mergeHome(
+        contacts: List<Contact>,
+        previews: Map<String, Pair<ChatMessage?, Int>>,
+        drafts: Map<String, String>,
+        groups: List<Group>,
+        groupPreviews: Map<String, GroupChatMessage?>,
+        query: String,
+    ): List<HomeItem> {
+        val lastActivity = previews.mapValues { it.value.first?.timestamp ?: Long.MIN_VALUE }
+        val contactItems = filterContacts(sortByActivity(contacts, lastActivity), query)
+            .map { HomeItem.C(it, previews[it.id], drafts[it.id]) }
+        val q = query.trim()
+        val groupItems = groups
+            .filter { q.isEmpty() || it.name.contains(q, ignoreCase = true) }
+            .map { HomeItem.G(it, groupPreviews[it.groupId]) }
+        return (contactItems + groupItems).sortedByDescending { it.activity }
+    }
 
     /** Co ukázat jako podtitulek kontaktu v seznamu. */
     sealed interface Subtitle {

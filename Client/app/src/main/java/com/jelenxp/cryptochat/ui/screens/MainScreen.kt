@@ -188,24 +188,11 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel, group
         }
     }
 
-    // Řazení podle poslední aktivity (nejnověji psané nahoře) + live filtrování
-    // podle jména. Kontakty i skupiny se MÍCHAJÍ do jednoho seznamu seřazeného podle
-    // času poslední zprávy (jako běžný messenger). Filtrování kontaktů zůstává na
-    // testovaném MainScreenLogic; skupiny se filtrují prostým match jména.
-    val filtered = remember(contacts, previews, query) {
-        val lastActivity = previews.mapValues { it.value.first?.timestamp ?: Long.MIN_VALUE }
-        MainScreenLogic.filterContacts(
-            MainScreenLogic.sortByActivity(contacts, lastActivity),
-            query
-        )
-    }
-    val homeItems = remember(filtered, groups, groupPreviews, drafts, previews, query) {
-        val q = query.trim()
-        val contactItems = filtered.map { HomeItem.C(it, previews[it.id], drafts[it.id]) }
-        val groupItems = groups
-            .filter { q.isBlank() || it.name.contains(q, ignoreCase = true) }
-            .map { HomeItem.G(it, groupPreviews[it.groupId]) }
-        (contactItems + groupItems).sortedByDescending { it.activity }
+    // Kontakty i skupiny se MÍCHAJÍ do jednoho seznamu seřazeného podle poslední
+    // aktivity (jako běžný messenger). Sloučení/řazení/filtr je v testovaném
+    // MainScreenLogic.mergeHome (pravidlo 2), ne v composable.
+    val homeItems = remember(contacts, groups, previews, groupPreviews, drafts, query) {
+        MainScreenLogic.mergeHome(contacts, previews, drafts, groups, groupPreviews, query)
     }
 
     val errorDeleteFailed = stringResource(R.string.error_delete_failed)
@@ -294,7 +281,7 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel, group
                     ) {
                         items(homeItems, key = { it.key }) { item ->
                             when (item) {
-                                is HomeItem.C -> ContactCard(
+                                is MainScreenLogic.HomeItem.C -> ContactCard(
                                     contact = item.contact,
                                     lastMessage = item.preview?.first,
                                     unread = item.preview?.second ?: 0,
@@ -306,7 +293,7 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel, group
                                     onLongClick = { quickActions = item.contact },
                                     draft = item.draft
                                 )
-                                is HomeItem.G -> GroupCard(
+                                is MainScreenLogic.HomeItem.G -> GroupCard(
                                     group = item.group,
                                     lastMessage = item.last,
                                     innerPadding = spacing.cardInner,
@@ -380,22 +367,6 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel, group
             confirmButton = {},
             dismissButton = { TextButton(onClick = { showAddChooser = false }) { Text(stringResource(R.string.btn_cancel)) } }
         )
-    }
-}
-
-/** Položka hlavního seznamu: 1:1 kontakt NEBO skupina, sjednocené řazení podle aktivity. */
-private sealed interface HomeItem {
-    val key: String
-    val activity: Long
-
-    data class C(val contact: Contact, val preview: Pair<ChatMessage?, Int>?, val draft: String?) : HomeItem {
-        override val key get() = "c_${contact.id}"
-        override val activity get() = preview?.first?.timestamp ?: Long.MIN_VALUE
-    }
-
-    data class G(val group: Group, val last: GroupChatMessage?) : HomeItem {
-        override val key get() = "g_${group.groupId}"
-        override val activity get() = last?.timestamp ?: Long.MIN_VALUE
     }
 }
 

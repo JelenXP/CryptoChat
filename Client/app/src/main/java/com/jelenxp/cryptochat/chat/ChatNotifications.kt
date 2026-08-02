@@ -338,6 +338,11 @@ object ChatNotifications {
         NotificationManagerCompat.from(context).cancel(messageNotificationId(contactId))
     }
 
+    /** Zruší notifikaci skupinových zpráv (po otevření skupiny). */
+    fun cancelGroupMessage(context: Context, groupId: String) {
+        NotificationManagerCompat.from(context).cancel(NotificationIds.groupMessage(groupId))
+    }
+
     /**
      * Notifikace o nové verzi aplikace. Klepnutí otevře appku, která pak ukáže
      * obrazovku s aktualizací (stejná logika jako při startu).
