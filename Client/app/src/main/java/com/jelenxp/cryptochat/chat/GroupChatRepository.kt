@@ -87,6 +87,16 @@ class GroupChatRepository(
             return if (saveLocked(groupId, next)) MutationResult.UPDATED else MutationResult.FAILED
         }
 
+    /** Smaže celou historii skupiny (po opuštění/smazání skupiny). Best-effort. */
+    fun clear(groupId: String) = synchronized(lock) {
+        try {
+            prefs.edit().remove(key(groupId)).commit()
+        } catch (_: Exception) {
+        } finally {
+            cache.remove(groupId)
+        }
+    }
+
     // --- interní ---
 
     private fun loadLocked(groupId: String): List<GroupChatMessage> = loadForWriteLocked(groupId) ?: emptyList()

@@ -79,6 +79,9 @@ import com.jelenxp.cryptochat.ui.screens.ChangelogScreen
 import com.jelenxp.cryptochat.ui.screens.ConnectionChoiceScreen
 import com.jelenxp.cryptochat.ui.screens.DiagnosticsScreen
 import com.jelenxp.cryptochat.ui.screens.ChatScreen
+import com.jelenxp.cryptochat.ui.screens.CreateGroupScreen
+import com.jelenxp.cryptochat.ui.screens.GroupChatScreen
+import com.jelenxp.cryptochat.ui.screens.GroupDetailScreen
 import com.jelenxp.cryptochat.ui.screens.CreateKeyScreen
 import com.jelenxp.cryptochat.ui.screens.DesignScreen
 import com.jelenxp.cryptochat.ui.screens.MainScreen
@@ -102,6 +105,7 @@ import com.jelenxp.cryptochat.ui.theme.LocalDesign
 import com.jelenxp.cryptochat.ui.theme.LocalUiSpacing
 import com.jelenxp.cryptochat.ui.theme.spacing
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+import com.jelenxp.cryptochat.viewmodel.GroupsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -113,6 +117,7 @@ class MainActivity : AppCompatActivity() {
 
     // Kontakt, jehož konverzaci má appka otevřít (klepnutí na notifikaci zprávy).
     private val openChatIdState = mutableStateOf<String?>(null)
+    private val openGroupIdState = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -124,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         )
         sharedTextState.value = extractSharedText(intent)
         openChatIdState.value = intent?.getStringExtra(EXTRA_OPEN_CHAT)
+        openGroupIdState.value = intent?.getStringExtra(EXTRA_OPEN_GROUP)
 
         // Jednorázová migrace jazyka ze STARÉHO AppCompat úložiště do našeho stavu
         // (jazyk teď přepínáme in-place, viz AppLocale - bez recreate, bez poblikání
@@ -182,6 +188,11 @@ class MainActivity : AppCompatActivity() {
                                                 // přečetl ZNOVU a po „zpět" by uživatele vrátil do
                                                 // konverzace, ze které odešel.
                                                 intent?.removeExtra(EXTRA_OPEN_CHAT)
+                                            },
+                                            openGroupId = openGroupIdState.value,
+                                            onOpenGroupConsumed = {
+                                                openGroupIdState.value = null
+                                                intent?.removeExtra(EXTRA_OPEN_GROUP)
                                             }
                                         )
                                     }
@@ -199,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         extractSharedText(intent)?.let { sharedTextState.value = it }
         intent.getStringExtra(EXTRA_OPEN_CHAT)?.let { openChatIdState.value = it }
+        intent.getStringExtra(EXTRA_OPEN_GROUP)?.let { openGroupIdState.value = it }
     }
 
     override fun onStart() {
@@ -582,10 +594,13 @@ fun CryptoChatApp(
     sharedText: String? = null,
     onSharedTextConsumed: () -> Unit = {},
     openChatId: String? = null,
-    onOpenChatConsumed: () -> Unit = {}
+    onOpenChatConsumed: () -> Unit = {},
+    openGroupId: String? = null,
+    onOpenGroupConsumed: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val viewModel: ContactsViewModel = viewModel()
+    val groupsViewModel: GroupsViewModel = viewModel()
     val style = design.animStyle
     val d = design.animSpeed.millis
 
@@ -612,6 +627,16 @@ fun CryptoChatApp(
         }
     }
 
+    // Klepnutí na notifikaci skupinové zprávy → otevři přímo tu skupinu.
+    LaunchedEffect(openGroupId) {
+        val id = openGroupId ?: return@LaunchedEffect
+        onOpenGroupConsumed()
+        navController.navigate("group_chat/$id") {
+            popUpTo("main")
+            launchSingleTop = true
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = "main",
@@ -620,7 +645,7 @@ fun CryptoChatApp(
         popEnterTransition = { popEnterFor(style, d) },
         popExitTransition = { popExitFor(style, d) }
     ) {
-        composable("main") { MainScreen(navController, viewModel) }
+        composable("main") { MainScreen(navController, viewModel, groupsViewModel) }
 
         composable("add_user") { AddUserScreen(navController) }
 
@@ -650,7 +675,25 @@ fun CryptoChatApp(
             arguments = listOf(navArgument("id") { type = NavType.StringType })
         ) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id") ?: ""
-            ChatScreen(id = id, navController = navController, viewModel = viewModel)
+            ChatScreen(id = id, navController = navController, viewModel = viewModel, groupsViewModel = groupsViewModel)
+        }
+
+        composable("new_group") { CreateGroupScreen(navController, viewModel, groupsViewModel) }
+
+        composable(
+            route = "group_chat/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            GroupChatScreen(groupId = id, navController = navController, groupsViewModel = groupsViewModel)
+        }
+
+        composable(
+            route = "group_detail/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            GroupDetailScreen(groupId = id, navController = navController, groupsVm = groupsViewModel, contactsVm = viewModel)
         }
 
         composable(

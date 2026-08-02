@@ -581,4 +581,32 @@
     <string name="bug_report_error_network">Na server se nepodařilo dojít. Zkus to později znovu.</string>
     <string name="bug_report_error_server">Server hlášení odmítl. Zkus to později znovu.</string>
     <string name="bug_report_error_too_large">Hlášení je příliš velké. Zkrať popis nebo odznač některé přílohy.</string>
+
+    <!-- Skupinové chaty -->
+    <string name="new_group">Nová skupina</string>
+    <string name="new_contact">Nový kontakt</string>
+    <string name="group_member_count">Počet členů: %1$d</string>
+    <string name="create_group">Vytvořit skupinu</string>
+    <string name="group_name_label">Název skupiny</string>
+    <string name="group_your_name_label">Vaše jméno</string>
+    <string name="group_your_name_help">Toto jméno uvidí členové skupiny.</string>
+    <string name="group_add_members">Přidat členy</string>
+    <string name="group_no_capable_contacts">Žádný z vašich kontaktů zatím skupiny nepodporuje. Musí aktualizovat aplikaci.</string>
+    <string name="group_create_hint">Jste admin — členy může přidávat a odebírat jen vy.</string>
+    <string name="group_members">Členové</string>
+    <string name="group_admin_label">Admin</string>
+    <string name="group_you_label">Vy</string>
+    <string name="group_add_member">Přidat člena</string>
+    <string name="group_remove_member">Odebrat</string>
+    <string name="group_remove_member_confirm">Odebrat %1$s ze skupiny?</string>
+    <string name="group_leave">Opustit skupinu</string>
+    <string name="group_leave_confirm">Opustit skupinu? Místní kopie i historie se smažou.</string>
+    <string name="group_set_photo">Nastavit fotku</string>
+    <string name="group_remove_photo">Odebrat fotku</string>
+    <string name="group_full">Skupina je plná (max %1$d).</string>
+    <string name="group_invite_title">Pozvánka do skupiny</string>
+    <string name="group_invite_accept">Přijmout</string>
+    <string name="group_invite_joining">Připojuji do skupiny…</string>
+    <string name="group_your_name_prompt">Zvolte své jméno ve skupině</string>
+    <string name="group_empty_messages">Zatím žádné zprávy.</string>
 </resources>

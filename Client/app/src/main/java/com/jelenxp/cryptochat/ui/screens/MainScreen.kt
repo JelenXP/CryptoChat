@@ -56,9 +56,14 @@ import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.chat.ChatMessage
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.DraftStore
+import com.jelenxp.cryptochat.chat.Group
+import com.jelenxp.cryptochat.chat.GroupChatMessage
+import com.jelenxp.cryptochat.chat.GroupChatRepository
 import com.jelenxp.cryptochat.chat.RelayConn
 import com.jelenxp.cryptochat.chat.RelayStatus
 import com.jelenxp.cryptochat.data.Contact
+import androidx.compose.material.icons.filled.Groups
+import com.jelenxp.cryptochat.viewmodel.GroupsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -86,15 +91,18 @@ import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
 private var previewCache: Map<String, Pair<ChatMessage?, Int>> = emptyMap()
 
 @Composable
-fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
+fun MainScreen(navController: NavController, viewModel: ContactsViewModel, groupsViewModel: GroupsViewModel) {
     val context = LocalContext.current
     val contacts by viewModel.contacts.collectAsState()
+    val groups by groupsViewModel.groups.collectAsState()
     val spacing = LocalUiSpacing.current
     var query by rememberSaveable { mutableStateOf("") }
     // Dlouhý stisk kontaktu → rychlé akce; případné potvrzení smazání.
     var quickActions by remember { mutableStateOf<Contact?>(null) }
     var deleteTarget by remember { mutableStateOf<Contact?>(null) }
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    // „+" nabízí Nový kontakt / Nová skupina (mixed seznam níž).
+    var showAddChooser by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { viewModel.refresh(); groupsViewModel.refresh() }
 
     // Spojení se serverem chatu se testuje samo - po startu appky i po návratu
     // do popředí (např. ze změny serveru). Výsledek ukazuje indikátor u ikony
@@ -163,16 +171,41 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
         }
     }
 
+    // Náhledy skupin (poslední zpráva) — pro řazení a podtitul v seznamu. Skupiny
+    // zatím nemají čítač nepřečtených, takže jen poslední zpráva. Čte se mimo hlavní
+    // vlákno, obnova jednou za 5 s na popředí (jako u kontaktů).
+    var groupPreviews by remember { mutableStateOf<Map<String, GroupChatMessage?>>(emptyMap()) }
+    LaunchedEffect(groups) {
+        val groupRepo = GroupChatRepository(context)
+        fun snapshot() = groups.associate { g -> g.groupId to groupRepo.getMessages(g.groupId).lastOrNull() }
+        groupPreviews = withContext(Dispatchers.IO) { snapshot() }
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(5000)
+                val fresh = withContext(Dispatchers.IO) { snapshot() }
+                if (fresh != groupPreviews) groupPreviews = fresh
+            }
+        }
+    }
+
     // Řazení podle poslední aktivity (nejnověji psané nahoře) + live filtrování
-    // podle jména. Obojí je v MainScreenLogic, ať jde otestovat. Klíč řazení bere
-    // čas poslední zprávy z náhledů (počítají se mimo hlavní vlákno); dokud se
-    // nenačtou, drží se pořadí ze storage a přeskládá se, jakmile náhledy dojdou.
+    // podle jména. Kontakty i skupiny se MÍCHAJÍ do jednoho seznamu seřazeného podle
+    // času poslední zprávy (jako běžný messenger). Filtrování kontaktů zůstává na
+    // testovaném MainScreenLogic; skupiny se filtrují prostým match jména.
     val filtered = remember(contacts, previews, query) {
         val lastActivity = previews.mapValues { it.value.first?.timestamp ?: Long.MIN_VALUE }
         MainScreenLogic.filterContacts(
             MainScreenLogic.sortByActivity(contacts, lastActivity),
             query
         )
+    }
+    val homeItems = remember(filtered, groups, groupPreviews, drafts, previews, query) {
+        val q = query.trim()
+        val contactItems = filtered.map { HomeItem.C(it, previews[it.id], drafts[it.id]) }
+        val groupItems = groups
+            .filter { q.isBlank() || it.name.contains(q, ignoreCase = true) }
+            .map { HomeItem.G(it, groupPreviews[it.groupId]) }
+        (contactItems + groupItems).sortedByDescending { it.activity }
     }
 
     val errorDeleteFailed = stringResource(R.string.error_delete_failed)
@@ -211,12 +244,12 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
             }
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { navController.navigate("add_user") }) {
+            FloatingActionButton(onClick = { showAddChooser = true }) {
                 Icon(Icons.Default.Add, contentDescription = stringResource(R.string.content_desc_add_user))
             }
         }
     ) { padding ->
-        if (contacts.isEmpty()) {
+        if (contacts.isEmpty() && groups.isEmpty()) {
             EmptyState(modifier = Modifier.fillMaxSize().padding(padding))
         } else {
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -241,7 +274,7 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                         .padding(horizontal = spacing.screenPad, vertical = 8.dp)
                 )
 
-                if (filtered.isEmpty()) {
+                if (homeItems.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize().padding(32.dp),
                         contentAlignment = Alignment.Center
@@ -259,20 +292,28 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
                         contentPadding = PaddingValues(spacing.screenPad),
                         verticalArrangement = Arrangement.spacedBy(spacing.itemGap)
                     ) {
-                        items(filtered, key = { it.id }) { contact ->
-                            val preview = previews[contact.id]
-                            ContactCard(
-                                contact = contact,
-                                lastMessage = preview?.first,
-                                unread = preview?.second ?: 0,
-                                innerPadding = spacing.cardInner,
-                                // Plynulé přeskupení při hledání / přidání / smazání.
-                                modifier = Modifier.animateItemPlacement(),
-                                // Klik otevře konverzaci; detail/klíč je pod dlouhým stiskem.
-                                onClick = { navController.navigate("chat/${contact.id}") },
-                                onLongClick = { quickActions = contact },
-                                draft = drafts[contact.id]
-                            )
+                        items(homeItems, key = { it.key }) { item ->
+                            when (item) {
+                                is HomeItem.C -> ContactCard(
+                                    contact = item.contact,
+                                    lastMessage = item.preview?.first,
+                                    unread = item.preview?.second ?: 0,
+                                    innerPadding = spacing.cardInner,
+                                    // Plynulé přeskupení při hledání / přidání / smazání.
+                                    modifier = Modifier.animateItemPlacement(),
+                                    // Klik otevře konverzaci; detail/klíč je pod dlouhým stiskem.
+                                    onClick = { navController.navigate("chat/${item.contact.id}") },
+                                    onLongClick = { quickActions = item.contact },
+                                    draft = item.draft
+                                )
+                                is HomeItem.G -> GroupCard(
+                                    group = item.group,
+                                    lastMessage = item.last,
+                                    innerPadding = spacing.cardInner,
+                                    modifier = Modifier.animateItemPlacement(),
+                                    onClick = { navController.navigate("group_chat/${item.group.groupId}") }
+                                )
+                            }
                         }
                     }
                 }
@@ -318,6 +359,111 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel) {
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.btn_cancel)) } }
         )
+    }
+
+    // „+" chooser: Nový kontakt / Nová skupina.
+    if (showAddChooser) {
+        AlertDialog(
+            onDismissRequest = { showAddChooser = false },
+            text = {
+                Column {
+                    QuickRow(Icons.Default.PersonAddAlt, stringResource(R.string.new_contact)) {
+                        showAddChooser = false
+                        navController.navigate("add_user")
+                    }
+                    QuickRow(Icons.Default.Groups, stringResource(R.string.new_group)) {
+                        showAddChooser = false
+                        navController.navigate("new_group")
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showAddChooser = false }) { Text(stringResource(R.string.btn_cancel)) } }
+        )
+    }
+}
+
+/** Položka hlavního seznamu: 1:1 kontakt NEBO skupina, sjednocené řazení podle aktivity. */
+private sealed interface HomeItem {
+    val key: String
+    val activity: Long
+
+    data class C(val contact: Contact, val preview: Pair<ChatMessage?, Int>?, val draft: String?) : HomeItem {
+        override val key get() = "c_${contact.id}"
+        override val activity get() = preview?.first?.timestamp ?: Long.MIN_VALUE
+    }
+
+    data class G(val group: Group, val last: GroupChatMessage?) : HomeItem {
+        override val key get() = "g_${group.groupId}"
+        override val activity get() = last?.timestamp ?: Long.MIN_VALUE
+    }
+}
+
+/**
+ * Karta skupiny v hlavním seznamu — vizuálně shodná s [ContactCard] (avatar, název,
+ * náhled poslední zprávy, čas). Skupiny zatím nemají čítač nepřečtených, takže bez
+ * odznaku; místo zámku (klíč je vždy) ukáže u prázdné skupiny ikonu skupiny.
+ */
+@Composable
+private fun GroupCard(
+    group: Group,
+    lastMessage: GroupChatMessage?,
+    innerPadding: androidx.compose.ui.unit.Dp,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    val senderNames = remember(group.rosterBytesBase64) { group.members().associate { it.memberIdHex to it.displayName } }
+    AppCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(innerPadding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            ContactAvatar(name = group.name, avatarPath = group.avatarPath, size = 44.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = group.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val subtitle = if (lastMessage == null) {
+                    stringResource(R.string.chat_preview_none)
+                } else {
+                    val body = if (lastMessage.kind == GroupChatMessage.Kind.IMAGE)
+                        stringResource(R.string.chat_preview_photo) else lastMessage.text
+                    if (lastMessage.outgoing) {
+                        stringResource(R.string.chat_last_you, body)
+                    } else {
+                        val who = lastMessage.senderMemberIdHex?.let { senderNames[it] }
+                        if (who != null) "$who: $body" else body
+                    }
+                }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (lastMessage != null) {
+                    Text(
+                        text = formatPreviewTime(lastMessage.timestamp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Icon(Icons.Default.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     }
 }
 

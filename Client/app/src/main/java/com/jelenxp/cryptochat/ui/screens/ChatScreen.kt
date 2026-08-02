@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -114,6 +116,8 @@ import com.jelenxp.cryptochat.chat.ActiveChat
 import com.jelenxp.cryptochat.chat.ChatNotifications
 import com.jelenxp.cryptochat.chat.ChatMediaStore
 import com.jelenxp.cryptochat.chat.ChatMessage
+import com.jelenxp.cryptochat.chat.GroupInvite
+import com.jelenxp.cryptochat.chat.GroupInviteStore
 import com.jelenxp.cryptochat.chat.ChatRepository
 import com.jelenxp.cryptochat.chat.DraftStore
 import com.jelenxp.cryptochat.crypto.CryptoManager
@@ -136,6 +140,7 @@ import com.jelenxp.cryptochat.ui.emoji.EmojiPickerSheet
 import com.jelenxp.cryptochat.ui.theme.LocalDesign
 import com.jelenxp.cryptochat.ui.util.AvatarStore
 import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
+import com.jelenxp.cryptochat.viewmodel.GroupsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.delay
@@ -152,7 +157,7 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(id: String, navController: NavController, viewModel: ContactsViewModel) {
+fun ChatScreen(id: String, navController: NavController, viewModel: ContactsViewModel, groupsViewModel: GroupsViewModel) {
     val context = LocalContext.current
     val repo = remember { ChatRepository(context) }
     val settings = remember { SettingsRepository(context) }
@@ -172,6 +177,18 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     LaunchedEffect(id) {
         unreadAtOpen = withContext(Dispatchers.IO) { repo.getUnreadCount(id) }
         messages = withContext(Dispatchers.IO) { repo.getMessages(id) }
+    }
+    // Čekající pozvánka do skupiny od TOHOTO kontaktu → karta v chatu (à la Discord).
+    // Přichází jako řídicí 1:1 zpráva (viz GroupCtrlReceiver → GroupInviteStore), takže
+    // se periodicky přenačítá, dokud je chat otevřený (levné čtení z prefs).
+    var groupInvite by remember(id) { mutableStateOf<GroupInvite?>(null) }
+    var showGroupNamePrompt by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id) {
+        while (true) {
+            val inv = withContext(Dispatchers.IO) { GroupInviteStore.get(context, id) }
+            if (inv != groupInvite) groupInvite = inv
+            kotlinx.coroutines.delay(2500)
+        }
     }
     // Seed vstupního pole rovnou z paměťové cache draftů (BEZ Keystore, synchronně),
     // ať pole při otevření konverzace s víceřádkovým draftem začne HNED ve správné
@@ -969,6 +986,50 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                     acknowledged = trustAcknowledged,
                     onReverify = { navController.navigate("verify/$id") },
                     onAcknowledge = { trustAcknowledged = true }
+                )
+            }
+
+            // Pozvánka do skupiny od tohoto kontaktu (à la Discord). Přijmout → pošle
+            // adminovi PUBKEYS (potřebuje moje jméno; když chybí, zeptá se na něj).
+            groupInvite?.let { invite ->
+                GroupInviteCard(invite = invite, onAccept = {
+                    val myName = settings.getMyDisplayName()
+                    if (myName.isBlank()) {
+                        showGroupNamePrompt = true
+                    } else contact?.let { admin ->
+                        groupsViewModel.acceptInvite(admin, invite, myName)
+                        groupInvite = null
+                    }
+                })
+            }
+            if (showGroupNamePrompt) {
+                val invite = groupInvite
+                var nameDraft by remember { mutableStateOf(settings.getMyDisplayName()) }
+                AlertDialog(
+                    onDismissRequest = { showGroupNamePrompt = false },
+                    title = { Text(stringResource(R.string.group_your_name_prompt)) },
+                    text = {
+                        OutlinedTextField(
+                            value = nameDraft,
+                            onValueChange = { nameDraft = it },
+                            label = { Text(stringResource(R.string.group_your_name_label)) },
+                            singleLine = true
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            enabled = nameDraft.isNotBlank() && invite != null && contact != null,
+                            onClick = {
+                                val admin = contact
+                                if (admin != null && invite != null) {
+                                    groupsViewModel.acceptInvite(admin, invite, nameDraft)
+                                    groupInvite = null
+                                }
+                                showGroupNamePrompt = false
+                            }
+                        ) { Text(stringResource(R.string.group_invite_accept)) }
+                    },
+                    dismissButton = { TextButton(onClick = { showGroupNamePrompt = false }) { Text(stringResource(android.R.string.cancel)) } }
                 )
             }
 
@@ -2244,5 +2305,41 @@ private fun StatusGlyph(status: ChatMessage.Status, tint: Color) {
         // Přijaté zprávy (i rozpracovaný příjem souboru) stavovou ikonu nemají -
         // ta je jen u odchozích.
         ChatMessage.Status.RECEIVED, ChatMessage.Status.RECEIVING -> {}
+    }
+}
+
+/**
+ * Karta pozvánky do skupiny v 1:1 chatu (styl Discord pozvánky): ikona skupiny,
+ * název, počet členů a tlačítko Přijmout. Přijetí pošle adminovi PUBKEYS.
+ */
+@Composable
+private fun GroupInviteCard(invite: com.jelenxp.cryptochat.chat.GroupInvite, onAccept: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(
+                    stringResource(R.string.group_invite_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(invite.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    stringResource(R.string.group_member_count, invite.memberCount),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Button(onClick = onAccept) { Text(stringResource(R.string.group_invite_accept)) }
+        }
     }
 }

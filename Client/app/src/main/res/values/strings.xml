@@ -581,4 +581,32 @@
     <string name="bug_report_error_network">The server could not be reached. Try again later.</string>
     <string name="bug_report_error_server">The server rejected the report. Try again later.</string>
     <string name="bug_report_error_too_large">The report is too large. Shorten the description or untick some attachments.</string>
+
+    <!-- Group chats -->
+    <string name="new_group">New group</string>
+    <string name="new_contact">New contact</string>
+    <string name="group_member_count">%1$d members</string>
+    <string name="create_group">Create group</string>
+    <string name="group_name_label">Group name</string>
+    <string name="group_your_name_label">Your name</string>
+    <string name="group_your_name_help">Members of the group will see this name.</string>
+    <string name="group_add_members">Add members</string>
+    <string name="group_no_capable_contacts">None of your contacts support groups yet. They need to update the app.</string>
+    <string name="group_create_hint">You are the admin — only you can add or remove members.</string>
+    <string name="group_members">Members</string>
+    <string name="group_admin_label">Admin</string>
+    <string name="group_you_label">You</string>
+    <string name="group_add_member">Add member</string>
+    <string name="group_remove_member">Remove</string>
+    <string name="group_remove_member_confirm">Remove %1$s from the group?</string>
+    <string name="group_leave">Leave group</string>
+    <string name="group_leave_confirm">Leave this group? Your local copy and history will be deleted.</string>
+    <string name="group_set_photo">Set photo</string>
+    <string name="group_remove_photo">Remove photo</string>
+    <string name="group_full">The group is full (max %1$d).</string>
+    <string name="group_invite_title">Group invitation</string>
+    <string name="group_invite_accept">Accept</string>
+    <string name="group_invite_joining">Joining group…</string>
+    <string name="group_your_name_prompt">Choose your name in the group</string>
+    <string name="group_empty_messages">No messages yet.</string>
 </resources>

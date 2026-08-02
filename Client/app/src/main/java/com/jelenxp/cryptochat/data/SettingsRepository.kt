@@ -35,6 +35,14 @@ class SettingsRepository(context: Context) {
     fun getAccent(): AccentColor = readEnum(KEY_ACCENT, AccentColor.TEAL)
     fun setAccent(v: AccentColor) = writeEnum(KEY_ACCENT, v)
 
+    /**
+     * Moje jméno ve SKUPINÁCH — jde do podepsaného rosteru, takže ho VIDÍ všichni
+     * členové (na rozdíl od 1:1, kde si každý pojmenovává protějšek sám). Prázdné =
+     * ještě nenastaveno; UI si o něj řekne při první skupinové akci.
+     */
+    fun getMyDisplayName(): String = prefs.getString(KEY_MY_NAME, "").orEmpty()
+    fun setMyDisplayName(name: String) = prefs.edit().putString(KEY_MY_NAME, name.trim()).apply()
+
     fun getDensity(): UiDensity = readEnum(KEY_DENSITY, UiDensity.COMPACT)
     fun setDensity(v: UiDensity) = writeEnum(KEY_DENSITY, v)
 
@@ -219,6 +227,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_LOCK_DELAY = "app_lock_delay"
         private const val KEY_THEME = "design_theme"
         private const val KEY_ACCENT = "design_accent"
+        private const val KEY_MY_NAME = "my_display_name"
         private const val KEY_DENSITY = "design_density"
         private const val KEY_CORNERS = "design_corners"
         private const val KEY_ANIM_STYLE = "design_anim_style"
