@@ -160,7 +160,7 @@ object WireExt {
     const val CAP_GROUPS = 4
 
     /** Schopnosti, které TAHLE verze umí a inzeruje protějšku. */
-    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS, CAP_EDIT_DELETE)
+    val LOCAL_CAPABILITIES: Set<Int> = setOf(CAP_REACTIONS, CAP_REKEY, CAP_RECEIPTS, CAP_EDIT_DELETE, CAP_GROUPS)
 
     /**
      * Zabalí množinu bitů do bitmapy (LSB-first): bit `i` leží v bajtu `i/8`,
