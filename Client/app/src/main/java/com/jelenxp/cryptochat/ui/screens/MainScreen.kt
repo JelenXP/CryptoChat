@@ -90,6 +90,14 @@ import com.jelenxp.cryptochat.viewmodel.ContactsViewModel
  */
 private var previewCache: Map<String, Pair<ChatMessage?, Int>> = emptyMap()
 
+/**
+ * Totéž pro náhledy SKUPIN (poslední zpráva). Bez téhle cache začínají `groupPreviews`
+ * po každém návratu na seznam prázdné → skupina má aktivitu `MIN_VALUE`, spadne dolů a
+ * po dolnačtení „naskočí" na správné místo s animací. Cache přežije navigaci, takže se
+ * pořadí nemění a animace přesunu se přehraje jen při SKUTEČNÉ změně.
+ */
+private var groupPreviewCache: Map<String, GroupChatMessage?> = emptyMap()
+
 @Composable
 fun MainScreen(navController: NavController, viewModel: ContactsViewModel, groupsViewModel: GroupsViewModel) {
     val context = LocalContext.current
@@ -174,16 +182,16 @@ fun MainScreen(navController: NavController, viewModel: ContactsViewModel, group
     // Náhledy skupin (poslední zpráva) — pro řazení a podtitul v seznamu. Skupiny
     // zatím nemají čítač nepřečtených, takže jen poslední zpráva. Čte se mimo hlavní
     // vlákno, obnova jednou za 5 s na popředí (jako u kontaktů).
-    var groupPreviews by remember { mutableStateOf<Map<String, GroupChatMessage?>>(emptyMap()) }
+    var groupPreviews by remember { mutableStateOf(groupPreviewCache) }
     LaunchedEffect(groups) {
         val groupRepo = GroupChatRepository(context)
         fun snapshot() = groups.associate { g -> g.groupId to groupRepo.getMessages(g.groupId).lastOrNull() }
-        groupPreviews = withContext(Dispatchers.IO) { snapshot() }
+        withContext(Dispatchers.IO) { snapshot() }.also { groupPreviews = it; groupPreviewCache = it }
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(5000)
                 val fresh = withContext(Dispatchers.IO) { snapshot() }
-                if (fresh != groupPreviews) groupPreviews = fresh
+                if (fresh != groupPreviews) { groupPreviews = fresh; groupPreviewCache = fresh }
             }
         }
     }

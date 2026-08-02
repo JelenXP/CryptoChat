@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
@@ -77,8 +78,11 @@ import com.jelenxp.cryptochat.chat.GroupMemberNames
 import com.jelenxp.cryptochat.chat.GroupStore
 import com.jelenxp.cryptochat.chat.GroupSync
 import com.jelenxp.cryptochat.data.SettingsRepository
+import com.jelenxp.cryptochat.ui.components.AboveAnchorPosition
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.IncognitoTextField
+import com.jelenxp.cryptochat.ui.components.ReactionPicker
+import com.jelenxp.cryptochat.ui.emoji.EmojiPickerSheet
 import com.jelenxp.cryptochat.ui.theme.LocalDesign
 import com.jelenxp.cryptochat.viewmodel.GroupsViewModel
 import kotlinx.coroutines.Dispatchers
@@ -116,10 +120,12 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
 
     var messages by remember { mutableStateOf(emptyList<GroupChatMessage>()) }
     var names by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var loaded by remember { mutableStateOf(false) } // proti bliku „no messages yet" před 1. načtením
     var input by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var attachMenu by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
+    var emojiPickerFor by remember { mutableStateOf<String?>(null) } // msgId, pro který je otevřený plný emoji picker
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -139,6 +145,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                     }
                     messages = snapshot.first
                     names = snapshot.second
+                    loaded = true
                     delay(1500)
                 }
             } finally {
@@ -167,12 +174,16 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         }
     }
 
-    // Reakce (emoji, prázdné = zrušení) — aplikuje se hned lokálně a rozešle členům.
+    // Reakce (emoji, prázdné = zrušení). OPTIMISTICKY hned v UI (než dojde na server),
+    // reload smyčka pak stav dorovná; síť běží na pozadí.
     fun react(targetMsgId: String, emoji: String) {
+        messages = messages.map { m ->
+            if (m.msgIdHex != targetMsgId) m
+            else m.copy(reactions = if (emoji.isEmpty()) m.reactions - group.myMemberId else m.reactions + (group.myMemberId to emoji))
+        }
         scope.launch {
             val url = SettingsRepository(ctx).getRelayUrl()
             withContext(Dispatchers.IO) { GroupSync.sendReaction(ctx, group, targetMsgId, emoji, url, System.currentTimeMillis()) }
-            reload()
         }
     }
 
@@ -236,7 +247,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                if (rows.isEmpty()) {
+                if (loaded && rows.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                         Text(
                             stringResource(R.string.group_empty_messages),
@@ -264,7 +275,8 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                                             message = m,
                                             senderName = m.senderMemberIdHex?.let { names[it] },
                                             myMemberId = group.myMemberId,
-                                            onReact = { emoji -> react(m.msgIdHex, emoji) }
+                                            onReact = { emoji -> react(m.msgIdHex, emoji) },
+                                            onMore = { emojiPickerFor = m.msgIdHex }
                                         )
                                     }
                                 }
@@ -325,6 +337,14 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
             dismissButton = { TextButton(onClick = { showLeaveDialog = false }) { Text(stringResource(android.R.string.cancel)) } }
         )
     }
+
+    // Plný emoji picker pro reakci (otevřený z „+" v paletě) — stejná komponenta jako 1:1.
+    emojiPickerFor?.let { targetId ->
+        EmojiPickerSheet(
+            onPick = { emoji -> react(targetId, emoji); emojiPickerFor = null },
+            onDismiss = { emojiPickerFor = null }
+        )
+    }
 }
 
 /**
@@ -335,7 +355,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, myMemberId: String, onReact: (String) -> Unit) {
+private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, myMemberId: String, onReact: (String) -> Unit, onMore: () -> Unit) {
     val outgoing = message.outgoing
     val accent = LocalDesign.current.accent
     val bubbleColor = if (outgoing) accent.bubble else MaterialTheme.colorScheme.surfaceVariant
@@ -401,24 +421,17 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, m
                     }
                 }
                 if (showPicker) {
-                    Popup(alignment = Alignment.TopCenter, onDismissRequest = { showPicker = false }) {
-                        Surface(shape = RoundedCornerShape(24.dp), tonalElevation = 3.dp, shadowElevation = 4.dp) {
-                            Row(modifier = Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                GROUP_REACTIONS.forEach { emoji ->
-                                    Text(
-                                        emoji,
-                                        fontSize = 22.sp,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .clickable {
-                                                onReact(if (myReaction == emoji) "" else emoji)
-                                                showPicker = false
-                                            }
-                                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-                        }
+                    Popup(
+                        popupPositionProvider = remember(outgoing) { AboveAnchorPosition(alignEnd = outgoing) },
+                        onDismissRequest = { showPicker = false },
+                        properties = PopupProperties(focusable = true)
+                    ) {
+                        ReactionPicker(
+                            emojis = GROUP_REACTIONS,
+                            mine = myReaction,
+                            onPick = { showPicker = false; onReact(if (myReaction == it) "" else it) },
+                            onMore = { showPicker = false; onMore() }
+                        )
                     }
                 }
             }
