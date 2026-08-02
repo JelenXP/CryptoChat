@@ -87,6 +87,23 @@ class GroupChatRepository(
             return if (saveLocked(groupId, next)) MutationResult.UPDATED else MutationResult.FAILED
         }
 
+    /**
+     * Reakce [reactorMemberIdHex] emoji [emoji] na zprávu [targetMsgIdHex] (prázdné
+     * emoji = ZRUŠENÍ). Míří na JAKOUKOLI zprávu podle msgId (moji i cizí). Idempotentní
+     * (stejný stav → UPDATED bez zápisu). NOT_FOUND když cíl v historii není.
+     */
+    fun applyReaction(groupId: String, targetMsgIdHex: String, reactorMemberIdHex: String, emoji: String): MutationResult =
+        synchronized(lock) {
+            val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
+            val idx = current.indexOfFirst { it.msgIdHex == targetMsgIdHex }
+            if (idx < 0) return MutationResult.NOT_FOUND
+            val cur = current[idx]
+            val next = if (emoji.isEmpty()) cur.reactions - reactorMemberIdHex else cur.reactions + (reactorMemberIdHex to emoji)
+            if (next == cur.reactions) return MutationResult.UPDATED // idempotent
+            val list = current.toMutableList().also { it[idx] = cur.copy(reactions = next) }
+            return if (saveLocked(groupId, list)) MutationResult.UPDATED else MutationResult.FAILED
+        }
+
     /** Smaže celou historii skupiny (po opuštění/smazání skupiny). Best-effort. */
     fun clear(groupId: String) = synchronized(lock) {
         try {
@@ -153,6 +170,9 @@ class GroupChatRepository(
         put("kind", m.kind.name)
         put("media", m.mediaPath)
         put("pending", JSONArray(m.pendingRecipients.toList()))
+        if (m.reactions.isNotEmpty()) {
+            put("react", JSONObject().also { r -> m.reactions.forEach { (k, v) -> r.put(k, v) } })
+        }
     }
 
     private fun fromJson(o: JSONObject): GroupChatMessage? {
@@ -163,6 +183,8 @@ class GroupChatRepository(
             .getOrDefault(GroupChatMessage.Kind.TEXT)
         val pending = HashSet<String>()
         o.optJSONArray("pending")?.let { for (i in 0 until it.length()) pending.add(it.optString(i)) }
+        val reactions = HashMap<String, String>()
+        o.optJSONObject("react")?.let { r -> val it2 = r.keys(); while (it2.hasNext()) { val k = it2.next(); reactions[k] = r.optString(k) } }
         return GroupChatMessage(
             msgIdHex = mid,
             senderMemberIdHex = if (o.isNull("from")) null else o.optString("from"),
@@ -172,6 +194,7 @@ class GroupChatRepository(
             kind = kind,
             mediaPath = if (o.isNull("media")) null else o.optString("media"),
             pendingRecipients = pending,
+            reactions = reactions,
         )
     }
 

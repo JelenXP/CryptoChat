@@ -5,9 +5,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +61,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
@@ -86,6 +90,10 @@ import java.util.Date
 import java.util.Locale
 
 private val GROUP_TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+/** Paleta rychlých reakcí (dlouhý stisk bubliny) + výchozí pro dvojklik. */
+private val GROUP_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+private const val GROUP_DEFAULT_REACTION = "👍"
 
 /**
  * Skupinová konverzace — záměrně STEJNÁ jako 1:1 [ChatScreen]: stejné bubliny
@@ -155,6 +163,15 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         scope.launch {
             val url = SettingsRepository(ctx).getRelayUrl()
             withContext(Dispatchers.IO) { GroupSync.sendText(ctx, group, text, url, System.currentTimeMillis()) }
+            reload()
+        }
+    }
+
+    // Reakce (emoji, prázdné = zrušení) — aplikuje se hned lokálně a rozešle členům.
+    fun react(targetMsgId: String, emoji: String) {
+        scope.launch {
+            val url = SettingsRepository(ctx).getRelayUrl()
+            withContext(Dispatchers.IO) { GroupSync.sendReaction(ctx, group, targetMsgId, emoji, url, System.currentTimeMillis()) }
             reload()
         }
     }
@@ -243,7 +260,12 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                                     if (m.isSystem) {
                                         GroupSystemRow(m, myMemberId = group.myMemberId)
                                     } else {
-                                        GroupMessageBubble(m, senderName = m.senderMemberIdHex?.let { names[it] })
+                                        GroupMessageBubble(
+                                            message = m,
+                                            senderName = m.senderMemberIdHex?.let { names[it] },
+                                            myMemberId = group.myMemberId,
+                                            onReact = { emoji -> react(m.msgIdHex, emoji) }
+                                        )
                                     }
                                 }
                             }
@@ -311,8 +333,9 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
  * `surfaceVariant`/`onSurfaceVariant`, čas + textové fajfky ✓/✓✓ v `textColor`@70 %.
  * Navíc jméno odesílatele nad příchozí bublinou ([senderName] = null u odchozích).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?) {
+private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, myMemberId: String, onReact: (String) -> Unit) {
     val outgoing = message.outgoing
     val accent = LocalDesign.current.accent
     val bubbleColor = if (outgoing) accent.bubble else MaterialTheme.colorScheme.surfaceVariant
@@ -322,6 +345,8 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?) {
         bottomStart = if (outgoing) 16.dp else 4.dp,
         bottomEnd = if (outgoing) 4.dp else 16.dp
     )
+    val myReaction = message.reactions[myMemberId]
+    var showPicker by remember { mutableStateOf(false) }
 
     Column {
         if (!outgoing && senderName != null) {
@@ -336,36 +361,90 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
         ) {
-            Column(
-                modifier = Modifier
-                    .widthIn(max = 300.dp)
-                    .clip(shape)
-                    .background(bubbleColor)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                if (message.kind == GroupChatMessage.Kind.IMAGE) {
-                    GroupImage(message.mediaPath)
-                } else {
-                    Text(message.text, color = textColor, style = MaterialTheme.typography.bodyLarge)
-                }
-                Row(
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        GROUP_TIME_FORMAT.format(Date(message.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.7f)
-                    )
-                    if (outgoing) {
-                        Text(
-                            statusGlyph(message.status),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (message.status == GroupChatMessage.Status.FAILED)
-                                MaterialTheme.colorScheme.error else textColor.copy(alpha = 0.7f)
+            Box {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 300.dp)
+                        .clip(shape)
+                        .background(bubbleColor)
+                        // Dvojklik = přepnout 👍, dlouhý stisk = výběr emoji (jako 1:1).
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { showPicker = true },
+                            onDoubleClick = { onReact(if (myReaction == GROUP_DEFAULT_REACTION) "" else GROUP_DEFAULT_REACTION) }
                         )
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    if (message.kind == GroupChatMessage.Kind.IMAGE) {
+                        GroupImage(message.mediaPath)
+                    } else {
+                        Text(message.text, color = textColor, style = MaterialTheme.typography.bodyLarge)
                     }
+                    Row(
+                        modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            GROUP_TIME_FORMAT.format(Date(message.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = textColor.copy(alpha = 0.7f)
+                        )
+                        if (outgoing) {
+                            Text(
+                                statusGlyph(message.status),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (message.status == GroupChatMessage.Status.FAILED)
+                                    MaterialTheme.colorScheme.error else textColor.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
+                if (showPicker) {
+                    Popup(alignment = Alignment.TopCenter, onDismissRequest = { showPicker = false }) {
+                        Surface(shape = RoundedCornerShape(24.dp), tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                            Row(modifier = Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                GROUP_REACTIONS.forEach { emoji ->
+                                    Text(
+                                        emoji,
+                                        fontSize = 22.sp,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .clickable {
+                                                onReact(if (myReaction == emoji) "" else emoji)
+                                                showPicker = false
+                                            }
+                                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (message.reactions.isNotEmpty()) {
+            GroupReactionChips(message.reactions, outgoing)
+        }
+    }
+}
+
+/** Čipy reakcí pod bublinou (emoji × počet), zarovnané na stranu bubliny. */
+@Composable
+private fun GroupReactionChips(reactions: Map<String, String>, outgoing: Boolean) {
+    val counts = reactions.values.groupingBy { it }.eachCount()
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            counts.forEach { (emoji, count) ->
+                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 1.dp) {
+                    Text(
+                        if (count > 1) "$emoji $count" else emoji,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
                 }
             }
         }

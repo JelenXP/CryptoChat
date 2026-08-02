@@ -20,6 +20,8 @@ data class GroupChatMessage(
      * (podepsanou doručenkou). Prázdné = doručeno všem → [Status.DELIVERED].
      */
     val pendingRecipients: Set<String> = emptySet(),
+    /** Reakce na tuhle zprávu: `reactorMemberIdHex → emoji`. Zrušená = klíč chybí. */
+    val reactions: Map<String, String> = emptyMap(),
 ) {
     /** Odchozí = poslal jsem já. Systémové zprávy odchozí NEJSOU (nemají stav). */
     val outgoing: Boolean get() = senderMemberIdHex == null && !isSystem

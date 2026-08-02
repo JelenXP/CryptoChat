@@ -60,6 +60,13 @@ object GroupEnvelope {
     /** Doručenka (delivery receipt): `data` = 16 B potvrzeného `msgId`. Řídicí, nejde do historie. */
     const val KIND_RECEIPT: Byte = 2
 
+    /**
+     * Reakce (emoji) na zprávu: `data` = `[16B cílový msgId][emoji UTF-8]`. Reagující =
+     * odesílatel (z podepsané hlavičky). Prázdné emoji = ZRUŠENÍ reakce. Řídicí — mění
+     * cílovou zprávu, nejde do historie jako nový řádek.
+     */
+    const val KIND_REACTION: Byte = 3
+
     private const val LABEL_MSG = "CryptoChat/group/msg/v1"
 
     /** Rozbalený obsah skupinové zprávy. */
@@ -70,6 +77,9 @@ object GroupEnvelope {
 
         /** Doručenka: potvrzuje přijetí zprávy [ackedMsgIdHex]. Nejde do historie. */
         data class Receipt(override val timestamp: Long, val ackedMsgIdHex: String) : Opened
+
+        /** Reakce na [targetMsgIdHex]; [emoji] prázdné = zrušení. Reagující = odesílatel. */
+        data class Reaction(override val timestamp: Long, val targetMsgIdHex: String, val emoji: String) : Opened
     }
 
     /**
@@ -144,7 +154,9 @@ object GroupEnvelope {
         )
 
         val preLen = INNER_HEADER + data.size + SIG_LEN_FIELD + sig.size
-        val bucket = if (kind == KIND_TEXT) ChatEnvelope.bucketFor(preLen) else ChatEnvelope.mediaBucketFor(preLen)
+        // Jen fotka a doručenka jdou do MEDIA košů; textové a řídicí kindy (text, reakce)
+        // do menších textových košů. Chování TEXT/IMAGE/RECEIPT se nemění (golden drží).
+        val bucket = if (kind == KIND_IMAGE || kind == KIND_RECEIPT) ChatEnvelope.mediaBucketFor(preLen) else ChatEnvelope.bucketFor(preLen)
         val plaintext = ByteArray(bucket)
         plaintext[0] = kind
         System.arraycopy(msgId, 0, plaintext, 1, MSG_ID_BYTES)
@@ -238,6 +250,12 @@ object GroupEnvelope {
             KIND_RECEIPT -> {
                 if (data.size != MSG_ID_BYTES) return Result.Unreadable
                 Opened.Receipt(timestamp, GroupCrypto.bytesToHex(data))
+            }
+            KIND_REACTION -> {
+                if (data.size < MSG_ID_BYTES) return Result.Unreadable
+                val target = GroupCrypto.bytesToHex(data.copyOfRange(0, MSG_ID_BYTES))
+                val emoji = String(data, MSG_ID_BYTES, data.size - MSG_ID_BYTES, Charsets.UTF_8)
+                Opened.Reaction(timestamp, target, emoji)
             }
             else -> return Result.Unreadable // neznámý kind → karanténa
         }

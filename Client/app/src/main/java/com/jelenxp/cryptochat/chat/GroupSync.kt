@@ -137,6 +137,29 @@ object GroupSync {
         return SendResult(msgId, sent, failed)
     }
 
+    /**
+     * Reakce (emoji, prázdné = zrušení) na [targetMsgIdHex]: aplikuje se HNED lokálně
+     * (reagující = já) a rozešle všem členům jako [GroupEnvelope.KIND_REACTION]. Reakce
+     * má vlastní čerstvý `msgId` (kvůli replay dedupu blobu); cíl je uvnitř dat. Best-effort.
+     */
+    fun sendReaction(context: Context, group: Group, targetMsgIdHex: String, emoji: String, baseUrl: String, nowMs: Long): Int {
+        repo(context).applyReaction(group.groupId, targetMsgIdHex, group.myMemberId, emoji)
+        val recipients = group.otherMembers().map { it.memberIdHex }
+        if (recipients.isEmpty()) return 0
+        val data = GroupCrypto.hexToBytes(targetMsgIdHex) + emoji.toByteArray(Charsets.UTF_8)
+        val epoch = group.groupEpoch
+        val msgId = GroupCrypto.randomMsgId()
+        val msgNo = GroupSendCounter.next(context, group.groupId, epoch)
+        val msgKey = GroupCrypto.messageKeyAt(GroupCrypto.senderRootKey(group.gsBase64, group.groupId, group.myMemberId, epoch), msgNo)
+        val day = dayEpoch(nowMs)
+        var sent = 0
+        for (rcpt in recipients) {
+            val blob = GroupEnvelope.seal(GroupEnvelope.KIND_REACTION, data, nowMs, msgNo, msgId, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, rcpt)
+            if (transport.put(baseUrl, GroupCrypto.inboxId(group.gsBase64, group.groupId, rcpt, day), blob)) sent++
+        }
+        return sent
+    }
+
     /** Přepošle nedoručenou zprávu příjemcům, kteří ji ještě nepotvrdili (pending). */
     fun resend(context: Context, group: Group, msgIdHex: String, baseUrl: String, nowMs: Long): Int {
         val msg = repo(context).getMessages(group.groupId).firstOrNull { it.outgoing && it.msgIdHex == msgIdHex } ?: return 0
@@ -278,6 +301,15 @@ object GroupSync {
             is GroupEnvelope.Opened.Receipt -> {
                 // Doručenka od ok.senderMemberIdHex potvrzuje MOJI zprávu c.ackedMsgIdHex.
                 if (r.markDeliveredBy(gid, c.ackedMsgIdHex, ok.senderMemberIdHex) == GroupChatRepository.MutationResult.FAILED) {
+                    return Outcome.FAILED_WRITE
+                }
+                ReplayGuard.remember(context, gid, blob)
+                return Outcome.HANDLED
+            }
+            is GroupEnvelope.Opened.Reaction -> {
+                // Reagující = odesílatel. Cíl nemusí být v historii (reakce dorazila dřív /
+                // na neznámou zprávu) → NOT_FOUND se tiše zahodí (ACK), jen zápis selhá → retry.
+                if (r.applyReaction(gid, c.targetMsgIdHex, ok.senderMemberIdHex, c.emoji) == GroupChatRepository.MutationResult.FAILED) {
                     return Outcome.FAILED_WRITE
                 }
                 ReplayGuard.remember(context, gid, blob)
