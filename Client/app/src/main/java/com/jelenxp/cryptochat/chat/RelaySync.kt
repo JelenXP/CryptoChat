@@ -464,6 +464,58 @@ object RelaySync {
     }
 
     /**
+     * Odešle SKUPINOVOU řídicí zprávu (INVITE/PUBKEYS/[GroupBundle]) danému 1:1
+     * kontaktu přes párový kanál (join handshake, `GROUP_CHAT_PLAN.md` fáze 6).
+     * Best-effort: pošle jen když protějšek inzeruje [WireExt.CAP_GROUPS] (skupiny
+     * umí zpracovat) a je nakonfigurovaný relay; jinak false (SUPPRESS - poslat
+     * skupinovou zprávu appce, co skupiny neumí, je k ničemu). Vrací, zda se blob
+     * podařilo doručit do schránky.
+     */
+    fun sendGroupCtrl(context: Context, contact: Contact, subtype: Int, bytes: ByteArray): Boolean {
+        val key = contact.keyBase64
+        if (key.isNullOrBlank()) return false
+        val now = System.currentTimeMillis()
+        return deliverGroupControl(
+            context, contact, key,
+            seal = { dir -> ChatEnvelope.sealGroupCtrl(subtype, bytes, now, key, dir) },
+            ratchetPayload = { ChatEnvelope.buildGroupCtrlPayload(subtype, bytes, now) }
+        )
+    }
+
+    /**
+     * Doručí skupinovou řídicí zprávu BEST-EFFORT. Kopie [deliverControl], jen
+     * s jiným gate: [WireCompat.peerHasCapability] ([WireExt.CAP_GROUPS]) místo
+     * `peerKnownSupports(MINOR_CONTROL_SAFE)` - skupinovou zprávu nesmí dostat
+     * appka, která ji neumí zařadit (skončila by jí v karanténě). Ratchet-aware.
+     */
+    private fun deliverGroupControl(
+        context: Context,
+        contact: Contact,
+        key: String,
+        seal: (dir: Int) -> ByteArray,
+        ratchetPayload: () -> ByteArray
+    ): Boolean {
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank() ||
+            !WireCompat.peerHasCapability(context, contact.id, WireExt.CAP_GROUPS)
+        ) {
+            DiagnosticsLog.log(TAG, "protějšek skupiny neumí / bez relaye - skupinová zpráva neodeslána")
+            return false
+        }
+        return try {
+            if (shouldSendRatchet(context, contact)) {
+                sendOneRatchet(context, contact, baseUrl, ratchetPayload)
+            } else {
+                val dir = sendDir(contact)
+                putFailover(context, RelayCrypto.mailboxId(key, dir, currentEpoch()), seal(dir))
+            }
+        } catch (e: Exception) {
+            DiagnosticsLog.warn(TAG, "odeslání skupinové řídicí zprávy selhalo (${e.javaClass.simpleName})")
+            false
+        }
+    }
+
+    /**
      * Použije jednu odloženou úpravu/smazání ([PendingMutations]) na cílovou
      * PŘÍCHOZÍ zprávu. Vrací true jen při APPLIED - jinak zůstane odložená.
      */

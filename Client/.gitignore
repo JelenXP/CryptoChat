@@ -23,6 +23,10 @@ CLAUDE.md
 # --- Interní audit poznámky (lokální, nepublikují se) ---
 AUDIT_*.md
 
+# --- Interní návrhové plány (lokální, nepublikují se) ---
+GROUP_CHAT_PLAN.md
+group_ui_mockup.html
+
 # --- Testy (drží se lokálně, na veřejný GitHub nepatří) ---
 app/src/test/
 app/src/androidTest/

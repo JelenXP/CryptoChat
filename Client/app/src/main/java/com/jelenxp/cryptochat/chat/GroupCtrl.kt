@@ -1,9 +1,9 @@
 package com.jelenxp.cryptochat.chat
 
 import android.content.Context
-import com.jelenxp.cryptochat.crypto.Base64Util
 import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
 import com.jelenxp.cryptochat.crypto.StorageCrypto
+import com.jelenxp.cryptochat.data.ContactRepository
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 
@@ -25,15 +25,26 @@ object GroupCtrlReceiver {
                 // Pozvánka pro UI kartu — uložení best-effort, vždy ACK (poškozené zahodit).
                 WireExt.GROUP_CTRL_INVITE ->
                     GroupInvite.decode(bytes)?.let { GroupInviteStore.save(context, fromContactId, it) }.let { true }
-                // Admin dostal pubkeys nováčka. TODO fáze 6: addMember + rozeslání bundlů
-                // přes odesílací cestu; zatím se jen ACKuje (auto-odpověď dodá send path).
-                WireExt.GROUP_CTRL_PUBKEYS -> true
+                // Admin dostal pubkeys nováčka → přidej člena a rozešli bundly VŠEM.
+                WireExt.GROUP_CTRL_PUBKEYS -> handlePubkeys(context, fromContactId, bytes, storageCrypto)
                 WireExt.GROUP_CTRL_BUNDLE -> handleBundle(context, bytes, storageCrypto)
                 else -> true // neznámý subtype → zahodit
             }
         } catch (_: Exception) {
             true // nepřátelský vstup nesmí zaseknout dávku donekonečna
         }
+    }
+
+    /**
+     * Admin: příchozí PUBKEYS nováčka → [GroupActions.onPubkeysReceived] (přidá člena
+     * + rozešle balíky). Kontakty se čtou přes týž [storageCrypto] jako zbytek roury
+     * (v testech FakeStorageCrypto). `false` = zápis skupiny selhal (přijde znovu).
+     */
+    private fun handlePubkeys(context: Context, fromContactId: String, bytes: ByteArray, storageCrypto: StorageCrypto): Boolean {
+        val pubkeys = GroupPubkeys.decode(bytes) ?: return true
+        val contacts = ContactRepository(context, storageCrypto).getContacts()
+        val from = contacts.firstOrNull { it.id == fromContactId } ?: return true
+        return GroupActions.onPubkeysReceived(context, from, pubkeys, contacts, storageCrypto)
     }
 
     /** Adoptuje bundle mými skupinovými klíči (stávající člen z [GroupStore], nováček z [GroupJoinStore]). */

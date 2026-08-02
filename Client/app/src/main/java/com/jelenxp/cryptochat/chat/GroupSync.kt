@@ -3,6 +3,7 @@ package com.jelenxp.cryptochat.chat
 import android.content.Context
 import com.jelenxp.cryptochat.crypto.KeystoreStorageCrypto
 import com.jelenxp.cryptochat.crypto.StorageCrypto
+import com.jelenxp.cryptochat.data.SettingsRepository
 
 /**
  * Odesílací a přijímací roura skupinových zpráv — analogie 1:1 [RelaySync], ale
@@ -37,6 +38,13 @@ object GroupSync {
 
     /** Strop velikosti OBSAHU odchozí zprávy (pod per-blob limitem relaye ~2 MB). */
     private const val MAX_CONTENT_BYTES = 1_900_000
+
+    /**
+     * Nejmladší věk odchozí zprávy, kterou smí [flushOutbox] přeposlat. Chrání před
+     * závodem s právě probíhajícím odesláním z UI (to má vlastní `pendingRecipients`,
+     * dokud nedorazí doručenky) — flush se ho nechytí, dokud není zjevně uvázlá.
+     */
+    private const val RESEND_MIN_AGE_MS = 90_000L
 
     data class SendResult(val msgIdHex: String, val sent: Int, val failed: Int)
     data class PollResult(val received: Int, val failed: Int)
@@ -126,6 +134,24 @@ object GroupSync {
             if (transport.put(baseUrl, GroupCrypto.inboxId(group.gsBase64, group.groupId, r, day), blob)) sent++
         }
         return sent
+    }
+
+    /**
+     * Doručí uvázlé odchozí zprávy (relay byl při odeslání dole). Volá se po ÚSPĚŠNÉM
+     * pollu ze služby — přes výpadek by [resend] zbytečně pálil `msgNo`. Míří jen na
+     * zprávy s NEpotvrzenými příjemci a staršími než [RESEND_MIN_AGE_MS] (ať nezávodí
+     * s čerstvým odesláním z UI). Vrací počet znovuodeslaných blobů.
+     */
+    fun flushOutbox(context: Context, group: Group): Int {
+        val baseUrl = SettingsRepository(context).getRelayUrl()
+        if (baseUrl.isBlank()) return 0
+        val now = System.currentTimeMillis()
+        val stuck = repo(context).getMessages(group.groupId).filter {
+            it.outgoing && it.pendingRecipients.isNotEmpty() && now - it.timestamp > RESEND_MIN_AGE_MS
+        }
+        var resent = 0
+        for (m in stuck) resent += resend(context, group, m.msgIdHex, baseUrl, now)
+        return resent
     }
 
     // --- příjem ---

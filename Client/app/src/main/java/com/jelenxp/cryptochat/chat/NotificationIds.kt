@@ -18,10 +18,14 @@ object NotificationIds {
     const val MASK = 0xFFFF          // per-kontakt offset 0..65535
     const val MESSAGE_BASE = 1_000_000
     const val REACTION_BASE = 2_000_000
+    const val GROUP_MESSAGE_BASE = 4_000_000
 
     private fun bandId(base: Int, contactId: String): Int =
         base + (contactId.hashCode() and MASK)
 
     fun message(contactId: String): Int = bandId(MESSAGE_BASE, contactId)
     fun reaction(contactId: String): Int = bandId(REACTION_BASE, contactId)
+
+    /** Pásmo notifikací skupinových zpráv (per groupId, disjunktní od 1:1 zpráv i reakcí). */
+    fun groupMessage(groupId: String): Int = bandId(GROUP_MESSAGE_BASE, groupId)
 }

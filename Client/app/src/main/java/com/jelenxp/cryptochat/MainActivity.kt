@@ -241,6 +241,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_OPEN_CHAT = "open_chat_id"
+        /** ID skupiny k otevření z notifikace skupinové zprávy (napojení navigace ve fázi 7 UI). */
+        const val EXTRA_OPEN_GROUP = "open_group_id"
         private const val REQ_NOTIFICATIONS = 101
     }
 }

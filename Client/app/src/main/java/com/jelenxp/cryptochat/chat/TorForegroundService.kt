@@ -58,6 +58,12 @@ class TorForegroundService : Service() {
 
     /** Otisk (klíč + role) kontaktu, se kterým běží jeho smyčka - viz watchdogTick. */
     private val fingerprints = HashMap<String, String>()
+
+    /** Paralelní poll smyčky SKUPIN (per groupId), stejný princip jako [jobs]. */
+    private val groupJobs = HashMap<String, Job>()
+
+    /** Otisk (GS + epocha + moje memberId) skupiny - restart smyčky při rotaci klíče. */
+    private val groupFingerprints = HashMap<String, String>()
     @Volatile private var syncStarted = false
 
     /**
@@ -238,9 +244,11 @@ class TorForegroundService : Service() {
         val settings = SettingsRepository(ctx)
         val relayUrl = settings.getRelayUrl()
         if (relayUrl.isBlank()) {
-            // Chat vypnutý - zastav všechny smyčky, ať netočí naprázdno.
+            // Chat vypnutý - zastav všechny smyčky (1:1 i skupinové), ať netočí naprázdno.
             jobs.values.forEach { it.cancel() }
             jobs.clear()
+            groupJobs.values.forEach { it.cancel() }
+            groupJobs.clear()
             return
         }
 
@@ -267,6 +275,26 @@ class TorForegroundService : Service() {
                 DiagnosticsLog.log(TAG, "spuštěna poll smyčka kontaktu")
             }
         }
+
+        // Skupiny: stejná reconciliace jako u kontaktů (spusť chybějící, zruš smyčky
+        // smazaných skupin, restartuj při rotaci GS/epochy/memberId).
+        val groups = GroupStore(ctx).getGroups()
+        val liveGroupIds = groups.map { it.groupId }.toSet()
+        groupJobs.keys.toList().forEach { id ->
+            if (id !in liveGroupIds) {
+                groupJobs.remove(id)?.cancel()
+                groupFingerprints.remove(id)
+            }
+        }
+        for (group in groups) {
+            val fingerprint = "${group.gsBase64}|${group.groupEpoch}|${group.myMemberId}"
+            if (groupJobs[group.groupId]?.isActive != true || groupFingerprints[group.groupId] != fingerprint) {
+                groupJobs.remove(group.groupId)?.cancel()
+                groupFingerprints[group.groupId] = fingerprint
+                groupJobs[group.groupId] = scope.launch { groupSyncLoop(group) }
+                DiagnosticsLog.log(TAG, "spuštěna poll smyčka skupiny")
+            }
+        }
         // Srovnej běh Toru s potřebou. needsTor = aspoň jedna efektivní adresa (primární
         // i záložní) je .onion - pokrývá i .onion zálohu pod clearnet primárkou.
         val needsTor = TorManager.anyOnion(settings.getRelayUrls())
@@ -277,9 +305,9 @@ class TorForegroundService : Service() {
                 DiagnosticsLog.log(TAG, "clearnet režim, zastavuji běžící Tor")
                 withContext(Dispatchers.IO) { TorController.stop() }
             }
-            // Keepalive JEN když nic nepolluje. Běžící long-polly drží okruh teplý
-            // samy - health request navíc by byl čistá spotřeba navíc.
-            contacts.isEmpty() -> RelayStatus.refresh(ctx)
+            // Keepalive JEN když nic nepolluje (ani 1:1, ani skupiny). Běžící long-polly
+            // drží okruh teplý samy - health request navíc by byl čistá spotřeba navíc.
+            contacts.isEmpty() && groups.isEmpty() -> RelayStatus.refresh(ctx)
             // Tor mohl na pozadí spadnout (listener se zavřel / StartDaemon selhal)
             // a sám se nerozjede - poll smyčky volají jen `awaitReady`, ne
             // `ensureStarted`. Bez tohohle by doručování na pozadí tiše umřelo až do
@@ -523,6 +551,65 @@ class TorForegroundService : Service() {
     }
 
     /**
+     * Long-poll smyčka pro jednu SKUPINU. Zrcadlí [syncLoop] (stejný backoff,
+     * RelayStatus, podlaha [MIN_POLL_INTERVAL_MS]), jen volá [GroupSync.poll]. Které
+     * zprávy jsou nové (pro notifikaci) se zjistí diffem historie před/po pollu -
+     * [GroupSync.PollResult] vrací jen počet, ne zprávy. Notifikace se nepošle pro
+     * právě otevřenou skupinu ([ActiveChat.currentGroupId]).
+     */
+    private suspend fun groupSyncLoop(group: Group) {
+        val ctx = this@TorForegroundService
+        val gid = group.groupId
+        val repo = GroupChatRepository(ctx)
+        var backoff = BACKOFF_START_MS
+        var failStreak = 0
+        while (coroutineContext.isActive) {
+            val baseUrl = SettingsRepository(ctx).getRelayUrl()
+            if (baseUrl.isBlank()) {
+                delay(30_000)
+                continue
+            }
+            try {
+                val pollStart = System.currentTimeMillis()
+                // Snímek ID PŘED pollem - co po pollu přibude (a je příchozí), je nové.
+                val before = repo.getMessages(gid).mapTo(HashSet()) { it.msgIdHex }
+                val result = GroupSync.poll(ctx, group, baseUrl, pollStart, GROUP_LONGPOLL_SECONDS)
+                if (result.received > 0 && ActiveChat.currentGroupId != gid) {
+                    // Čerstvá skupina (jméno + roster pro jména odesílatelů) z úložiště -
+                    // rotace/přejmenování smyčku nerestartuje kvůli jménu.
+                    val fresh = GroupStore(ctx).getGroup(gid) ?: group
+                    val names = fresh.members().associate { it.memberIdHex to it.displayName }
+                    val unseen = repo.getMessages(gid).filter { !it.outgoing && it.msgIdHex !in before }
+                    if (unseen.isNotEmpty()) {
+                        ChatNotifications.notifyGroupMessage(ctx, gid, fresh.name, unseen, names)
+                    }
+                }
+                if (result.failed > 0) {
+                    if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
+                    updateNotification()
+                    backoff = sleepBackoff(backoff)
+                } else {
+                    backoff = BACKOFF_START_MS
+                    failStreak = 0
+                    RelayStatus.markConnected()
+                    updateNotification()
+                    // Outbox skupiny: po úspěšném pollu (relay dosažitelný) zkus doručit
+                    // uvázlé odchozí zprávy. JEN po úspěchu - přes výpadek by resend pálil msgNo.
+                    GroupSync.flushOutbox(ctx, group)
+                    val elapsed = System.currentTimeMillis() - pollStart
+                    if (elapsed < MIN_POLL_INTERVAL_MS) delay(MIN_POLL_INTERVAL_MS - elapsed)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DiagnosticsLog.error(TAG, "skupinová poll smyčka vyhodila výjimku (${e.javaClass.simpleName}), zpomaluji")
+                if (++failStreak >= UNREACHABLE_AFTER_FAILS) RelayStatus.markUnreachable()
+                backoff = sleepBackoff(backoff)
+            }
+        }
+    }
+
+    /**
      * Počká podle aktuálního backoffu a vrátí ten příští (dvojnásobek). Strop se
      * čte AŽ TEĎ, ne při zdvojnásobení - takže když uživatel mezitím rozsvítí
      * obrazovku, dlouhé čekání se zkrátí na kratší strop a zpráva dorazí rychle.
@@ -659,6 +746,9 @@ class TorForegroundService : Service() {
 
         /** První pauza po neúspěšném pollu; dál se zdvojnásobuje. */
         private const val BACKOFF_START_MS = 3_000L
+
+        /** Délka long-pollu skupinové schránky (stejná jako 1:1 `RelaySync.LONGPOLL_SECONDS`). */
+        private const val GROUP_LONGPOLL_SECONDS = 170
 
         /**
          * Minimální rozestup mezi úspěšnými polly, když se poll vrátí podezřele

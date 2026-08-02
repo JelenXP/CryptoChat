@@ -490,6 +490,14 @@ object ChatEnvelope {
     }
 
     /**
+     * Zapečetí SKUPINOVOU řídicí zprávu do LEGACY 1:1 obálky (protějšek bez ratchetu).
+     * Analogie [sealEdit]: tělo + trailer staví [buildGroupCtrlPayload], šifruje
+     * párový klíč. Ratchetová cesta jde přes `buildGroupCtrlPayload` napřímo.
+     */
+    fun sealGroupCtrl(subtype: Int, bytes: ByteArray, timestamp: Long, keyBase64: String, dir: Int): ByteArray =
+        encrypt(buildGroupCtrlPayload(subtype, bytes, timestamp), keyBase64, dir)
+
+    /**
      * Vnitřní plaintext obecné zprávy typu [kind] s daty, zarovnaný na
      * [paddedSize] (nuly za daty). [paddedSize] musí být >= `HEADER + data.size`;
      * `coerceAtLeast` je jen pojistka pro případ, že by koš byl menší (nemá nastat).

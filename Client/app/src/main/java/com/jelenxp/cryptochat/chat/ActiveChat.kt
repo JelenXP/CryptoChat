@@ -7,4 +7,8 @@ package com.jelenxp.cryptochat.chat
 object ActiveChat {
     @Volatile
     var currentId: String? = null
+
+    /** Který SKUPINOVÝ chat je otevřený (namespace zvlášť — groupId a contactId se nesmí splést). */
+    @Volatile
+    var currentGroupId: String? = null
 }

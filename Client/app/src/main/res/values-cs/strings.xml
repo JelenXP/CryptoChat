@@ -529,6 +529,7 @@
     <string name="notif_new_message">Nová zpráva</string>
     <string name="notif_reaction">Reakce %1$s na „%2$s“</string>
     <string name="notif_you">Já</string>
+    <string name="notif_group_member">Člen</string>
     <string name="notif_photo">📷 Fotka</string>
     <string name="notif_file">📎 Soubor</string>
     <string name="notif_action_reply">Odpovědět</string>

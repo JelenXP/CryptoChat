@@ -80,8 +80,14 @@ object GroupAdmin {
         return Result(adminGroup, rb, rsig, bundles)
     }
 
-    /** Přidá člena BEZ rotace GS (bump epochy + nový roster). Balík dostane jen nováček. */
-    fun addMember(group: Group, newMember: MemberSpec): Result {
+    /**
+     * Přidá člena BEZ rotace GS (bump epochy + nový roster). Balík dostane jen nováček.
+     * [forcedMemberId] (volitelně) vnutí konkrétní memberId místo náhodného - používá
+     * se pro IDEMPOTENCI joinu: admin rezervuje memberId už při pozvánce
+     * ([GroupAdminState.reserveInvite]), takže opětovné doručení týchž PUBKEYS
+     * nevytvoří druhého člena. Musí být čerstvý (mimo aktuální roster).
+     */
+    fun addMember(group: Group, newMember: MemberSpec, forcedMemberId: String? = null): Result {
         require(group.amIAdmin) { "Členství smí měnit jen admin." }
         val roster = group.roster() ?: error("Poškozený roster.")
         require(roster.members.size + 1 <= GroupRoster.MAX_GROUP_MEMBERS) { "Skupina má strop ${GroupRoster.MAX_GROUP_MEMBERS} členů." }
@@ -90,7 +96,8 @@ object GroupAdmin {
             "Člen s těmito klíči už ve skupině je."
         }
         val newEpoch = group.groupEpoch + 1
-        val newId = freshMemberId(group.usedMemberIds)
+        val newId = forcedMemberId ?: freshMemberId(group.usedMemberIds)
+        require(roster.members.none { it.memberIdHex == newId }) { "memberId už ve skupině je." }
         val members = roster.members + GroupRoster.Member(newId, newMember.displayName, newMember.ed25519PublicKeyBase64, newMember.sealPublicKeyBase64)
         val newRoster = roster.copy(groupEpoch = newEpoch, gsCommit = GroupCrypto.gsCommit(group.gsBase64, group.groupId, newEpoch), members = members)
         val rb = Base64Util.encode(GroupRoster.encode(newRoster))

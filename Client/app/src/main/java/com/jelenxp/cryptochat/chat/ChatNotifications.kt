@@ -177,6 +177,57 @@ object ChatNotifications {
     }
 
     /**
+     * Notifikace nových SKUPINOVÝCH zpráv jako KONVERZACE (MessagingStyle, skupinový
+     * režim): titulek = název skupiny, každá nepřečtená [unseen] zpráva jako řádek se
+     * jménem odesílatele ([memberNames]: memberId→jméno z rosteru). Klepnutí otevře
+     * skupinu. Vlastní ID pásmo ([NotificationIds.groupMessage]), takže nepřepíše 1:1.
+     *
+     * Zatím bez inline odpovědi/reakce (ty potřebují skupinovou odesílací cestu
+     * z receiveru — doplní se později); obsah je jen lokální, nikam se neposílá.
+     */
+    fun notifyGroupMessage(
+        context: Context,
+        groupId: String,
+        groupName: String,
+        unseen: List<GroupChatMessage>,
+        memberNames: Map<String, String>,
+    ) {
+        val nm = NotificationManagerCompat.from(context)
+        if (!nm.areNotificationsEnabled() || unseen.isEmpty()) return
+        val ctx = local(context)
+        val open = PendingIntent.getActivity(
+            context, groupId.hashCode(),
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_OPEN_GROUP, groupId),
+            pendingFlags()
+        )
+        val style = NotificationCompat.MessagingStyle(
+            Person.Builder().setName(ctx.getString(R.string.notif_you)).build()
+        ).setConversationTitle(groupName).setGroupConversation(true)
+        val photo = ctx.getString(R.string.notif_photo)
+        val memberFallback = ctx.getString(R.string.notif_group_member)
+        unseen.forEach { m ->
+            val senderName = m.senderMemberIdHex?.let { memberNames[it] } ?: memberFallback
+            val person = Person.Builder().setName(senderName).build()
+            val line = if (m.kind == GroupChatMessage.Kind.IMAGE) photo else m.text
+            style.addMessage(line, m.timestamp, person)
+        }
+        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_relay)
+            .setStyle(style)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(open)
+        try {
+            nm.notify(NotificationIds.groupMessage(groupId), builder.build())
+        } catch (e: SecurityException) {
+            // Povolení mezitím odebráno - ignorovat.
+        }
+    }
+
+    /**
      * Notifikace, že protějšek [contactName] reagoval [emoji] na NAŠI zprávu
      * [target]. Ukáže, na KTEROU zprávu (v uvozovkách; dlouhá se uřízne „…").
      * Volá se jen pro reakci na naši odchozí zprávu (viz [RelaySync]).
