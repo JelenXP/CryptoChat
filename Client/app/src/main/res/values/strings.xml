@@ -609,4 +609,8 @@
     <string name="group_invite_joining">Joining group…</string>
     <string name="group_your_name_prompt">Choose your name in the group</string>
     <string name="group_empty_messages">No messages yet.</string>
+    <string name="group_open_detail">Group info</string>
+    <string name="group_system_joined">%1$s joined</string>
+    <string name="group_system_you_joined">You joined</string>
+    <string name="group_system_left">%1$s was removed</string>
 </resources>

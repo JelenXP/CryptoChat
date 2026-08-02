@@ -403,16 +403,23 @@ private fun GroupCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val subtitle = if (lastMessage == null) {
-                    stringResource(R.string.chat_preview_none)
-                } else {
-                    val body = if (lastMessage.kind == GroupChatMessage.Kind.IMAGE)
-                        stringResource(R.string.chat_preview_photo) else lastMessage.text
-                    if (lastMessage.outgoing) {
-                        stringResource(R.string.chat_last_you, body)
-                    } else {
-                        val who = lastMessage.senderMemberIdHex?.let { senderNames[it] }
-                        if (who != null) "$who: $body" else body
+                val subtitle = when {
+                    lastMessage == null -> stringResource(R.string.chat_preview_none)
+                    // Systémová událost členství jako náhled (bez „kdo:" prefixu).
+                    lastMessage.kind == GroupChatMessage.Kind.SYSTEM_JOIN ->
+                        if (lastMessage.senderMemberIdHex == group.myMemberId) stringResource(R.string.group_system_you_joined)
+                        else stringResource(R.string.group_system_joined, lastMessage.text)
+                    lastMessage.kind == GroupChatMessage.Kind.SYSTEM_LEAVE ->
+                        stringResource(R.string.group_system_left, lastMessage.text)
+                    else -> {
+                        val body = if (lastMessage.kind == GroupChatMessage.Kind.IMAGE)
+                            stringResource(R.string.chat_preview_photo) else lastMessage.text
+                        if (lastMessage.outgoing) {
+                            stringResource(R.string.chat_last_you, body)
+                        } else {
+                            val who = lastMessage.senderMemberIdHex?.let { senderNames[it] }
+                            if (who != null) "$who: $body" else body
+                        }
                     }
                 }
                 Text(

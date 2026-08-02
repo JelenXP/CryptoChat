@@ -19,6 +19,7 @@ object GroupNotifyLogic {
         val seen = before.asSequence()
             .filter { !it.outgoing }
             .mapTo(HashSet()) { it.senderMemberIdHex to it.msgIdHex }
-        return after.filter { !it.outgoing && (it.senderMemberIdHex to it.msgIdHex) !in seen }
+        // Systémové události (připojení/odebrání) se NEnotifikují — nejsou to zprávy.
+        return after.filter { !it.outgoing && !it.isSystem && (it.senderMemberIdHex to it.msgIdHex) !in seen }
     }
 }

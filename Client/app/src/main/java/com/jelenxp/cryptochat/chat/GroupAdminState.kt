@@ -99,6 +99,22 @@ object GroupAdminState {
         load(context, groupId, crypto).members[memberIdHex]
     }
 
+    /** Celá mapa člen→kontakt (memberId → contactId). Jedním čtením, pro překlad jmen. */
+    fun memberContacts(context: Context, groupId: String, crypto: StorageCrypto = KeystoreStorageCrypto): Map<String, String> = synchronized(lock) {
+        load(context, groupId, crypto).members
+    }
+
+    /**
+     * Zapíše vazbu člen↔kontakt i mimo admin flow (pro člena: adminMemberId → kontakt,
+     * ze kterého dorazil balík). Umožní pak překlad jména admina na lokální kontakt.
+     * Idempotentní; nepřepisuje existující (admin vazby jsou zdroj pravdy).
+     */
+    fun noteMemberContactIfAbsent(context: Context, groupId: String, memberIdHex: String, contactId: String, crypto: StorageCrypto = KeystoreStorageCrypto): Boolean = synchronized(lock) {
+        val state = load(context, groupId, crypto)
+        if (state.members[memberIdHex] == contactId) return true
+        save(context, groupId, state.copy(members = state.members + (memberIdHex to contactId)), crypto)
+    }
+
     /**
      * Přesune kontakt z pending do members (join dokončen). Idempotentní: druhé
      * volání jen potvrdí stejný stav. Vrací false při selhání zápisu.

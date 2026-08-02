@@ -609,4 +609,8 @@
     <string name="group_invite_joining">Připojuji do skupiny…</string>
     <string name="group_your_name_prompt">Zvolte své jméno ve skupině</string>
     <string name="group_empty_messages">Zatím žádné zprávy.</string>
+    <string name="group_open_detail">Detail skupiny</string>
+    <string name="group_system_joined">%1$s se připojil(a)</string>
+    <string name="group_system_you_joined">Připojili jste se</string>
+    <string name="group_system_left">%1$s byl(a) odebrán(a)</string>
 </resources>

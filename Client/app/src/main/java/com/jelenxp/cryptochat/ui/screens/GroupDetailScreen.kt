@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.jelenxp.cryptochat.R
+import com.jelenxp.cryptochat.chat.GroupMemberNames
 import com.jelenxp.cryptochat.chat.GroupRoster
 import com.jelenxp.cryptochat.chat.WireCompat
 import com.jelenxp.cryptochat.chat.WireExt
@@ -73,6 +74,12 @@ fun GroupDetailScreen(groupId: String, navController: NavController, groupsVm: G
     var showAddDialog by remember { mutableStateOf(false) }
     var removeTarget by remember { mutableStateOf<GroupRoster.Member?>(null) }
     var showLeaveDialog by remember { mutableStateOf(false) }
+
+    // Jména členů (lokální kontakt má přednost jako u 1:1) — čte Keystore, tedy mimo hlavní vlákno.
+    var names by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    androidx.compose.runtime.LaunchedEffect(group.rosterBytesBase64) {
+        names = withContext(Dispatchers.IO) { GroupMemberNames.resolvedNames(ctx, group) }
+    }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
@@ -132,6 +139,7 @@ fun GroupDetailScreen(groupId: String, navController: NavController, groupsVm: G
             items(group.members(), key = { it.memberIdHex }) { member ->
                 MemberRow(
                     member = member,
+                    displayName = names[member.memberIdHex] ?: member.displayName,
                     isAdmin = member.memberIdHex == group.adminMemberId,
                     isMe = member.memberIdHex == group.myMemberId,
                     canRemove = group.amIAdmin && member.memberIdHex != group.myMemberId && member.memberIdHex != group.adminMemberId,
@@ -224,6 +232,7 @@ fun GroupDetailScreen(groupId: String, navController: NavController, groupsVm: G
 @Composable
 private fun MemberRow(
     member: GroupRoster.Member,
+    displayName: String,
     isAdmin: Boolean,
     isMe: Boolean,
     canRemove: Boolean,
@@ -234,9 +243,9 @@ private fun MemberRow(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ContactAvatar(name = member.displayName, avatarPath = null, size = 40.dp)
+            ContactAvatar(name = displayName, avatarPath = null, size = 40.dp)
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(member.displayName, style = MaterialTheme.typography.bodyLarge)
+                Text(displayName, style = MaterialTheme.typography.bodyLarge)
                 val adminLabel = stringResource(R.string.group_admin_label)
                 val youLabel = stringResource(R.string.group_you_label)
                 val tags = buildList {

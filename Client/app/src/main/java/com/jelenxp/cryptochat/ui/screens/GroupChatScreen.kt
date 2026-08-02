@@ -20,6 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -28,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -52,6 +57,8 @@ import com.jelenxp.cryptochat.chat.ActiveChat
 import com.jelenxp.cryptochat.chat.ChatNotifications
 import com.jelenxp.cryptochat.chat.GroupChatMessage
 import com.jelenxp.cryptochat.chat.GroupChatRepository
+import com.jelenxp.cryptochat.chat.GroupMemberNames
+import com.jelenxp.cryptochat.chat.GroupStore
 import com.jelenxp.cryptochat.chat.GroupSync
 import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
@@ -91,17 +98,25 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Jména odesílatelů z rosteru (memberId → zobrazované jméno).
-    val names = remember(group.rosterBytesBase64) { group.members().associate { it.memberIdHex to it.displayName } }
+    // Jména členů (memberId → jméno; LOKÁLNÍ kontakt má přednost jako u 1:1). Čte Keystore,
+    // proto se počítá MIMO hlavní vlákno v reload smyčce a drží se ve stavu.
+    var names by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showLeaveDialog by remember { mutableStateOf(false) }
 
-    // Na popředí: potlač notifikaci téhle skupiny a přenačítej historii (příjem dělá služba).
+    // Na popředí: potlač notifikaci téhle skupiny a přenačítej historii + jména (příjem dělá služba).
     androidx.compose.runtime.LaunchedEffect(groupId) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             ActiveChat.currentGroupId = groupId
             ChatNotifications.cancelGroupMessage(ctx, groupId) // po otevření notifikaci zruš
             try {
                 while (true) {
-                    messages = withContext(Dispatchers.IO) { GroupChatRepository(ctx).getMessages(groupId) }
+                    val snapshot = withContext(Dispatchers.IO) {
+                        val fresh = GroupStore(ctx).getGroup(groupId) ?: group
+                        GroupChatRepository(ctx).getMessages(groupId) to GroupMemberNames.resolvedNames(ctx, fresh)
+                    }
+                    messages = snapshot.first
+                    names = snapshot.second
                     kotlinx.coroutines.delay(1500)
                 }
             } finally {
@@ -151,6 +166,21 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                             )
                         }
                     }
+                },
+                actions = {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.menu_more))
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.group_open_detail)) },
+                            onClick = { menuOpen = false; navController.navigate("group_detail/$groupId") }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.group_leave)) },
+                            onClick = { menuOpen = false; showLeaveDialog = true }
+                        )
+                    }
                 }
             )
         },
@@ -184,8 +214,53 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             items(messages, key = { it.msgIdHex }) { m ->
-                GroupMessageBubble(m, senderName = m.senderMemberIdHex?.let { names[it] })
+                if (m.isSystem) {
+                    GroupSystemRow(m, myMemberId = group.myMemberId)
+                } else {
+                    GroupMessageBubble(m, senderName = m.senderMemberIdHex?.let { names[it] })
+                }
             }
+        }
+    }
+
+    if (showLeaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showLeaveDialog = false },
+            title = { Text(stringResource(R.string.group_leave)) },
+            text = { Text(stringResource(R.string.group_leave_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLeaveDialog = false
+                    groupsViewModel.deleteGroup(groupId)
+                    navController.popBackStack()
+                }) { Text(stringResource(R.string.group_leave)) }
+            },
+            dismissButton = { TextButton(onClick = { showLeaveDialog = false }) { Text(stringResource(android.R.string.cancel)) } }
+        )
+    }
+}
+
+/**
+ * Systémový řádek (kdo se připojil / byl odebrán) — vycentrovaná šedá „pilulka",
+ * stylově jako oddělovač dne. Text nese rozřešené jméno; „Připojili jste se" pro sebe.
+ */
+@Composable
+private fun GroupSystemRow(message: GroupChatMessage, myMemberId: String) {
+    val text = when {
+        message.kind == GroupChatMessage.Kind.SYSTEM_JOIN && message.senderMemberIdHex == myMemberId ->
+            stringResource(R.string.group_system_you_joined)
+        message.kind == GroupChatMessage.Kind.SYSTEM_JOIN ->
+            stringResource(R.string.group_system_joined, message.text)
+        else -> stringResource(R.string.group_system_left, message.text)
+    }
+    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), contentAlignment = Alignment.Center) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+            Text(
+                text,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+            )
         }
     }
 }

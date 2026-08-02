@@ -21,9 +21,18 @@ data class GroupChatMessage(
      */
     val pendingRecipients: Set<String> = emptySet(),
 ) {
-    /** Odchozí = poslal jsem já. */
-    val outgoing: Boolean get() = senderMemberIdHex == null
+    /** Odchozí = poslal jsem já. Systémové zprávy odchozí NEJSOU (nemají stav). */
+    val outgoing: Boolean get() = senderMemberIdHex == null && !isSystem
+
+    /** Systémová (událost členství) — nekreslí se jako bublina, ale jako oddělovač. */
+    val isSystem: Boolean get() = kind == Kind.SYSTEM_JOIN || kind == Kind.SYSTEM_LEAVE
 
     enum class Status { SENDING, SENT, DELIVERED, FAILED }
-    enum class Kind { TEXT, IMAGE }
+
+    /**
+     * TEXT/IMAGE = běžná zpráva. SYSTEM_JOIN/SYSTEM_LEAVE = událost členství (kdo se
+     * připojil / byl odebrán) — vzniká LOKÁLNĚ z diffu rosteru (nejde po drátě), text
+     * nese už rozřešené jméno (lokální kontakt má přednost), kreslí se jako oddělovač.
+     */
+    enum class Kind { TEXT, IMAGE, SYSTEM_JOIN, SYSTEM_LEAVE }
 }

@@ -145,6 +145,7 @@ object GroupActions {
         // Vazba člen↔kontakt MUSÍ být durabilní: bez ní by se člen nedostal do routingu a při
         // další rotaci GS by desynchronizoval. Selhání NEPOTVRDÍ — zotaví ho větev výše.
         if (!GroupAdminState.promote(context, group.groupId, fromContact.id, reservedId, crypto)) return false
+        GroupSystemEvents.recordRosterChange(context, group, result.adminGroup, crypto) // „X se připojil"
         distributeBundles(context, result, allContacts, newcomerId = reservedId, newcomerContact = fromContact, crypto = crypto)
         return true
     }
@@ -170,6 +171,7 @@ object GroupActions {
         }
         if (!store.upsert(result.adminGroup)) return false
         GroupAdminState.unbindMember(context, group.groupId, memberIdHex, crypto)
+        GroupSystemEvents.recordRosterChange(context, group, result.adminGroup, crypto) // „X byl odebrán"
         distributeBundles(context, result, allContacts, newcomerId = null, newcomerContact = null, crypto = crypto)
         return true
     }

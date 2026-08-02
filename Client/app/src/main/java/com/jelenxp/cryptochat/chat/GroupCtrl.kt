@@ -28,7 +28,7 @@ object GroupCtrlReceiver {
                     GroupInvite.decode(bytes)?.let { GroupInviteStore.save(context, fromContactId, it) } ?: true
                 // Admin dostal pubkeys nováčka → přidej člena a rozešli bundly VŠEM.
                 WireExt.GROUP_CTRL_PUBKEYS -> handlePubkeys(context, fromContactId, bytes, storageCrypto)
-                WireExt.GROUP_CTRL_BUNDLE -> handleBundle(context, bytes, storageCrypto)
+                WireExt.GROUP_CTRL_BUNDLE -> handleBundle(context, fromContactId, bytes, storageCrypto)
                 else -> true // neznámý subtype → zahodit
             }
         } catch (_: Exception) {
@@ -49,10 +49,10 @@ object GroupCtrlReceiver {
     }
 
     /** Adoptuje bundle mými skupinovými klíči (stávající člen z [GroupStore], nováček z [GroupJoinStore]). */
-    private fun handleBundle(context: Context, bytes: ByteArray, storageCrypto: StorageCrypto): Boolean {
+    private fun handleBundle(context: Context, fromContactId: String, bytes: ByteArray, storageCrypto: StorageCrypto): Boolean {
         val bundle = GroupBundle.decode(bytes) ?: return true
         val store = GroupStore(context, storageCrypto)
-        val existing = store.getGroup(bundle.payload.groupIdHex)
+        val existing = store.getGroup(bundle.payload.groupIdHex) // starý stav (pro diff systémových zpráv)
         val sign: GroupIdentity.SignKeyPair
         val seal: GroupIdentity.SealKeyPair
         if (existing != null) {
@@ -68,6 +68,16 @@ object GroupCtrlReceiver {
             GroupControl.ApplyResult.APPLIED -> {
                 // Nováček: úklid pending join klíčů (už jsou v Group) a pozvánky.
                 GroupJoinStore.remove(context, bundle.payload.groupIdHex, storageCrypto)
+                val updated = store.getGroup(bundle.payload.groupIdHex)
+                if (updated != null) {
+                    // Člen: naváž admina na kontakt, ze kterého balík přišel → jeho jméno se
+                    // pak přeloží na lokální kontakt (jako 1:1), ne na skupinovou přezdívku.
+                    if (!updated.amIAdmin) {
+                        GroupAdminState.noteMemberContactIfAbsent(context, updated.groupId, updated.adminMemberId, fromContactId, storageCrypto)
+                    }
+                    // Systémové zprávy „X se připojil / byl odebrán" z diffu rosteru.
+                    GroupSystemEvents.recordRosterChange(context, existing, updated, storageCrypto)
+                }
                 true
             }
             else -> true // STALE/REMOVED/INVALID/NEEDS_KEY → smí se ACKnout (zahodit)
