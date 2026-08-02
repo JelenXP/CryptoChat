@@ -173,6 +173,7 @@ class GroupChatRepository(
         if (m.reactions.isNotEmpty()) {
             put("react", JSONObject().also { r -> m.reactions.forEach { (k, v) -> r.put(k, v) } })
         }
+        m.replyToMsgIdHex?.let { put("reply", it) } // jen u odpovědí → staré záznamy beze změny
     }
 
     private fun fromJson(o: JSONObject): GroupChatMessage? {
@@ -195,6 +196,7 @@ class GroupChatRepository(
             mediaPath = if (o.isNull("media")) null else o.optString("media"),
             pendingRecipients = pending,
             reactions = reactions,
+            replyToMsgIdHex = if (o.has("reply")) o.optString("reply") else null,
         )
     }
 

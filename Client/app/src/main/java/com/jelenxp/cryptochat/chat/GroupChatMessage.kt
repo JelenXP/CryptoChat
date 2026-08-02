@@ -22,6 +22,12 @@ data class GroupChatMessage(
     val pendingRecipients: Set<String> = emptySet(),
     /** Reakce na tuhle zprávu: `reactorMemberIdHex → emoji`. Zrušená = klíč chybí. */
     val reactions: Map<String, String> = emptyMap(),
+    /**
+     * Když je tahle zpráva ODPOVĚDÍ, `msgId` (hex) citované zprávy; jinak null. Citovaný
+     * text se dohledá LOKÁLNĚ v historii (po drátě jede jen odkaz, jako 1:1 `replyToWireId`).
+     * Nastaví se jednou při vzniku zprávy a přežije dedup (je součástí objektu).
+     */
+    val replyToMsgIdHex: String? = null,
 ) {
     /** Odchozí = poslal jsem já. Systémové zprávy odchozí NEJSOU (nemají stav). */
     val outgoing: Boolean get() = senderMemberIdHex == null && !isSystem

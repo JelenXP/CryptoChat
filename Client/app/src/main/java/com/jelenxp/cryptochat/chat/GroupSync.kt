@@ -78,15 +78,16 @@ object GroupSync {
 
     // --- odesílání ---
 
-    fun sendText(context: Context, group: Group, text: String, baseUrl: String, nowMs: Long): SendResult =
-        send(context, group, GroupEnvelope.KIND_TEXT, text.toByteArray(Charsets.UTF_8), text, null, GroupChatMessage.Kind.TEXT, baseUrl, nowMs)
+    fun sendText(context: Context, group: Group, text: String, baseUrl: String, nowMs: Long, replyToMsgIdHex: String? = null): SendResult =
+        send(context, group, GroupEnvelope.KIND_TEXT, text.toByteArray(Charsets.UTF_8), text, null, GroupChatMessage.Kind.TEXT, baseUrl, nowMs, replyToMsgIdHex)
 
-    fun sendImage(context: Context, group: Group, bytes: ByteArray, mediaPath: String?, baseUrl: String, nowMs: Long): SendResult =
-        send(context, group, GroupEnvelope.KIND_IMAGE, bytes, "", mediaPath, GroupChatMessage.Kind.IMAGE, baseUrl, nowMs)
+    fun sendImage(context: Context, group: Group, bytes: ByteArray, mediaPath: String?, baseUrl: String, nowMs: Long, replyToMsgIdHex: String? = null): SendResult =
+        send(context, group, GroupEnvelope.KIND_IMAGE, bytes, "", mediaPath, GroupChatMessage.Kind.IMAGE, baseUrl, nowMs, replyToMsgIdHex)
 
     private fun send(
         context: Context, group: Group, kind: Byte, data: ByteArray, text: String,
         mediaPath: String?, chatKind: GroupChatMessage.Kind, baseUrl: String, nowMs: Long,
+        replyToMsgIdHex: String? = null,
     ): SendResult {
         val msgId = GroupCrypto.randomMsgId()
         val recipients = group.otherMembers().map { it.memberIdHex }
@@ -96,7 +97,7 @@ object GroupSync {
         if (data.size > MAX_CONTENT_BYTES) {
             repo(context).appendIfAbsent(
                 group.groupId,
-                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.FAILED, chatKind, mediaPath)
+                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.FAILED, chatKind, mediaPath, replyToMsgIdHex = replyToMsgIdHex)
             )
             return SendResult(msgId, 0, recipients.size)
         }
@@ -106,7 +107,7 @@ object GroupSync {
         // nebyla (trvalý desync + falešný `sent>0`).
         if (repo(context).appendIfAbsent(
                 group.groupId,
-                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.SENDING, chatKind, mediaPath, recipients.toSet())
+                GroupChatMessage(msgId, null, text, nowMs, GroupChatMessage.Status.SENDING, chatKind, mediaPath, recipients.toSet(), replyToMsgIdHex = replyToMsgIdHex)
             ) == GroupChatRepository.AppendResult.FAILED
         ) {
             return SendResult(msgId, 0, recipients.size)
@@ -123,7 +124,7 @@ object GroupSync {
         for (r in recipients) {
             val blob = GroupEnvelope.seal(
                 kind, data, nowMs, msgNo, msgId, msgKey, group.mySignPrivateKeyBase64,
-                group.myMemberId, epoch, group.groupId, r
+                group.myMemberId, epoch, group.groupId, r, replyToMsgIdHex
             )
             val inbox = GroupCrypto.inboxId(group.gsBase64, group.groupId, r, day)
             // Backoff na 409/507 řeší volající (service) — put vrací jen úspěch/neúspěch.
@@ -185,7 +186,9 @@ object GroupSync {
         val day = dayEpoch(nowMs)
         var sent = 0
         for (r in targets) {
-            val blob = GroupEnvelope.seal(kind, data, msg.timestamp, msgNo, msgIdHex, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, r)
+            // Zachovej odkaz odpovědi i při přeposlání — jinak by přeposlaná odpověď
+            // ztratila citaci (a u příjemce by se zobrazila jako běžná zpráva).
+            val blob = GroupEnvelope.seal(kind, data, msg.timestamp, msgNo, msgIdHex, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, r, msg.replyToMsgIdHex)
             if (transport.put(baseUrl, GroupCrypto.inboxId(group.gsBase64, group.groupId, r, day), blob)) sent++
         }
         return sent
@@ -325,7 +328,7 @@ object GroupSync {
                     }
                     else -> return Outcome.FAILED_WRITE // nedosažitelné
                 }
-                val msg = GroupChatMessage(ok.msgIdHex, ok.senderMemberIdHex, text, ok.content.timestamp, GroupChatMessage.Status.SENT, chatKind, mediaPath)
+                val msg = GroupChatMessage(ok.msgIdHex, ok.senderMemberIdHex, text, ok.content.timestamp, GroupChatMessage.Status.SENT, chatKind, mediaPath, replyToMsgIdHex = ok.replyToMsgIdHex)
                 return when (r.appendIfAbsent(gid, msg)) {
                     GroupChatRepository.AppendResult.ADDED, GroupChatRepository.AppendResult.DUPLICATE -> {
                         ReplayGuard.remember(context, gid, blob)

@@ -22,11 +22,19 @@ import javax.crypto.spec.SecretKeySpec
  *
  * Otevřený obsah (uvnitř šifry, chráněný GCM tagem), zarovnaný paddingem do košů:
  * ```
- * [1B kind][16B msgId][8B ts BE][4B dataLen BE][data][2B sigLen BE][Ed25519 podpis][výplň 0]
+ * [1B kind][16B msgId][8B ts BE][4B dataLen BE][data][2B sigLen BE][Ed25519 podpis][ext trailer?][výplň 0]
  * ```
  * **`msgId`** je stabilní ID zprávy napříč zařízeními i resendy: dedup historie i
  * potvrzování doručenek je msgId-based (viz `GROUP_CHAT_PLAN.md` §1.8, v3.1-#1/#6).
  * Resend re-podepíše čerstvým `msgNo`, ale zachová `msgId`.
+ *
+ * **Ext trailer** (volitelný, ZA podpisem, TLV `[1B type][2B len BE][value]…`) nese
+ * ozdoby běžné zprávy — dnes jen **odpověď** (typ 1 = 16 B cílový `msgId`). Leží tam,
+ * kde dřív byla jen výplň, takže **starší parser ho nevidí** (čte přesně po podpis) a
+ * zpětná kompatibilita drží — bez ext je blob bajt v bajt stejný jako dřív (golden).
+ * Trailer je **zapečený v `sigData`**, tedy autentizovaný: insider ho nemůže přidat,
+ * změnit ani strhnout, aniž by selhalo ověření podpisu. Neznámý TLV se přeskočí
+ * (dopředná kompatibilita), poškozený se ignoruje — zpráva se kvůli ozdobě neztratí.
  *
  * **Podpis odesílatele** (Ed25519, [GroupIdentity]) je klíčová obrana: `GS` (a tedy
  * i `messageKey`) zná KAŽDÝ člen, takže GCM integrita NEchrání proti insiderovi —
@@ -53,6 +61,10 @@ object GroupEnvelope {
     // kind(1) + msgId(16) + ts(8) + dataLen(4)
     private const val INNER_HEADER = 1 + MSG_ID_BYTES + 8 + 4
     private const val SIG_LEN_FIELD = 2
+    // Volitelný ext trailer ZA podpisem (v místě někdejší výplně). Délkový prefix +
+    // TLV typ pro odpověď. Viz docstring — starší parser trailer nevidí (kompat).
+    private const val EXT_LEN_FIELD = 2
+    private const val EXT_TYPE_REPLY_TO: Byte = 1 // TLV: odpověď na cílový msgId (16 B)
 
     const val KIND_TEXT: Byte = 0
     const val KIND_IMAGE: Byte = 1
@@ -94,6 +106,8 @@ object GroupEnvelope {
             val msgNo: Int,
             val msgIdHex: String,
             val content: Opened,
+            /** Cílový `msgId` (hex), na který tato zpráva odpovídá; null = není odpověď. */
+            val replyToMsgIdHex: String? = null,
         ) : Result
 
         data object Unreadable : Result
@@ -140,20 +154,30 @@ object GroupEnvelope {
         groupEpoch: Long,
         groupIdHex: String,
         recipientMemberIdHex: String,
+        replyToMsgIdHex: String? = null,
     ): ByteArray {
         require(msgNo >= 0) { "msgNo nesmí být záporné." }
         val msgId = GroupCrypto.hexToBytes(msgIdHex)
         require(msgId.size == MSG_ID_BYTES) { "msgId musí mít $MSG_ID_BYTES B." }
         val openHeader = openHeaderBytes(senderMemberIdHex, groupEpoch, msgNo)
 
+        // Ext trailer (dnes jen odpověď). Prázdný → žádný region → blob je bajt v bajt
+        // stejný jako dřív (golden). Trailer se pečetí do podpisu (autentizovaný).
+        val ext = replyToMsgIdHex?.let {
+            val b = GroupCrypto.hexToBytes(it)
+            require(b.size == MSG_ID_BYTES) { "replyTo msgId musí mít $MSG_ID_BYTES B." }
+            encodeReplyExt(b)
+        } ?: ByteArray(0)
+
         val sig = com.jelenxp.cryptochat.crypto.Base64Util.decode(
             GroupIdentity.sign(
                 senderSignPrivateKeyBase64, LABEL_MSG,
-                sigData(groupIdHex, senderMemberIdHex, groupEpoch, msgNo, msgId, kind, timestamp, data)
+                sigData(groupIdHex, senderMemberIdHex, groupEpoch, msgNo, msgId, kind, timestamp, data, ext)
             )
         )
 
-        val preLen = INNER_HEADER + data.size + SIG_LEN_FIELD + sig.size
+        val extRegion = if (ext.isEmpty()) 0 else EXT_LEN_FIELD + ext.size
+        val preLen = INNER_HEADER + data.size + SIG_LEN_FIELD + sig.size + extRegion
         // Jen fotka a doručenka jdou do MEDIA košů; textové a řídicí kindy (text, reakce)
         // do menších textových košů. Chování TEXT/IMAGE/RECEIPT se nemění (golden drží).
         val bucket = if (kind == KIND_IMAGE || kind == KIND_RECEIPT) ChatEnvelope.mediaBucketFor(preLen) else ChatEnvelope.bucketFor(preLen)
@@ -167,6 +191,13 @@ object GroupEnvelope {
         plaintext[pos + 1] = (sig.size and 0xFF).toByte()
         pos += SIG_LEN_FIELD
         System.arraycopy(sig, 0, plaintext, pos, sig.size)
+        pos += sig.size
+        if (ext.isNotEmpty()) {
+            plaintext[pos] = ((ext.size ushr 8) and 0xFF).toByte()
+            plaintext[pos + 1] = (ext.size and 0xFF).toByte()
+            pos += EXT_LEN_FIELD
+            System.arraycopy(ext, 0, plaintext, pos, ext.size)
+        }
         // zbytek plaintextu už je 0 (výplň)
 
         val iv = ByteArray(IV_SIZE_BYTES).also { SecureRandom().nextBytes(it) }
@@ -236,10 +267,22 @@ object GroupEnvelope {
         if (pos + sigLen > plaintext.size) return Result.Unreadable
         val sig = plaintext.copyOfRange(pos, pos + sigLen)
 
+        // Ext trailer ZA podpisem (v místě někdejší výplně). Prázdný / nulová výplň
+        // (starší zpráva) → extLen = 0 → ext prázdný → sigData identický jako dřív.
+        val extStart = pos + sigLen
+        var ext = ByteArray(0)
+        if (extStart + EXT_LEN_FIELD <= plaintext.size) {
+            val extLen = ((plaintext[extStart].toInt() and 0xFF) shl 8) or (plaintext[extStart + 1].toInt() and 0xFF)
+            if (extLen in 1..(plaintext.size - extStart - EXT_LEN_FIELD)) {
+                ext = plaintext.copyOfRange(extStart + EXT_LEN_FIELD, extStart + EXT_LEN_FIELD + extLen)
+            }
+        }
+
         // Ověř podpis odesílatele nad autentizovaným kontextem (anti-impersonation).
+        // Ext je součástí podpisu → strhnutí/podvržení odpovědi shodí ověření.
         val ok = GroupIdentity.verify(
             senderSignPublicKeyBase64, LABEL_MSG,
-            sigData(groupIdHex, header.senderMemberIdHex, header.groupEpoch, header.msgNo, msgId, kind, timestamp, data),
+            sigData(groupIdHex, header.senderMemberIdHex, header.groupEpoch, header.msgNo, msgId, kind, timestamp, data, ext),
             com.jelenxp.cryptochat.crypto.Base64Util.encode(sig)
         )
         if (!ok) return Result.Unreadable
@@ -259,7 +302,10 @@ object GroupEnvelope {
             }
             else -> return Result.Unreadable // neznámý kind → karanténa
         }
-        return Result.Ok(header.senderMemberIdHex, header.groupEpoch, header.msgNo, GroupCrypto.bytesToHex(msgId), content)
+        return Result.Ok(
+            header.senderMemberIdHex, header.groupEpoch, header.msgNo,
+            GroupCrypto.bytesToHex(msgId), content, parseReplyToFromExt(ext),
+        )
     }
 
     private fun openHeaderBytes(senderMemberIdHex: String, groupEpoch: Long, msgNo: Int): ByteArray {
@@ -280,7 +326,11 @@ object GroupEnvelope {
     private fun aad(groupIdHex: String, recipientMemberIdHex: String, openHeader: ByteArray): ByteArray =
         "ccg|g=$groupIdHex|to=$recipientMemberIdHex|w=$WIRE_MAJOR_GROUP".toByteArray(Charsets.US_ASCII) + openHeader
 
-    /** Autentizovaný kontext pro podpis odesílatele (bez příjemce → společný pro všechny kopie). */
+    /**
+     * Autentizovaný kontext pro podpis odesílatele (bez příjemce → společný pro všechny
+     * kopie). `ext` je trailer za daty (prázdný u zpráv bez ozdoby) — zapečením do podpisu
+     * je odpověď chráněná proti podvržení/strhnutí insiderem.
+     */
     private fun sigData(
         groupIdHex: String,
         senderMemberIdHex: String,
@@ -290,11 +340,38 @@ object GroupEnvelope {
         kind: Byte,
         timestamp: Long,
         data: ByteArray,
+        ext: ByteArray,
     ): ByteArray {
         val gid = GroupCrypto.hexToBytes(groupIdHex)
         val sid = GroupCrypto.hexToBytes(senderMemberIdHex)
         val fixed = ByteArray(8 + 4 + MSG_ID_BYTES + 1 + 8) // epoch + msgNo + msgId + kind + ts
         ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(msgId).put(kind).putLong(timestamp)
-        return gid + sid + fixed + data
+        return gid + sid + fixed + data + ext
+    }
+
+    /** Sestaví ext trailer s jedním TLV REPLY_TO (16 B cílový msgId). */
+    internal fun encodeReplyExt(replyToMsgId: ByteArray): ByteArray {
+        require(replyToMsgId.size == MSG_ID_BYTES) { "replyTo msgId musí mít $MSG_ID_BYTES B." }
+        return byteArrayOf(EXT_TYPE_REPLY_TO, 0, MSG_ID_BYTES.toByte()) + replyToMsgId
+    }
+
+    /**
+     * Vytáhne cíl odpovědi z ext traileru (TLV `[1B type][2B len BE][value]…`). Neznámé
+     * typy přeskočí (dopředná kompatibilita); poškozený/useknutý trailer ignoruje (null) —
+     * zpráva se kvůli ozdobě nikdy neztratí. Trailer je uvnitř podpisu = autentizovaný.
+     */
+    internal fun parseReplyToFromExt(ext: ByteArray): String? {
+        var i = 0
+        while (i + 1 + EXT_LEN_FIELD <= ext.size) {
+            val type = ext[i]
+            val len = ((ext[i + 1].toInt() and 0xFF) shl 8) or (ext[i + 2].toInt() and 0xFF)
+            val vStart = i + 1 + EXT_LEN_FIELD
+            if (vStart + len > ext.size) return null // useknuté → ignoruj zbytek
+            if (type == EXT_TYPE_REPLY_TO && len == MSG_ID_BYTES) {
+                return GroupCrypto.bytesToHex(ext.copyOfRange(vStart, vStart + len))
+            }
+            i = vStart + len
+        }
+        return null
     }
 }

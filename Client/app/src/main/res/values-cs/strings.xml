@@ -586,6 +586,7 @@
     <string name="new_group">Nová skupina</string>
     <string name="new_contact">Nový kontakt</string>
     <string name="group_member_count">Počet členů: %1$d</string>
+    <string name="group_reply_member">Člen</string>
     <string name="create_group">Vytvořit skupinu</string>
     <string name="group_name_label">Název skupiny</string>
     <string name="group_your_name_label">Vaše jméno</string>

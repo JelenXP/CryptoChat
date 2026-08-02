@@ -64,6 +64,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
@@ -99,6 +118,9 @@ private val GROUP_TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 private val GROUP_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 private const val GROUP_DEFAULT_REACTION = "👍"
 
+/** Jak daleko se musí bublina odtáhnout, aby se spustila odpověď (stejné jako 1:1). */
+private const val GROUP_SWIPE_REPLY_THRESHOLD_PX = 180f
+
 /**
  * Skupinová konverzace — záměrně STEJNÁ jako 1:1 [ChatScreen]: stejné bubliny
  * (asymetrický roh, `accent.bubble`/`onBubble`, textové fajfky), oddělovače dnů,
@@ -126,11 +148,16 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     var attachMenu by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
     var emojiPickerFor by remember { mutableStateOf<String?>(null) } // msgId, pro který je otevřený plný emoji picker
+    var replyTo by remember { mutableStateOf<GroupChatMessage?>(null) } // zpráva, na kterou se odpovídá (jako 1:1)
+    var highlightedId by remember { mutableStateOf<String?>(null) } // krátce zvýrazněná po skoku z citace
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val rows = remember(messages) { GroupChatRows.build(messages) }
+    // Index pro dohledání citace + zrušení rozepsané odpovědi, když cíl zmizí (jako 1:1).
+    val byMsgId = remember(messages) { GroupChatScreenLogic.msgIdIndex(messages) }
+    LaunchedEffect(messages) { replyTo = GroupChatScreenLogic.survivingReply(messages, replyTo) }
 
     // Na popředí: potlač notifikaci a přenačítej historii + jména (příjem dělá služba).
     LaunchedEffect(groupId) {
@@ -163,13 +190,28 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         scope.launch { messages = withContext(Dispatchers.IO) { GroupChatRepository(ctx).getMessages(groupId) } }
     }
 
+    // Skok na citovanou zprávu (klik na citaci): doroluj na její řádek a krátce ji
+    // zvýrazni. Index se hledá v UŽ SESTAVENÝCH `rows`, žádné čtení historie (jako 1:1).
+    fun jumpToMessage(target: GroupChatMessage) {
+        val idx = rows.indexOfFirst { it is GroupChatRows.Row.Msg && it.message.msgIdHex == target.msgIdHex }
+        if (idx < 0) return
+        scope.launch {
+            listState.animateScrollToItem(idx)
+            highlightedId = target.msgIdHex
+            delay(1500)
+            if (highlightedId == target.msgIdHex) highlightedId = null
+        }
+    }
+
     fun sendCurrent() {
         val text = input.trim()
         if (text.isEmpty()) return
         input = ""
+        val reply = replyTo?.msgIdHex
+        replyTo = null // optimisticky zavři náhled odpovědi
         scope.launch {
             val url = SettingsRepository(ctx).getRelayUrl()
-            withContext(Dispatchers.IO) { GroupSync.sendText(ctx, group, text, url, System.currentTimeMillis()) }
+            withContext(Dispatchers.IO) { GroupSync.sendText(ctx, group, text, url, System.currentTimeMillis(), reply) }
             reload()
         }
     }
@@ -188,12 +230,14 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     }
 
     fun sendImage(uri: Uri) {
+        val reply = replyTo?.msgIdHex
+        replyTo = null
         scope.launch {
             val jpeg = withContext(Dispatchers.IO) { ChatMediaStore.compress(ctx, uri) } ?: return@launch
             val url = SettingsRepository(ctx).getRelayUrl()
             withContext(Dispatchers.IO) {
                 val path = GroupMediaStore.save(ctx, groupId, jpeg)
-                GroupSync.sendImage(ctx, group, jpeg, path, url, System.currentTimeMillis())
+                GroupSync.sendImage(ctx, group, jpeg, path, url, System.currentTimeMillis(), reply)
             }
             reload()
         }
@@ -202,6 +246,9 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) sendImage(uri)
     }
+
+    // Systémové zpět nejdřív zavře rozepsanou odpověď (jako 1:1), teprve pak odejde.
+    BackHandler(enabled = replyTo != null) { replyTo = null }
 
     Scaffold(
         topBar = {
@@ -271,12 +318,27 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                                     if (m.isSystem) {
                                         GroupSystemRow(m, myMemberId = group.myMemberId)
                                     } else {
+                                        val quote = GroupChatScreenLogic.resolveQuote(m, byMsgId)
+                                        // Jméno autora citace: „Vy" u mojí zprávy, jinak rozřešené
+                                        // (lokální kontakt má přednost), s neutrálním fallbackem.
+                                        val quotedAuthor = when {
+                                            quote.message == null -> ""
+                                            quote.message.outgoing -> stringResource(R.string.chat_reply_you)
+                                            else -> quote.message.senderMemberIdHex?.let { names[it] }
+                                                ?: stringResource(R.string.group_reply_member)
+                                        }
                                         GroupMessageBubble(
                                             message = m,
                                             senderName = m.senderMemberIdHex?.let { names[it] },
                                             myMemberId = group.myMemberId,
+                                            quoted = quote.message,
+                                            quotedMissing = quote.missing,
+                                            quotedAuthor = quotedAuthor,
+                                            highlighted = m.msgIdHex == highlightedId,
                                             onReact = { emoji -> react(m.msgIdHex, emoji) },
-                                            onMore = { emojiPickerFor = m.msgIdHex }
+                                            onMore = { emojiPickerFor = m.msgIdHex },
+                                            onReplySwipe = { replyTo = m },
+                                            onQuoteClick = { quote.message?.let { jumpToMessage(it) } }
                                         )
                                     }
                                 }
@@ -284,6 +346,12 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                         }
                     }
                 }
+            }
+            // Náhled odpovědi nad vstupem (jako 1:1) — pruh s citovaným autorem + text.
+            replyTo?.let { r ->
+                val author = if (r.outgoing) stringResource(R.string.chat_reply_you)
+                else r.senderMemberIdHex?.let { names[it] } ?: stringResource(R.string.group_reply_member)
+                GroupReplyComposerPreview(message = r, author = author, onCancel = { replyTo = null })
             }
             // Vstupní lišta — jako 1:1: příloha (fotka) + incognito pole + odeslat.
             Surface(tonalElevation = 2.dp) {
@@ -355,11 +423,25 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, myMemberId: String, onReact: (String) -> Unit, onMore: () -> Unit) {
+private fun GroupMessageBubble(
+    message: GroupChatMessage,
+    senderName: String?,
+    myMemberId: String,
+    quoted: GroupChatMessage?,
+    quotedMissing: Boolean,
+    quotedAuthor: String,
+    highlighted: Boolean,
+    onReact: (String) -> Unit,
+    onMore: () -> Unit,
+    onReplySwipe: () -> Unit,
+    onQuoteClick: () -> Unit,
+) {
     val outgoing = message.outgoing
     val accent = LocalDesign.current.accent
     val bubbleColor = if (outgoing) accent.bubble else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (outgoing) accent.onBubble else MaterialTheme.colorScheme.onSurfaceVariant
+    // Barva pruhu a autora citace jako 1:1: uvnitř mojí bubliny `onBubble`, u cizí `primary`.
+    val quoteAccent = if (outgoing) accent.onBubble else MaterialTheme.colorScheme.primary
     val shape = RoundedCornerShape(
         topStart = 16.dp, topEnd = 16.dp,
         bottomStart = if (outgoing) 16.dp else 4.dp,
@@ -368,7 +450,23 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, m
     val myReaction = message.reactions[myMemberId]
     var showPicker by remember { mutableStateOf(false) }
 
-    Column {
+    val haptics = LocalHapticFeedback.current
+    // Krátké zvýraznění po skoku z citace (fade dovnitř i ven) — jako 1:1.
+    val highlightBg by animateColorAsState(
+        targetValue = if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+        label = "groupQuoteHighlight"
+    )
+    // Swipe doprava = odpověď (jako 1:1): posun se během tahu mění přímo, po puštění animuje zpět.
+    var dragX by remember(message.msgIdHex) { mutableFloatStateOf(0f) }
+    var dragging by remember(message.msgIdHex) { mutableStateOf(false) }
+    val offsetX by animateFloatAsState(
+        targetValue = dragX,
+        animationSpec = if (dragging) snap() else spring(),
+        label = "groupSwipeReply"
+    )
+    var passedThreshold by remember(message.msgIdHex) { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth().background(highlightBg).padding(vertical = 2.dp)) {
         if (!outgoing && senderName != null) {
             Text(
                 senderName,
@@ -378,7 +476,28 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, m
             )
         }
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(message.msgIdHex) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = {
+                            if (dragX >= GROUP_SWIPE_REPLY_THRESHOLD_PX) onReplySwipe()
+                            passedThreshold = false; dragging = false; dragX = 0f
+                        },
+                        onDragCancel = { passedThreshold = false; dragging = false; dragX = 0f }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        // Jen doprava a s odporem (0.6), ať gesto nepůsobí, že bublinu odtáhneš pryč.
+                        val next = (dragX + dragAmount * 0.6f).coerceIn(0f, GROUP_SWIPE_REPLY_THRESHOLD_PX * 1.3f)
+                        if (!passedThreshold && next >= GROUP_SWIPE_REPLY_THRESHOLD_PX) {
+                            passedThreshold = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                        dragX = next
+                    }
+                },
             horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
         ) {
             Box {
@@ -395,6 +514,17 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, m
                         )
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
+                    // Citace nad obsahem (jako 1:1 QuotedBlock) — klik skočí na originál.
+                    if (quoted != null || quotedMissing) {
+                        GroupQuotedBlock(
+                            quoted = quoted,
+                            missing = quotedMissing,
+                            author = quotedAuthor,
+                            accent = quoteAccent,
+                            textColor = textColor,
+                            onClick = onQuoteClick
+                        )
+                    }
                     if (message.kind == GroupChatMessage.Kind.IMAGE) {
                         GroupImage(message.mediaPath)
                     } else {
@@ -438,6 +568,83 @@ private fun GroupMessageBubble(message: GroupChatMessage, senderName: String?, m
         }
         if (message.reactions.isNotEmpty()) {
             GroupReactionChips(message.reactions, outgoing)
+        }
+    }
+}
+
+/** Citace uvnitř skupinové bubliny — barevný pruh vlevo, autor a náhled textu (jako 1:1 QuotedBlock). */
+@Composable
+private fun GroupQuotedBlock(
+    quoted: GroupChatMessage?,
+    missing: Boolean,
+    author: String,
+    accent: Color,
+    textColor: Color,
+    onClick: (() -> Unit)? = null,
+) {
+    if (quoted == null && !missing) return
+    // Klik skočí na originál — jen když cíl v historii pořád je (u „nedostupné" není kam skočit).
+    val clickable = onClick != null && quoted != null
+    Row(
+        modifier = Modifier
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .then(if (clickable) Modifier.clickable { onClick!!() } else Modifier)
+            .background(textColor.copy(alpha = 0.10f))
+            .height(IntrinsicSize.Min)
+    ) {
+        Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(accent))
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            if (quoted != null) {
+                Text(author, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1)
+                Text(
+                    groupQuotedSummary(quoted),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.85f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    stringResource(R.string.chat_reply_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.7f),
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+/** Krátký popis skupinové zprávy pro citaci (u fotky není text) — jako 1:1 `quotedSummary`. */
+@Composable
+private fun groupQuotedSummary(message: GroupChatMessage): String = when (message.kind) {
+    GroupChatMessage.Kind.IMAGE -> stringResource(R.string.chat_reply_photo)
+    else -> message.text
+}
+
+/** Náhled nad vstupním polem, když se píše odpověď (jako 1:1 ReplyComposerPreview). */
+@Composable
+private fun GroupReplyComposerPreview(message: GroupChatMessage, author: String, onCancel: () -> Unit) {
+    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.width(3.dp).height(34.dp).background(MaterialTheme.colorScheme.primary))
+            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(author, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+                Text(
+                    groupQuotedSummary(message),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_cancel_reply))
+            }
         }
     }
 }

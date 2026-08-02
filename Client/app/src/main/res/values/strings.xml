@@ -586,6 +586,7 @@
     <string name="new_group">New group</string>
     <string name="new_contact">New contact</string>
     <string name="group_member_count">%1$d members</string>
+    <string name="group_reply_member">Member</string>
     <string name="create_group">Create group</string>
     <string name="group_name_label">Group name</string>
     <string name="group_your_name_label">Your name</string>
