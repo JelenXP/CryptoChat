@@ -79,6 +79,19 @@ object GroupEnvelope {
      */
     const val KIND_REACTION: Byte = 3
 
+    /**
+     * Úprava zprávy: `data` = `[16B cílový msgId][nový text UTF-8]`. Autor úpravy =
+     * odesílatel; smí upravit jen VLASTNÍ zprávu (příjemce ověří odesílatele cíle).
+     * Řídicí — přepíše text cílové zprávy, nejde do historie jako nový řádek.
+     */
+    const val KIND_EDIT: Byte = 4
+
+    /**
+     * Smazání zprávy pro všechny (náhrobek): `data` = `[16B cílový msgId]`. Odesílatel
+     * smí smazat jen VLASTNÍ zprávu. Řídicí — z cílové zprávy udělá náhrobek.
+     */
+    const val KIND_DELETE: Byte = 5
+
     private const val LABEL_MSG = "CryptoChat/group/msg/v1"
 
     /** Rozbalený obsah skupinové zprávy. */
@@ -92,6 +105,12 @@ object GroupEnvelope {
 
         /** Reakce na [targetMsgIdHex]; [emoji] prázdné = zrušení. Reagující = odesílatel. */
         data class Reaction(override val timestamp: Long, val targetMsgIdHex: String, val emoji: String) : Opened
+
+        /** Úprava zprávy [targetMsgIdHex] na [newText]. Autor = odesílatel (jen vlastní zpráva). */
+        data class Edit(override val timestamp: Long, val targetMsgIdHex: String, val newText: String) : Opened
+
+        /** Smazání zprávy [targetMsgIdHex] pro všechny (náhrobek). Autor = odesílatel. */
+        data class Delete(override val timestamp: Long, val targetMsgIdHex: String) : Opened
     }
 
     /**
@@ -299,6 +318,16 @@ object GroupEnvelope {
                 val target = GroupCrypto.bytesToHex(data.copyOfRange(0, MSG_ID_BYTES))
                 val emoji = String(data, MSG_ID_BYTES, data.size - MSG_ID_BYTES, Charsets.UTF_8)
                 Opened.Reaction(timestamp, target, emoji)
+            }
+            KIND_EDIT -> {
+                if (data.size < MSG_ID_BYTES) return Result.Unreadable
+                val target = GroupCrypto.bytesToHex(data.copyOfRange(0, MSG_ID_BYTES))
+                val newText = String(data, MSG_ID_BYTES, data.size - MSG_ID_BYTES, Charsets.UTF_8)
+                Opened.Edit(timestamp, target, newText)
+            }
+            KIND_DELETE -> {
+                if (data.size != MSG_ID_BYTES) return Result.Unreadable
+                Opened.Delete(timestamp, GroupCrypto.bytesToHex(data))
             }
             else -> return Result.Unreadable // neznámý kind → karanténa
         }

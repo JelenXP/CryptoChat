@@ -43,4 +43,57 @@ object GroupChatScreenLogic {
         val found = index[ref]?.takeIf { !it.isSystem }
         return Quote(found, missing = found == null)
     }
+
+    /**
+     * Smí se tahle zpráva UPRAVIT? Jen MOJE textová a ještě nesmazaná (kind==TEXT vylučuje
+     * fotku i systémový řádek, outgoing vylučuje cizí). msgId je vždy (na rozdíl od 1:1
+     * `wireRef`), takže se netestuje. (Jako 1:1 [ChatScreenLogic.canEdit].)
+     */
+    fun canEdit(message: GroupChatMessage): Boolean =
+        message.outgoing && message.kind == GroupChatMessage.Kind.TEXT && !message.deleted
+
+    /**
+     * Smí se vybrané zprávy SMAZAT PRO VŠECHNY? Jen když jsou VŠECHNY moje a ještě
+     * nesmazané. „Smazat u mě" jde vždy, tohle je navíc. Prázdný výběr = ne. (Jako 1:1.)
+     */
+    fun canDeleteForEveryone(messages: List<GroupChatMessage>): Boolean =
+        messages.isNotEmpty() && messages.all { it.outgoing && !it.deleted }
+
+    /**
+     * Text ke zkopírování z vybraných zpráv, v pořadí ze [messages]. Prázdné (fotka bez
+     * textu) se přeskočí; víc zpráv se spojí novým řádkem. (Jako 1:1 [ChatScreenLogic.copyText].)
+     */
+    fun copyText(messages: List<GroupChatMessage>, selectedIds: Set<String>): String =
+        messages.filter { it.msgIdHex in selectedIds && it.text.isNotBlank() }
+            .joinToString("\n") { it.text }
+
+    /**
+     * Má režim úpravy PŘEŽÍT? True, jen když upravovaná zpráva ([editingId]) v seznamu
+     * pořád je a NENÍ smazaná — jinak by se rozepsaný text uložil do náhrobku/neexistující
+     * zprávy. null = neupravuje se → false. (Jako 1:1 [ChatScreenLogic.survivingEdit].)
+     */
+    fun survivingEdit(messages: List<GroupChatMessage>, editingId: String?): Boolean =
+        editingId != null && messages.any { it.msgIdHex == editingId && !it.deleted }
+
+    /** Vybrané zprávy, které v seznamu pořád jsou (zmizelé se z výběru vypustí). */
+    fun survivingIds(messages: List<GroupChatMessage>, selectedIds: Set<String>): Set<String> {
+        if (selectedIds.isEmpty()) return selectedIds
+        val present = messages.mapTo(HashSet(messages.size)) { it.msgIdHex }
+        return selectedIds.filterTo(HashSet()) { it in present }
+    }
+
+    /** Přepne členství id ve výběru (klepnutí na vybranou zprávu ji odznačí). */
+    fun toggleSelection(selectedIds: Set<String>, id: String): Set<String> =
+        if (id in selectedIds) selectedIds - id else selectedIds + id
+
+    /**
+     * Zprávy odpovídající hledání [query] (prázdný dotaz = všechny). Hledá v textu bez
+     * ohledu na velikost písmen; fotky/náhrobky bez textu a systémové řádky se neshodují.
+     * (Jako 1:1 [ChatScreenLogic.filterMessages].)
+     */
+    fun filterMessages(messages: List<GroupChatMessage>, query: String): List<GroupChatMessage> {
+        val q = query.trim()
+        if (q.isEmpty()) return messages
+        return messages.filter { !it.isSystem && it.text.contains(q, ignoreCase = true) }
+    }
 }

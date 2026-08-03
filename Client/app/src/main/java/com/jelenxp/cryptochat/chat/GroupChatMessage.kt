@@ -28,6 +28,10 @@ data class GroupChatMessage(
      * Nastaví se jednou při vzniku zprávy a přežije dedup (je součástí objektu).
      */
     val replyToMsgIdHex: String? = null,
+    /** Kdy byla zpráva upravena (null = neupravená). Náhrobek je vůči úpravě imunní (jako 1:1). */
+    val editedAt: Long? = null,
+    /** Náhrobek: smazaná pro všechny (nebo u mě) — vykreslí se jako šedé „Smazáno" (jako 1:1). */
+    val deleted: Boolean = false,
 ) {
     /** Odchozí = poslal jsem já. Systémové zprávy odchozí NEJSOU (nemají stav). */
     val outgoing: Boolean get() = senderMemberIdHex == null && !isSystem

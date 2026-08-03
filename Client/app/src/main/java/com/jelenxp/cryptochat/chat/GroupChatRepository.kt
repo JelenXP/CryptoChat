@@ -104,6 +104,63 @@ class GroupChatRepository(
             return if (saveLocked(groupId, list)) MutationResult.UPDATED else MutationResult.FAILED
         }
 
+    /**
+     * Úprava zprávy [targetMsgIdHex] na [newText] (autor smí upravit jen VLASTNÍ zprávu).
+     * [senderMemberIdHex] = odesílatel cíle NA TOMTO zařízení: `null` pro moji odchozí
+     * (odeslání), memberId protějšku pro příchozí (příjem) — tím se vynutí „jen vlastní" a
+     * rozliší kolize msgId (anti-cenzura). Náhrobek je imunní; STARŠÍ úprava (podle [timestamp]
+     * vůči `editedAt`) se zahodí. NOT_FOUND když cíl není. (Jako 1:1 `applyEdit`.)
+     */
+    fun applyEdit(groupId: String, targetMsgIdHex: String, newText: String, timestamp: Long, senderMemberIdHex: String?): MutationResult =
+        synchronized(lock) {
+            val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
+            val idx = current.indexOfFirst { it.msgIdHex == targetMsgIdHex && it.senderMemberIdHex == senderMemberIdHex }
+            if (idx < 0) return MutationResult.NOT_FOUND
+            val cur = current[idx]
+            if (cur.deleted) return MutationResult.UPDATED // náhrobek se needituje
+            if (cur.editedAt != null && timestamp < cur.editedAt) return MutationResult.UPDATED // starší úprava se zahodí
+            if (cur.text == newText && cur.editedAt == timestamp) return MutationResult.UPDATED // no-op
+            val list = current.toMutableList().also { it[idx] = cur.copy(text = newText, editedAt = timestamp) }
+            return if (saveLocked(groupId, list)) MutationResult.UPDATED else MutationResult.FAILED
+        }
+
+    /**
+     * Smaže zprávu [targetMsgIdHex] PRO VŠECHNY (náhrobek): vyprázdní text/fotku/reakce/
+     * editaci a nastaví `deleted`. [senderMemberIdHex] rozliší kopii jako u [applyEdit]
+     * (jen vlastní zpráva). Idempotentní. Uklidí i soubor fotky. (Jako 1:1 `deleteForBoth`.)
+     */
+    fun deleteForBoth(groupId: String, targetMsgIdHex: String, senderMemberIdHex: String?): MutationResult =
+        synchronized(lock) {
+            val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
+            val idx = current.indexOfFirst { it.msgIdHex == targetMsgIdHex && it.senderMemberIdHex == senderMemberIdHex }
+            if (idx < 0) return MutationResult.NOT_FOUND
+            val cur = current[idx]
+            if (cur.deleted) return MutationResult.UPDATED // idempotent
+            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true) }
+            return if (saveLocked(groupId, list)) {
+                cur.mediaPath?.let { runCatching { java.io.File(it).delete() } } // ukliď fotku až po úspěšném zápisu
+                MutationResult.UPDATED
+            } else MutationResult.FAILED
+        }
+
+    /**
+     * Smaže zprávu [msgIdHex] JEN U MĚ (lokální náhrobek, bez broadcastu) — funguje na
+     * JAKOUKOLI zprávu (moji i cizí), match jen podle msgId. Idempotentní. (Jako 1:1 `deleteForMe`.)
+     */
+    fun deleteForMe(groupId: String, msgIdHex: String): MutationResult =
+        synchronized(lock) {
+            val current = loadForWriteLocked(groupId) ?: return MutationResult.FAILED
+            val idx = current.indexOfFirst { it.msgIdHex == msgIdHex }
+            if (idx < 0) return MutationResult.NOT_FOUND
+            val cur = current[idx]
+            if (cur.deleted) return MutationResult.UPDATED
+            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true) }
+            return if (saveLocked(groupId, list)) {
+                cur.mediaPath?.let { runCatching { java.io.File(it).delete() } }
+                MutationResult.UPDATED
+            } else MutationResult.FAILED
+        }
+
     /** Smaže celou historii skupiny (po opuštění/smazání skupiny). Best-effort. */
     fun clear(groupId: String) = synchronized(lock) {
         try {
@@ -174,6 +231,8 @@ class GroupChatRepository(
             put("react", JSONObject().also { r -> m.reactions.forEach { (k, v) -> r.put(k, v) } })
         }
         m.replyToMsgIdHex?.let { put("reply", it) } // jen u odpovědí → staré záznamy beze změny
+        m.editedAt?.let { put("ed", it) }            // jen u upravených
+        if (m.deleted) put("del", true)              // jen u náhrobků
     }
 
     private fun fromJson(o: JSONObject): GroupChatMessage? {
@@ -197,6 +256,8 @@ class GroupChatRepository(
             pendingRecipients = pending,
             reactions = reactions,
             replyToMsgIdHex = if (o.has("reply")) o.optString("reply") else null,
+            editedAt = if (o.has("ed")) o.optLong("ed") else null,
+            deleted = o.optBoolean("del", false),
         )
     }
 

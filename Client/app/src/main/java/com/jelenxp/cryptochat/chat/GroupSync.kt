@@ -148,6 +148,35 @@ object GroupSync {
         val recipients = group.otherMembers().map { it.memberIdHex }
         if (recipients.isEmpty()) return 0
         val data = GroupCrypto.hexToBytes(targetMsgIdHex) + emoji.toByteArray(Charsets.UTF_8)
+        return fanoutControl(context, group, GroupEnvelope.KIND_REACTION, data, recipients, baseUrl, nowMs)
+    }
+
+    /**
+     * Úprava (nový text) MOJÍ zprávy [targetMsgIdHex]: aplikuje se HNED lokálně (autor = já,
+     * `sender=null`) a rozešle všem jako [GroupEnvelope.KIND_EDIT]. Best-effort. (Jako 1:1 sendEdit.)
+     */
+    fun sendEdit(context: Context, group: Group, targetMsgIdHex: String, newText: String, baseUrl: String, nowMs: Long): Int {
+        repo(context).applyEdit(group.groupId, targetMsgIdHex, newText, nowMs, null)
+        val recipients = group.otherMembers().map { it.memberIdHex }
+        if (recipients.isEmpty()) return 0
+        val data = GroupCrypto.hexToBytes(targetMsgIdHex) + newText.toByteArray(Charsets.UTF_8)
+        return fanoutControl(context, group, GroupEnvelope.KIND_EDIT, data, recipients, baseUrl, nowMs)
+    }
+
+    /**
+     * Smazání MOJÍ zprávy [targetMsgIdHex] PRO VŠECHNY: lokálně náhrobek (`deleteForBoth`,
+     * `sender=null`) + rozeslání [GroupEnvelope.KIND_DELETE] všem. Best-effort. (Jako 1:1
+     * sendDeleteForEveryone — u protějšku, který to neumí přečíst, degraduje na „smazat u mě".)
+     */
+    fun sendDeleteForEveryone(context: Context, group: Group, targetMsgIdHex: String, baseUrl: String, nowMs: Long): Int {
+        repo(context).deleteForBoth(group.groupId, targetMsgIdHex, null)
+        val recipients = group.otherMembers().map { it.memberIdHex }
+        if (recipients.isEmpty()) return 0
+        return fanoutControl(context, group, GroupEnvelope.KIND_DELETE, GroupCrypto.hexToBytes(targetMsgIdHex), recipients, baseUrl, nowMs)
+    }
+
+    /** Rozešle jednu ŘÍDICÍ zprávu (reakce/edit/delete) všem příjemcům; vrací počet úspěšných putů. */
+    private fun fanoutControl(context: Context, group: Group, kind: Byte, data: ByteArray, recipients: List<String>, baseUrl: String, nowMs: Long): Int {
         val epoch = group.groupEpoch
         val msgId = GroupCrypto.randomMsgId()
         val msgNo = GroupSendCounter.next(context, group.groupId, epoch)
@@ -155,7 +184,7 @@ object GroupSync {
         val day = dayEpoch(nowMs)
         var sent = 0
         for (rcpt in recipients) {
-            val blob = GroupEnvelope.seal(GroupEnvelope.KIND_REACTION, data, nowMs, msgNo, msgId, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, rcpt)
+            val blob = GroupEnvelope.seal(kind, data, nowMs, msgNo, msgId, msgKey, group.mySignPrivateKeyBase64, group.myMemberId, epoch, group.groupId, rcpt)
             if (transport.put(baseUrl, GroupCrypto.inboxId(group.gsBase64, group.groupId, rcpt, day), blob)) sent++
         }
         return sent
@@ -292,12 +321,12 @@ object GroupSync {
             GroupCrypto.senderRootKey(group.gsBase64, gid, header.senderMemberIdHex, header.groupEpoch), header.msgNo
         )
         return when (val opened = GroupEnvelope.open(blob, msgKey, senderPub, gid, group.myMemberId)) {
-            is GroupEnvelope.Result.Ok -> handleOpened(context, group, blob, opened, baseUrl, nowMs)
+            is GroupEnvelope.Result.Ok -> handleOpened(context, group, blob, opened, baseUrl, nowMs, fromQuarantine)
             GroupEnvelope.Result.Unreadable -> quarantineOrFail(context, gid, blob, fromQuarantine)
         }
     }
 
-    private fun handleOpened(context: Context, group: Group, blob: ByteArray, ok: GroupEnvelope.Result.Ok, baseUrl: String, nowMs: Long): Outcome {
+    private fun handleOpened(context: Context, group: Group, blob: ByteArray, ok: GroupEnvelope.Result.Ok, baseUrl: String, nowMs: Long, fromQuarantine: Boolean): Outcome {
         val gid = group.groupId
         val r = repo(context)
         when (val c = ok.content) {
@@ -317,6 +346,25 @@ object GroupSync {
                 }
                 ReplayGuard.remember(context, gid, blob)
                 return Outcome.HANDLED
+            }
+            is GroupEnvelope.Opened.Edit -> {
+                // Autor úpravy = odesílatel; smí upravit JEN svou zprávu (sender = ok.senderMemberIdHex).
+                // Když cíl ještě není (úprava dorazila dřív), odlož do KARANTÉNY a zkus později —
+                // jinak by se úprava ztratila. Náhrobek/starší úprava řeší applyEdit (UPDATED bez změny).
+                return when (r.applyEdit(gid, c.targetMsgIdHex, c.newText, c.timestamp, ok.senderMemberIdHex)) {
+                    GroupChatRepository.MutationResult.FAILED -> Outcome.FAILED_WRITE
+                    GroupChatRepository.MutationResult.NOT_FOUND -> quarantineOrFail(context, gid, blob, fromQuarantine)
+                    GroupChatRepository.MutationResult.UPDATED -> { ReplayGuard.remember(context, gid, blob); Outcome.HANDLED }
+                }
+            }
+            is GroupEnvelope.Opened.Delete -> {
+                // Smazání pro všechny; autor smí smazat JEN svou zprávu. Chybějící cíl → KARANTÉNA
+                // (smazání se dobere, až zpráva dorazí — jinak by smazaná zpráva zůstala viset).
+                return when (r.deleteForBoth(gid, c.targetMsgIdHex, ok.senderMemberIdHex)) {
+                    GroupChatRepository.MutationResult.FAILED -> Outcome.FAILED_WRITE
+                    GroupChatRepository.MutationResult.NOT_FOUND -> quarantineOrFail(context, gid, blob, fromQuarantine)
+                    GroupChatRepository.MutationResult.UPDATED -> { ReplayGuard.remember(context, gid, blob); Outcome.HANDLED }
+                }
             }
             is GroupEnvelope.Opened.Text, is GroupEnvelope.Opened.Image -> {
                 val (chatKind, text, mediaPath) = when (c) {

@@ -1271,7 +1271,7 @@ private const val SWIPE_REPLY_THRESHOLD_PX = 180f
  * i spodek vysoké poslední zprávy. Bez něj `scrollToItem(last)` skončí s vrškem
  * poslední zprávy nahoře = „skoro na konci".
  */
-private const val SCROLL_BOTTOM_OFFSET = 1_000_000
+internal const val SCROLL_BOTTOM_OFFSET = 1_000_000
 
 /** Hlavička dne v proudu zpráv („Dnes" / „Včera" / datum). Vystředěný štítek. */
 @Composable
@@ -1320,7 +1320,7 @@ private fun UnreadDividerRow() {
 
 /** Malé plovoucí tlačítko „skočit na konec" s odznakem počtu nových zpráv. */
 @Composable
-private fun JumpToBottomButton(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun JumpToBottomButton(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier) {
         SmallFloatingActionButton(
             onClick = onClick,
@@ -1808,7 +1808,7 @@ private fun ChatTrustChangedNotice(
  * FLAG_SECURE dál platí - screenshoty jsou blokované.
  */
 @Composable
-private fun FullscreenImageViewer(path: String, onDismiss: () -> Unit) {
+internal fun FullscreenImageViewer(path: String, onDismiss: () -> Unit) {
     // Bitmapu ber PRIMÁRNĚ z cache - bublina ji právě dekódovala, takže fullscreen
     // se otevře OKAMŽITĚ, bez probliknutí spinneru. Když v cache není (vzácné),
     // dodekóduj mimo hlavní vlákno.
@@ -1910,7 +1910,7 @@ private fun FullscreenImageViewer(path: String, onDismiss: () -> Unit) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SearchTopBar(
+internal fun SearchTopBar(
     query: String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit
@@ -2108,7 +2108,7 @@ private fun MessageBubble(
  * (odchozí tyrkysová i příchozí šedá) i v tmavém motivu.
  */
 @Composable
-private fun HighlightedText(
+internal fun HighlightedText(
     text: String,
     query: String,
     color: Color,
