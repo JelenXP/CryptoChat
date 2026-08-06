@@ -17,7 +17,11 @@ object GroupChatRows {
             override val key get() = "day_$epochDay"
         }
         data class Msg(val message: GroupChatMessage) : Row {
-            override val key get() = message.msgIdHex
+            // Klíč musí být unikátní i při KOLIZI msgId: repo záměrně drží dvě zprávy se
+            // stejným msgId od různých odesílatelů (anti-cenzura), takže `msgId` sám by
+            // LazyColumn shodil na „Key already used". Identita řádku = (sender, msgId),
+            // stejně jako dedup v GroupChatRepository. (Audit 2026-08-03-groups-2, kritická.)
+            override val key get() = (message.senderMemberIdHex ?: "") + ":" + message.msgIdHex
         }
     }
 

@@ -69,6 +69,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -169,7 +170,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     var searchQuery by remember { mutableStateOf("") }
     var fullscreenImagePath by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<List<GroupChatMessage>?>(null) }
-    var stickToBottom by remember { mutableStateOf(true) }
+    var stickToBottom by rememberSaveable { mutableStateOf(true) } // přežije rotaci/proces (jako 1:1)
 
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -257,11 +258,12 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     }
 
     fun cancelEditing() {
+        if (editing == null) return // není co rušit → nesahej na rozepsaný text (audit groups-4)
         input = draftBeforeEdit ?: ""; draftBeforeEdit = null; editing = null
     }
 
     fun startEditing(m: GroupChatMessage) {
-        draftBeforeEdit = input
+        if (editing == null) draftBeforeEdit = input // při přepnutí edit→edit neztrať původní koncept (audit groups-7)
         editing = m
         input = m.text
         replyTo = null
@@ -384,10 +386,10 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                     canEdit = single != null && GroupChatScreenLogic.canEdit(single),
                     canCopy = GroupChatScreenLogic.copyText(messages, selectedIds).isNotBlank(),
                     onClose = { selectedIds = emptySet() },
-                    onReply = { single?.let { replyTo = it }; selectedIds = emptySet() },
+                    onReply = { cancelEditing(); single?.let { replyTo = it }; selectedIds = emptySet() },
                     onEdit = { single?.let { startEditing(it) } },
                     onCopy = { copySelected() },
-                    onDelete = { pendingDelete = selectedMsgs }
+                    onDelete = { pendingDelete = selectedMsgs; selectedIds = emptySet() }
                 )
                 searchMode -> SearchTopBar(searchQuery, { searchQuery = it }, { searchMode = false; searchQuery = "" })
                 else -> TopAppBar(
@@ -818,7 +820,10 @@ private fun GroupMessageBubble(
                     Popup(
                         popupPositionProvider = remember(outgoing) { AboveAnchorPosition(alignEnd = outgoing) },
                         onDismissRequest = onDismissReactions,
-                        properties = PopupProperties(focusable = true)
+                        // NEfokusovatelný (jako 1:1): fokusovatelný Popup je dotykově modální a
+                        // spolkl by kliky na akční lištu (Upravit/Smazat) i dlouhý stisk další
+                        // bubliny. (Audit 2026-08-03-groups-3, high.) Paleta se schová změnou výběru.
+                        properties = PopupProperties(focusable = false)
                     ) {
                         ReactionPicker(
                             emojis = GROUP_REACTIONS,

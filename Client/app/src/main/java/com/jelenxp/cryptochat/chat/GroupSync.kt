@@ -156,7 +156,9 @@ object GroupSync {
      * `sender=null`) a rozešle všem jako [GroupEnvelope.KIND_EDIT]. Best-effort. (Jako 1:1 sendEdit.)
      */
     fun sendEdit(context: Context, group: Group, targetMsgIdHex: String, newText: String, baseUrl: String, nowMs: Long): Int {
-        repo(context).applyEdit(group.groupId, targetMsgIdHex, newText, nowMs, null)
+        // Když lokální zápis selže, NEVYSÍLEJ — jinak protějšky úpravu aplikují, ale moje
+        // kopie zůstane stará = tichý trvalý desync (audit groups-6). Jako send() pro nové zprávy.
+        if (repo(context).applyEdit(group.groupId, targetMsgIdHex, newText, nowMs, null) != GroupChatRepository.MutationResult.UPDATED) return 0
         val recipients = group.otherMembers().map { it.memberIdHex }
         if (recipients.isEmpty()) return 0
         val data = GroupCrypto.hexToBytes(targetMsgIdHex) + newText.toByteArray(Charsets.UTF_8)
@@ -169,7 +171,8 @@ object GroupSync {
      * sendDeleteForEveryone — u protějšku, který to neumí přečíst, degraduje na „smazat u mě".)
      */
     fun sendDeleteForEveryone(context: Context, group: Group, targetMsgIdHex: String, baseUrl: String, nowMs: Long): Int {
-        repo(context).deleteForBoth(group.groupId, targetMsgIdHex, null)
+        // Selhal-li lokální zápis náhrobku, NEVYSÍLEJ (stejná logika jako sendEdit; audit groups-6).
+        if (repo(context).deleteForBoth(group.groupId, targetMsgIdHex, null) != GroupChatRepository.MutationResult.UPDATED) return 0
         val recipients = group.otherMembers().map { it.memberIdHex }
         if (recipients.isEmpty()) return 0
         return fanoutControl(context, group, GroupEnvelope.KIND_DELETE, GroupCrypto.hexToBytes(targetMsgIdHex), recipients, baseUrl, nowMs)
@@ -193,6 +196,7 @@ object GroupSync {
     /** Přepošle nedoručenou zprávu příjemcům, kteří ji ještě nepotvrdili (pending). */
     fun resend(context: Context, group: Group, msgIdHex: String, baseUrl: String, nowMs: Long): Int {
         val msg = repo(context).getMessages(group.groupId).firstOrNull { it.outgoing && it.msgIdHex == msgIdHex } ?: return 0
+        if (msg.deleted) return 0 // náhrobek se nepřeposílá (audit groups-5)
         if (msg.pendingRecipients.isEmpty()) return 0
         // Odebraní členové už nejsou v rosteru: novým GS by zprávu stejně nerozšifrovali, a
         // jejich doručenka nikdy nedorazí. Vyřaď je z pending (→ zpráva může dojít na DELIVERED)
@@ -234,7 +238,7 @@ object GroupSync {
         if (baseUrl.isBlank()) return 0
         val now = System.currentTimeMillis()
         val stuck = repo(context).getMessages(group.groupId).filter {
-            it.outgoing && it.pendingRecipients.isNotEmpty() &&
+            it.outgoing && !it.deleted && it.pendingRecipients.isNotEmpty() &&
                 (now - it.timestamp) in (RESEND_MIN_AGE_MS + 1) until RESEND_MAX_AGE_MS
         }
         var resent = 0

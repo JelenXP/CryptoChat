@@ -359,6 +359,15 @@ object GroupEnvelope {
      * Autentizovaný kontext pro podpis odesílatele (bez příjemce → společný pro všechny
      * kopie). `ext` je trailer za daty (prázdný u zpráv bez ozdoby) — zapečením do podpisu
      * je odpověď chráněná proti podvržení/strhnutí insiderem.
+     *
+     * **Svázání hranice data|ext (audit 2026-08-03-groups-1, kritická):** `data` i `ext`
+     * jsou proměnné délky a spojují se bez oddělovače; `dataLen` je v šifře, ale NEbyl v
+     * podpisu. Insider (zná klíč) tak mohl POSUNOUT hranici — zkrátit `data` a zbytek dát
+     * do `ext` — a znovupoužít podpis oběti (zobrazil by zkrácený text jako od ní, zrušil
+     * reakci, udělal edit-na-prázdno). Obrana: při NEPRÁZDNÉM ext se do podpisu přidají
+     * DÉLKY `data` a `ext`. Útok vždy vyrobí neprázdný ext → spustí délkový tvar → nesedí
+     * s původním podpisem. PRÁZDNÝ ext se podepisuje jako dřív, takže golden i zprávy bez
+     * ozdoby drží beze změny (a re-split zprávy bez ozdoby vyrobí ext → délkový tvar → padá).
      */
     private fun sigData(
         groupIdHex: String,
@@ -373,9 +382,16 @@ object GroupEnvelope {
     ): ByteArray {
         val gid = GroupCrypto.hexToBytes(groupIdHex)
         val sid = GroupCrypto.hexToBytes(senderMemberIdHex)
-        val fixed = ByteArray(8 + 4 + MSG_ID_BYTES + 1 + 8) // epoch + msgNo + msgId + kind + ts
-        ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(msgId).put(kind).putLong(timestamp)
-        return gid + sid + fixed + data + ext
+        return if (ext.isEmpty()) {
+            val fixed = ByteArray(8 + 4 + MSG_ID_BYTES + 1 + 8) // epoch + msgNo + msgId + kind + ts
+            ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(msgId).put(kind).putLong(timestamp)
+            gid + sid + fixed + data
+        } else {
+            val fixed = ByteArray(8 + 4 + MSG_ID_BYTES + 1 + 8 + 4 + 4) // … + dataLen + extLen
+            ByteBuffer.wrap(fixed).putLong(groupEpoch).putInt(msgNo).put(msgId).put(kind).putLong(timestamp)
+                .putInt(data.size).putInt(ext.size)
+            gid + sid + fixed + data + ext
+        }
     }
 
     /** Sestaví ext trailer s jedním TLV REPLY_TO (16 B cílový msgId). */

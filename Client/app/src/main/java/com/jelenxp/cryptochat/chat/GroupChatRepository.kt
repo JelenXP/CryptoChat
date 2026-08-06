@@ -136,7 +136,9 @@ class GroupChatRepository(
             if (idx < 0) return MutationResult.NOT_FOUND
             val cur = current[idx]
             if (cur.deleted) return MutationResult.UPDATED // idempotent
-            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true) }
+            // pendingRecipients se VYNULUJE: obsah je pryč, není co doručovat — jinak by
+            // flushOutbox/resend přeposlal náhrobek jako prázdnou zprávu (audit groups-5).
+            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true, pendingRecipients = emptySet()) }
             return if (saveLocked(groupId, list)) {
                 cur.mediaPath?.let { runCatching { java.io.File(it).delete() } } // ukliď fotku až po úspěšném zápisu
                 MutationResult.UPDATED
@@ -154,7 +156,9 @@ class GroupChatRepository(
             if (idx < 0) return MutationResult.NOT_FOUND
             val cur = current[idx]
             if (cur.deleted) return MutationResult.UPDATED
-            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true) }
+            // pendingRecipients se VYNULUJE: obsah je pryč, není co doručovat — jinak by
+            // flushOutbox/resend přeposlal náhrobek jako prázdnou zprávu (audit groups-5).
+            val list = current.toMutableList().also { it[idx] = cur.copy(text = "", mediaPath = null, reactions = emptyMap(), editedAt = null, deleted = true, pendingRecipients = emptySet()) }
             return if (saveLocked(groupId, list)) {
                 cur.mediaPath?.let { runCatching { java.io.File(it).delete() } }
                 MutationResult.UPDATED
