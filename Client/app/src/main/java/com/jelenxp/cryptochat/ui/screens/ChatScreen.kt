@@ -798,74 +798,30 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                 val selectedMsgs = messages.filter { it.id in selectedIds }
                 val single = selectedMsgs.singleOrNull()
                 val copyable = ChatScreenLogic.copyText(messages, selectedIds)
-                TopAppBar(
-                    title = { Text(stringResource(R.string.chat_selection_count, selectedIds.size)) },
-                    navigationIcon = {
-                        IconButton(onClick = { selectedIds = emptySet() }) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = stringResource(R.string.content_desc_clear_selection)
-                            )
-                        }
+                SelectionTopBar(
+                    count = selectedIds.size,
+                    // Odpověď/úprava dávají smysl jen u JEDNÉ zprávy; na náhrobek ne
+                    // (konzistence se swipe-reply). Odpověď navíc potřebuje wireRef.
+                    canReply = single != null && canChat && single.wireRef != null && !single.deleted,
+                    canEdit = single != null && canChat && ChatScreenLogic.canEdit(single),
+                    // Kopírovat/smazat jdou i pro víc zpráv naráz.
+                    canCopy = copyable.isNotBlank(),
+                    onClose = { selectedIds = emptySet() },
+                    onReply = {
+                        // Odpověď a úprava se vylučují - zruš rozepsanou úpravu (jinak by
+                        // nad vstupem visely dva náhledy a odpověď by se tiše zahodila).
+                        cancelEditing()
+                        single?.let { replyTo = it }; selectedIds = emptySet()
+                        // Odpověď potřebuje vstupní řádek, skrytý při hledání - tak ho zavři.
+                        searchMode = false; searchQuery = ""
                     },
-                    actions = {
-                        // Odpověď a reakce dávají smysl jen u JEDNÉ zprávy; na
-                        // náhrobek ne (konzistence se swipe-reply, které má !deleted).
-                        if (single != null && canChat && single.wireRef != null && !single.deleted) {
-                            IconButton(onClick = {
-                                // Odpověď a úprava se vylučují - zruš rozepsanou úpravu
-                                // (jinak by nad vstupem visely dva náhledy a odpověď by
-                                // se při odeslání tiše zahodila, protože edit má přednost).
-                                cancelEditing()
-                                replyTo = single; selectedIds = emptySet()
-                                // Odpověď potřebuje vstupní řádek, který je při hledání
-                                // skrytý - tak hledání zavři, ať se náhled i pole ukážou.
-                                searchMode = false; searchQuery = ""
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Reply,
-                                    contentDescription = stringResource(R.string.chat_action_reply)
-                                )
-                            }
-                        }
-                        // Úprava jen u JEDNÉ mojí textové (nesmazané) zprávy.
-                        if (single != null && canChat && ChatScreenLogic.canEdit(single)) {
-                            IconButton(onClick = { startEditing(single) }) {
-                                Icon(
-                                    Icons.Default.Edit,
-                                    contentDescription = stringResource(R.string.chat_action_edit)
-                                )
-                            }
-                        }
-                        // Kopírování a mazání jdou i pro víc zpráv naráz.
-                        if (copyable.isNotBlank()) {
-                            IconButton(onClick = {
-                                clipboard.setText(AnnotatedString(copyable))
-                                selectedIds = emptySet()
-                                Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
-                            }) {
-                                Icon(
-                                    Icons.Default.ContentCopy,
-                                    contentDescription = stringResource(R.string.chat_action_copy)
-                                )
-                            }
-                        }
-                        IconButton(onClick = {
-                            pendingDelete = selectedMsgs
-                            selectedIds = emptySet()
-                        }) {
-                            Icon(
-                                Icons.Default.DeleteOutline,
-                                contentDescription = stringResource(R.string.chat_action_delete)
-                            )
-                        }
+                    onEdit = { single?.let { startEditing(it) } },
+                    onCopy = {
+                        clipboard.setText(AnnotatedString(copyable))
+                        selectedIds = emptySet()
+                        Toast.makeText(context, copiedLabel, Toast.LENGTH_SHORT).show()
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        titleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        actionIconContentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+                    onDelete = { pendingDelete = selectedMsgs; selectedIds = emptySet() }
                 )
             } else if (searchMode) {
                 // Hledání: lišta se přepne na vyhledávací pole. Šipka vlevo (jako
@@ -1225,36 +1181,12 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // takže se nedá získat zpátky. U MOJICH zpráv nabídne i „smazat pro všechny".
     if (pendingDelete.isNotEmpty()) {
         val toDelete = pendingDelete
-        val everyone = ChatScreenLogic.canDeleteForEveryone(toDelete)
-        AlertDialog(
-            onDismissRequest = { pendingDelete = emptyList() },
-            title = { Text(stringResource(R.string.chat_delete_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        if (everyone) R.string.chat_delete_choose_body else R.string.chat_delete_body
-                    )
-                )
-            },
-            confirmButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    if (everyone) {
-                        TextButton(onClick = {
-                            pendingDelete = emptyList()
-                            deleteForEveryone(toDelete)   // toast až podle výsledku
-                        }) { Text(stringResource(R.string.chat_delete_for_everyone)) }
-                    }
-                    TextButton(onClick = {
-                        pendingDelete = emptyList()
-                        deleteForMe(toDelete)             // toast až podle výsledku
-                    }) { Text(stringResource(R.string.chat_action_delete)) }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = emptyList() }) {
-                    Text(stringResource(R.string.btn_cancel))
-                }
-            }
+        DeleteMessagesDialog(
+            canDeleteForEveryone = ChatScreenLogic.canDeleteForEveryone(toDelete),
+            // Toast až podle výsledku (uvnitř deleteForEveryone/deleteForMe).
+            onDeleteForEveryone = { pendingDelete = emptyList(); deleteForEveryone(toDelete) },
+            onDeleteForMe = { pendingDelete = emptyList(); deleteForMe(toDelete) },
+            onDismiss = { pendingDelete = emptyList() }
         )
     }
 }

@@ -378,7 +378,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     Scaffold(
         topBar = {
             when {
-                selectedIds.isNotEmpty() -> GroupSelectionTopBar(
+                selectedIds.isNotEmpty() -> SelectionTopBar(
                     count = selectedIds.size,
                     canReply = single != null && !single.deleted,
                     canEdit = single != null && GroupChatScreenLogic.canEdit(single),
@@ -570,33 +570,13 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         )
     }
 
-    // Potvrzení mazání — jako 1:1: když jsou VŠECHNY vybrané moje, nabídne i „pro všechny".
+    // Potvrzení mazání — sdílené s 1:1: když jsou VŠECHNY vybrané moje, nabídne i „pro všechny".
     pendingDelete?.let { toDelete ->
-        val everyone = GroupChatScreenLogic.canDeleteForEveryone(toDelete)
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text(stringResource(R.string.chat_delete_title)) },
-            text = { Text(stringResource(if (everyone) R.string.chat_delete_choose_body else R.string.chat_delete_body)) },
-            confirmButton = {
-                if (everyone) {
-                    TextButton(onClick = { pendingDelete = null; deleteForEveryone(toDelete) }) {
-                        Text(stringResource(R.string.chat_delete_for_everyone))
-                    }
-                } else {
-                    TextButton(onClick = { pendingDelete = null; deleteForMe(toDelete) }) {
-                        Text(stringResource(R.string.chat_action_delete))
-                    }
-                }
-            },
-            dismissButton = {
-                if (everyone) {
-                    TextButton(onClick = { pendingDelete = null; deleteForMe(toDelete) }) {
-                        Text(stringResource(R.string.chat_action_delete))
-                    }
-                } else {
-                    TextButton(onClick = { pendingDelete = null }) { Text(stringResource(android.R.string.cancel)) }
-                }
-            }
+        DeleteMessagesDialog(
+            canDeleteForEveryone = GroupChatScreenLogic.canDeleteForEveryone(toDelete),
+            onDeleteForEveryone = { pendingDelete = null; deleteForEveryone(toDelete) },
+            onDeleteForMe = { pendingDelete = null; deleteForMe(toDelete) },
+            onDismiss = { pendingDelete = null }
         )
     }
 
@@ -612,44 +592,6 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     fullscreenImagePath?.let { path ->
         FullscreenImageViewer(path, onDismiss = { fullscreenImagePath = null })
     }
-}
-
-/** Akční lišta výběrového režimu — jako 1:1: zavřít, odpovědět, upravit, kopírovat, smazat. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun GroupSelectionTopBar(
-    count: Int,
-    canReply: Boolean,
-    canEdit: Boolean,
-    canCopy: Boolean,
-    onClose: () -> Unit,
-    onReply: () -> Unit,
-    onEdit: () -> Unit,
-    onCopy: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    TopAppBar(
-        navigationIcon = {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_back))
-            }
-        },
-        title = { Text(count.toString(), style = MaterialTheme.typography.titleLarge) },
-        actions = {
-            if (canReply) IconButton(onClick = onReply) {
-                Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = stringResource(R.string.chat_action_reply))
-            }
-            if (canEdit) IconButton(onClick = onEdit) {
-                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.chat_action_edit))
-            }
-            if (canCopy) IconButton(onClick = onCopy) {
-                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.chat_action_copy))
-            }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.chat_action_delete))
-            }
-        }
-    )
 }
 
 /**
