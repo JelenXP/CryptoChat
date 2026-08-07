@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
@@ -53,6 +54,29 @@ import androidx.compose.ui.viewinterop.AndroidView
  * úprava ho předvyplní) se promítne přes `update`; psaní uživatele hlásí
  * [onValueChange]. Guard `text != value` v `update` brání smyčce i skoku kurzoru.
  */
+/**
+ * Ovladač [IncognitoTextField] pro SYNCHRONNÍ vyprázdnění pole po odeslání.
+ *
+ * **Proč ne `value = ""`:** zápis přes Compose stav promítne `setText("")` až
+ * `update` blok `AndroidView` — o snímek (~16 ms) později. Znaky, které uživatel
+ * v tom okně stihne napsat (fotku pole pořád drží starou zprávu), to opožděné
+ * `setText("")` SMAŽE — přesně proto se u další zprávy „sežralo" prvních 1-2
+ * písmen (rychlé psaní = 2, jedno pomalé = 1). [clear] vyprázdní [EditText] rovnou
+ * v obsluze kliknutí na Odeslat, takže žádné kolizní okno nevznikne.
+ */
+@Stable
+class IncognitoTextFieldController {
+    internal var editText: EditText? = null
+
+    /** Okamžitě (mimo rekompozici) vyprázdní pole a resetuje IME. Volej po odeslání. */
+    fun clear() {
+        val et = editText ?: return
+        et.setText("")
+        et.setSelection(0)
+        (et.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.restartInput(et)
+    }
+}
+
 @Composable
 fun IncognitoTextField(
     value: String,
@@ -60,7 +84,8 @@ fun IncognitoTextField(
     hint: String,
     enabled: Boolean,
     modifier: Modifier = Modifier,
-    maxLines: Int = 5
+    maxLines: Int = 5,
+    controller: IncognitoTextFieldController? = null
 ) {
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
@@ -118,7 +143,10 @@ fun IncognitoTextField(
                     })
                 }
             },
+            onRelease = { controller?.editText = null },
             update = { et ->
+                // Reference pro synchronní clear() po odeslání (viz [IncognitoTextFieldController]).
+                controller?.editText = et
                 if (et.text.toString() != value) {
                     et.setText(value)
                     et.setSelection(value.length)

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jelenxp.cryptochat.R
 import com.jelenxp.cryptochat.ui.components.IncognitoTextField
+import com.jelenxp.cryptochat.ui.components.IncognitoTextFieldController
 
 /**
  * Sdílené „chrome" prvky proudu zpráv (lišty a dialogy) — STEJNÉ v 1:1 [ChatScreen]
@@ -201,6 +202,7 @@ internal fun MessageComposerRow(
     sendEnabled: Boolean,
     onSend: () -> Unit,
     leading: (@Composable () -> Unit)? = null,
+    controller: IncognitoTextFieldController? = null,
 ) {
     Surface(tonalElevation = 2.dp) {
         Row(
@@ -216,7 +218,8 @@ internal fun MessageComposerRow(
                 onValueChange = onInputChange,
                 hint = hint,
                 enabled = inputEnabled,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                controller = controller
             )
             FilledIconButton(onClick = onSend, enabled = sendEnabled) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.content_desc_send))

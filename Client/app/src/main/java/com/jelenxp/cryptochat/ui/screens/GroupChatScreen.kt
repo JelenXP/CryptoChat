@@ -111,6 +111,7 @@ import com.jelenxp.cryptochat.data.SettingsRepository
 import com.jelenxp.cryptochat.ui.components.AboveAnchorPosition
 import com.jelenxp.cryptochat.ui.components.ContactAvatar
 import com.jelenxp.cryptochat.ui.components.IncognitoTextField
+import com.jelenxp.cryptochat.ui.components.IncognitoTextFieldController
 import com.jelenxp.cryptochat.ui.components.ReactionPicker
 import com.jelenxp.cryptochat.ui.emoji.EmojiPickerSheet
 import com.jelenxp.cryptochat.ui.theme.LocalDesign
@@ -155,6 +156,9 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
     var names by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loaded by remember { mutableStateOf(false) } // proti bliku „no messages yet" před 1. načtením
     var input by remember { mutableStateOf("") }
+    // Ovladač vstupu pro SYNCHRONNÍ vyprázdnění po odeslání (jako 1:1) - async `input = ""`
+    // jinak sežere prvních 1-2 písmena další zprávy.
+    val composerController = remember { IncognitoTextFieldController() }
     var menuOpen by remember { mutableStateOf(false) }
     var attachMenu by remember { mutableStateOf(false) }
     var showLeaveDialog by remember { mutableStateOf(false) }
@@ -274,7 +278,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         if (text.isEmpty()) return
         val ed = editing
         if (ed != null) { // odeslání ÚPRAVY
-            input = ""; editing = null; draftBeforeEdit = null
+            composerController.clear(); input = ""; editing = null; draftBeforeEdit = null
             scope.launch {
                 val url = SettingsRepository(ctx).getRelayUrl()
                 withContext(Dispatchers.IO) { GroupSync.sendEdit(ctx, group, ed.msgIdHex, text, url, System.currentTimeMillis()) }
@@ -282,6 +286,8 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
             }
             return
         }
+        // SYNCHRONNÍ vyprázdnění (ne async `input = ""`) - viz IncognitoTextFieldController.
+        composerController.clear()
         input = ""
         val reply = replyTo?.msgIdHex
         replyTo = null // optimisticky zavři náhled odpovědi
@@ -541,7 +547,8 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                                 }
                             }
                         }
-                    } else null
+                    } else null,
+                    controller = composerController
                 )
             }
         }

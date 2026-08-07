@@ -128,6 +128,7 @@ import com.jelenxp.cryptochat.chat.MuteStore
 import com.jelenxp.cryptochat.chat.RelaySync
 import com.jelenxp.cryptochat.chat.isMutedAt
 import com.jelenxp.cryptochat.ui.components.IncognitoTextField
+import com.jelenxp.cryptochat.ui.components.IncognitoTextFieldController
 import com.jelenxp.cryptochat.ui.components.MuteDurationDialog
 import com.jelenxp.cryptochat.chat.TorForegroundService
 import com.jelenxp.cryptochat.chat.WireCompat
@@ -195,6 +196,9 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
     // výšce a chat nezablikal. Cache je teplá po průchodu seznamem (MainScreen volá
     // DraftStore.all). Studená cache → "" a dorovná se async efektem níž.
     var input by remember(id) { mutableStateOf(DraftStore.cachedDraft(id) ?: "") }
+    // Ovladač vstupního pole pro SYNCHRONNÍ vyprázdnění po odeslání (viz sendCurrent) -
+    // bez něj async `input = ""` sežere prvních 1-2 písmena další zprávy.
+    val composerController = remember(id) { IncognitoTextFieldController() }
     // Dotkl se uživatel pole? Latch proti TOCTOU v async načtení draftu (studená cache):
     // kdyby uživatel v tom okně napsal a zase smazal text, `input.isEmpty()` by ho pustilo
     // a async by pak vzkřísil starý draft. Nastavuje se jen na SKUTEČNÝ uživatelský vstup
@@ -571,6 +575,10 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             }
             return
         }
+        // SYNCHRONNÍ vyprázdnění pole (ne async `input = ""`) - jinak opožděné setText
+        // z rekompozice smaže prvních 1-2 písmena další zprávy. clear() přes watcher
+        // srovná i `input`. Fallback `input = ""` pro případ, že pole ještě není připojené.
+        composerController.clear()
         input = ""
         // Vlastní odeslání = chci vidět svou zprávu dole, i když jsem byl v historii.
         stickToBottom = true
@@ -1126,7 +1134,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             )
                         }
                     }
-                }
+                },
+                controller = composerController
             )
             } // konec if (!searchMode) - skrytí spodní části při hledání
         }
