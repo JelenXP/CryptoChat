@@ -1,5 +1,6 @@
 package com.jelenxp.cryptochat.ui.components
 
+import android.content.Context
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Editable
@@ -9,6 +10,7 @@ import android.text.TextPaint
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -120,6 +122,12 @@ fun IncognitoTextField(
                 if (et.text.toString() != value) {
                     et.setText(value)
                     et.setSelection(value.length)
+                    // Po PROGRAMOVÉ změně textu (vyprázdnění po odeslání, předvyplnění úpravy)
+                    // resetuj vstup IME. Klávesnice si jinak drží STARÝ composing region z
+                    // předchozího slova a po odeslání sežere první písmeno/dvě nové zprávy
+                    // (zapíše je do neplatného regionu). restartInput donutí klávesnici načíst
+                    // stav pole znovu. Volá se JEN při programové změně (guard výše), ne při psaní.
+                    (et.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.restartInput(et)
                 }
                 if (et.isEnabled != enabled) et.isEnabled = enabled
                 et.hint = hint
