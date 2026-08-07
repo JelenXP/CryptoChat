@@ -124,8 +124,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val GROUP_TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
-
 /** Paleta rychlých reakcí (dlouhý stisk bubliny) + výchozí pro dvojklik. */
 private val GROUP_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 private const val GROUP_DEFAULT_REACTION = "👍"
@@ -686,24 +684,6 @@ private fun GroupMessageBubble(
 ) {
     val outgoing = message.outgoing
     val deleted = message.deleted
-    val accent = LocalDesign.current.accent
-    val bubbleColor = when {
-        deleted -> MaterialTheme.colorScheme.surfaceVariant
-        outgoing -> accent.bubble
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val textColor = when {
-        deleted -> MaterialTheme.colorScheme.onSurfaceVariant
-        outgoing -> accent.onBubble
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    // Barva pruhu/autora citace jako 1:1: uvnitř mojí bubliny `onBubble`, u cizí `primary`.
-    val quoteAccent = if (outgoing) accent.onBubble else MaterialTheme.colorScheme.primary
-    val shape = RoundedCornerShape(
-        topStart = 16.dp, topEnd = 16.dp,
-        bottomStart = if (outgoing) 16.dp else 4.dp,
-        bottomEnd = if (outgoing) 4.dp else 16.dp
-    )
     val myReaction = message.reactions[myMemberId]
 
     val haptics = LocalHapticFeedback.current
@@ -753,76 +733,38 @@ private fun GroupMessageBubble(
             horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
         ) {
             Box {
-                Column(
-                    modifier = Modifier
-                        .widthIn(max = 300.dp)
-                        .clip(shape)
-                        .background(bubbleColor)
-                        .combinedClickable(
-                            onClick = {
-                                when {
-                                    selectionMode -> onTapInSelection()
-                                    message.status == GroupChatMessage.Status.FAILED && outgoing -> onRetry()
-                                    message.kind == GroupChatMessage.Kind.IMAGE && !deleted -> onImageClick()
-                                }
-                            },
-                            onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onSelect() },
-                            onDoubleClick = { if (!selectionMode && !deleted) onReact(if (myReaction == GROUP_DEFAULT_REACTION) "" else GROUP_DEFAULT_REACTION) }
-                        )
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    if (deleted) {
-                        Text(
-                            stringResource(R.string.chat_message_deleted),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                            color = textColor.copy(alpha = 0.85f)
-                        )
-                    } else {
-                        if (quoted != null || quotedMissing) {
+                ChatBubbleContent(
+                    outgoing = outgoing,
+                    deleted = deleted,
+                    status = message.status.toBubbleStatus(),
+                    text = message.text,
+                    timestampMillis = message.timestamp,
+                    editedAt = message.editedAt,
+                    highlightQuery = highlightQuery,
+                    quoted = if (quoted != null || quotedMissing) {
+                        { accent, tColor ->
                             ChatQuotedBlock(
                                 author = quotedAuthor,
                                 summary = quoted?.let { groupQuotedSummary(it) } ?: "",
                                 missing = quotedMissing,
-                                accent = quoteAccent,
-                                textColor = textColor,
+                                accent = accent,
+                                textColor = tColor,
                                 onClick = onQuoteClick
                             )
                         }
-                        if (message.kind == GroupChatMessage.Kind.IMAGE) {
-                            GroupImage(message.mediaPath)
-                        } else {
-                            HighlightedText(
-                                text = message.text,
-                                query = highlightQuery,
-                                color = textColor,
-                                style = MaterialTheme.typography.bodyLarge,
-                                format = true
-                            )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (message.editedAt != null && !deleted) {
-                            Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = textColor.copy(alpha = 0.7f))
-                        }
-                        Text(
-                            GROUP_TIME_FORMAT.format(Date(message.timestamp)),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = textColor.copy(alpha = 0.7f)
-                        )
-                        if (outgoing && !deleted) {
-                            Text(
-                                statusGlyph(message.status),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (message.status == GroupChatMessage.Status.FAILED)
-                                    MaterialTheme.colorScheme.error else textColor.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
-                }
+                    } else null,
+                    media = if (message.kind == GroupChatMessage.Kind.IMAGE) {
+                        { _ -> GroupImage(message.mediaPath) }
+                    } else null,
+                    tapOpensMedia = message.kind == GroupChatMessage.Kind.IMAGE,
+                    onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onSelect() },
+                    onTapInSelection = if (selectionMode) onTapInSelection else null,
+                    onDoubleTap = if (!selectionMode && !deleted) {
+                        { onReact(if (myReaction == GROUP_DEFAULT_REACTION) "" else GROUP_DEFAULT_REACTION) }
+                    } else null,
+                    onImageClick = onImageClick,
+                    onRetry = onRetry
+                )
                 if (showReactionPicker && !deleted) {
                     Popup(
                         popupPositionProvider = remember(outgoing) { AboveAnchorPosition(alignEnd = outgoing) },
@@ -841,14 +783,6 @@ private fun GroupMessageBubble(
                     }
                 }
             }
-        }
-        if (message.status == GroupChatMessage.Status.FAILED && outgoing && !deleted) {
-            Text(
-                stringResource(R.string.chat_retry_hint),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.align(Alignment.End).padding(top = 1.dp, end = 4.dp)
-            )
         }
         if (message.reactions.isNotEmpty() && !deleted) {
             ChatReactionChips(message.reactions.values.toList(), outgoing)
@@ -916,12 +850,12 @@ private fun GroupEditComposerPreview(message: GroupChatMessage, onCancel: () -> 
     }
 }
 
-/** Textová fajfka jako v 1:1 `StatusGlyph`: SENT „✓", DELIVERED „✓✓", FAILED „!". */
-private fun statusGlyph(status: GroupChatMessage.Status): String = when (status) {
-    GroupChatMessage.Status.SENDING -> "…"
-    GroupChatMessage.Status.SENT -> "✓"
-    GroupChatMessage.Status.DELIVERED -> "✓✓"
-    GroupChatMessage.Status.FAILED -> "!"
+/** Mapování stavu skupinové zprávy na sdílený [BubbleStatus] pro fajfku (jako 1:1). */
+private fun GroupChatMessage.Status.toBubbleStatus(): BubbleStatus = when (this) {
+    GroupChatMessage.Status.SENDING -> BubbleStatus.SENDING
+    GroupChatMessage.Status.SENT -> BubbleStatus.SENT
+    GroupChatMessage.Status.DELIVERED -> BubbleStatus.DELIVERED
+    GroupChatMessage.Status.FAILED -> BubbleStatus.FAILED
 }
 
 /**

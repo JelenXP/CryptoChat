@@ -1864,9 +1864,22 @@ internal fun SearchTopBar(
     )
 }
 
-private val TIME_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
+/** Mapování stavu 1:1 zprávy na sdílený [BubbleStatus] pro fajfku. */
+private fun ChatMessage.Status.toBubbleStatus(): BubbleStatus = when (this) {
+    ChatMessage.Status.SENDING -> BubbleStatus.SENDING
+    ChatMessage.Status.SENT -> BubbleStatus.SENT
+    ChatMessage.Status.DELIVERED -> BubbleStatus.DELIVERED
+    ChatMessage.Status.FAILED -> BubbleStatus.FAILED
+    // Přijaté zprávy (i rozpracovaný příjem souboru) stavovou ikonu nemají.
+    ChatMessage.Status.RECEIVED, ChatMessage.Status.RECEIVING -> BubbleStatus.NONE
+}
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Bublina 1:1 zprávy — jen ADAPTÉR nad sdíleným [ChatBubbleContent] (STEJNÝM se
+ * skupinou): doplní 1:1 obsah (fotka/soubor přes [ChatImage]/[FileBubble]), citaci
+ * a pruh reakcí. Vzhled bubliny samotné (klip, patička, náhrobek, fajfka) žije ve
+ * sdíleném composable, ať 1:1 a skupina nedivergují.
+ */
 @Composable
 private fun MessageBubble(
     message: ChatMessage,
@@ -1881,80 +1894,10 @@ private fun MessageBubble(
     onQuoteClick: (() -> Unit)? = null,
     onImageClick: (() -> Unit)? = null
 ) {
-    val outgoing = message.outgoing
     val deleted = message.deleted
-    // Smazaná zpráva je vždy neutrální šedá (i moje odchozí), ať „Deleted" čte
-    // jako šedý text - ne bílý na tyrkysové bublině.
-    // Vlastní (odchozí) bublina má světlý odstín podle zvoleného accentu, aby se
-    // volba accentu v konverzaci projevila (viz [AccentColor.bubble]). Text i
-    // citace v ní jsou tmavé ([onBubble]); přijatá bublina zůstává neutrální.
-    val outAccent = LocalDesign.current.accent
-    val bubbleColor = when {
-        deleted -> MaterialTheme.colorScheme.surfaceVariant
-        outgoing -> outAccent.bubble
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val textColor = when {
-        deleted -> MaterialTheme.colorScheme.onSurfaceVariant
-        outgoing -> outAccent.onBubble
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val accent = if (outgoing) outAccent.onBubble else MaterialTheme.colorScheme.primary
-    val shape = RoundedCornerShape(
-        topStart = 16.dp, topEnd = 16.dp,
-        bottomStart = if (outgoing) 16.dp else 4.dp,
-        bottomEnd = if (outgoing) 4.dp else 16.dp
-    )
-
-    Column {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
-    ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(shape)
-                .background(bubbleColor)
-                // Dlouhý stisk otevírá výběr. Klepnutí: ve výběru přepíná
-                // označení ([onTap]), jinak jen opakuje ODCHOZÍ neúspěšnou zprávu
-                // (příchozí se opakovat nedá, viz ChatScreen.retry).
-                .then(
-                    if (onLongPress != null) Modifier.combinedClickable(
-                        onLongClick = onLongPress,
-                        onDoubleClick = onDoubleTap,
-                        onClick = {
-                            when {
-                                // Ve výběrovém režimu má přednost přepnutí označení.
-                                onTap != null -> onTap()
-                                // NEúspěšná odchozí zpráva (i fotka): klepnutí = opakovat
-                                // odeslání. MUSÍ být PŘED větví fotky - jinak by u FAILED
-                                // fotky vyhrála „otevři fullscreen" a klepnutí na „opakovat"
-                                // by se ztratilo (nápověda „klepni pro opakování" by lhala).
-                                message.status == ChatMessage.Status.FAILED && outgoing -> onRetry()
-                                // Klepnutí na (doručenou) fotku ji otevře přes celou obrazovku.
-                                message.kind == ChatMessage.Kind.IMAGE && !deleted && onImageClick != null -> onImageClick()
-                            }
-                        }
-                    ) else if (message.status == ChatMessage.Status.FAILED && outgoing)
-                        Modifier.clickable { onRetry() } else Modifier
-                )
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            if (deleted) {
-                // Náhrobek: místo obsahu jen šedý kurzívní „Deleted" a čas.
-                Text(
-                    stringResource(R.string.chat_message_deleted),
-                    style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                    color = textColor.copy(alpha = 0.85f)
-                )
-                Text(
-                    TIME_FORMAT.format(Date(message.timestamp)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = textColor.copy(alpha = 0.7f),
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp)
-                )
-            } else {
+    val quotedSlot: (@Composable (Color, Color) -> Unit)? =
+        if (quoted != null || quotedMissing) {
+            { accent, textColor ->
                 QuotedBlock(
                     quoted = quoted,
                     missing = quotedMissing,
@@ -1963,53 +1906,39 @@ private fun MessageBubble(
                     textColor = textColor,
                     onClick = onQuoteClick
                 )
-                when (message.kind) {
-                    ChatMessage.Kind.IMAGE -> ChatImage(path = message.mediaPath)
-                    ChatMessage.Kind.FILE -> FileBubble(message = message, textColor = textColor, highlightQuery = highlightQuery)
-                    else -> HighlightedText(
-                        text = message.text,
-                        query = highlightQuery,
-                        color = textColor,
-                        format = true
-                    )
-                }
-                Row(
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    // „upraveno" u upravené zprávy, vedle času.
-                    if (message.editedAt != null) {
-                        Text(
-                            stringResource(R.string.chat_edited),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = textColor.copy(alpha = 0.7f)
-                        )
-                    }
-                    Text(
-                        TIME_FORMAT.format(Date(message.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.7f)
-                    )
-                    if (outgoing) StatusGlyph(message.status, textColor)
-                }
-                if (message.status == ChatMessage.Status.FAILED) {
-                    Text(
-                        // Odchozí = „klepni pro opakování"; příchozí soubor se
-                        // opakovat nedá, tak jen „přijetí selhalo".
-                        stringResource(
-                            if (outgoing) R.string.chat_retry_hint else R.string.chat_receive_failed
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
             }
-        }
+        } else null
+    val mediaSlot: (@Composable (Color) -> Unit)? = when (message.kind) {
+        ChatMessage.Kind.IMAGE -> { _ -> ChatImage(path = message.mediaPath) }
+        ChatMessage.Kind.FILE -> { textColor -> FileBubble(message = message, textColor = textColor, highlightQuery = highlightQuery) }
+        else -> null
     }
-    // Reakce se u náhrobku vyprázdní, takže tady stejně nic nebude - ale ať je
-    // to explicitní, u smazané zprávy pruh reakcí nekreslíme.
-    if (!deleted) ReactionChips(reactions = message.visibleReactions, outgoing = outgoing)
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start
+        ) {
+            ChatBubbleContent(
+                outgoing = message.outgoing,
+                deleted = deleted,
+                status = message.status.toBubbleStatus(),
+                text = message.text,
+                timestampMillis = message.timestamp,
+                editedAt = message.editedAt,
+                highlightQuery = highlightQuery,
+                quoted = quotedSlot,
+                media = mediaSlot,
+                tapOpensMedia = message.kind == ChatMessage.Kind.IMAGE,
+                onLongPress = onLongPress,
+                onTapInSelection = onTap,
+                onDoubleTap = onDoubleTap,
+                onImageClick = onImageClick,
+                onRetry = onRetry
+            )
+        }
+        // Reakce se u náhrobku vyprázdní, ale ať je to explicitní, u smazané nekreslíme.
+        if (!deleted) ReactionChips(reactions = message.visibleReactions, outgoing = message.outgoing)
     }
 }
 
@@ -2192,35 +2121,6 @@ private fun fileIconFor(mimeType: String?): ImageVector = when {
     mimeType.startsWith("video/") -> Icons.Default.Movie
     mimeType.startsWith("audio/") -> Icons.Default.MusicNote
     else -> Icons.Default.InsertDriveFile
-}
-
-@Composable
-private fun StatusGlyph(status: ChatMessage.Status, tint: Color) {
-    when (status) {
-        ChatMessage.Status.SENDING -> Icon(
-            Icons.Default.Schedule, contentDescription = stringResource(R.string.content_desc_sending),
-            modifier = Modifier.size(14.dp), tint = tint.copy(alpha = 0.7f)
-        )
-        // Jedna fajfka = doručeno na relay server.
-        ChatMessage.Status.SENT -> Text(
-            "✓",
-            style = MaterialTheme.typography.labelSmall,
-            color = tint.copy(alpha = 0.7f)
-        )
-        // Dvě fajfky = protějšek si zprávu vyzvedl na zařízení a potvrdil to.
-        ChatMessage.Status.DELIVERED -> Text(
-            "✓✓",
-            style = MaterialTheme.typography.labelSmall,
-            color = tint.copy(alpha = 0.7f)
-        )
-        ChatMessage.Status.FAILED -> Icon(
-            Icons.Default.ErrorOutline, contentDescription = stringResource(R.string.content_desc_not_delivered),
-            modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error
-        )
-        // Přijaté zprávy (i rozpracovaný příjem souboru) stavovou ikonu nemají -
-        // ta je jen u odchozích.
-        ChatMessage.Status.RECEIVED, ChatMessage.Status.RECEIVING -> {}
-    }
 }
 
 /**
