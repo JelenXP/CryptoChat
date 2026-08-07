@@ -458,7 +458,7 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                     ) {
                         items(rows, key = { it.key }) { row ->
                             when (row) {
-                                is GroupChatRows.Row.Day -> GroupDayDivider(row.epochDay)
+                                is GroupChatRows.Row.Day -> ChatDayDivider(row.epochDay)
                                 is GroupChatRows.Row.Msg -> {
                                     val m = row.message
                                     if (m.isSystem) {
@@ -779,7 +779,14 @@ private fun GroupMessageBubble(
                         )
                     } else {
                         if (quoted != null || quotedMissing) {
-                            GroupQuotedBlock(quoted, quotedMissing, quotedAuthor, quoteAccent, textColor, onClick = onQuoteClick)
+                            ChatQuotedBlock(
+                                author = quotedAuthor,
+                                summary = quoted?.let { groupQuotedSummary(it) } ?: "",
+                                missing = quotedMissing,
+                                accent = quoteAccent,
+                                textColor = textColor,
+                                onClick = onQuoteClick
+                            )
                         }
                         if (message.kind == GroupChatMessage.Kind.IMAGE) {
                             GroupImage(message.mediaPath)
@@ -844,50 +851,7 @@ private fun GroupMessageBubble(
             )
         }
         if (message.reactions.isNotEmpty() && !deleted) {
-            GroupReactionChips(message.reactions, outgoing)
-        }
-    }
-}
-
-/** Citace uvnitř skupinové bubliny — barevný pruh vlevo, autor a náhled textu (jako 1:1 QuotedBlock). */
-@Composable
-private fun GroupQuotedBlock(
-    quoted: GroupChatMessage?,
-    missing: Boolean,
-    author: String,
-    accent: Color,
-    textColor: Color,
-    onClick: (() -> Unit)? = null,
-) {
-    if (quoted == null && !missing) return
-    val clickable = onClick != null && quoted != null
-    Row(
-        modifier = Modifier
-            .padding(bottom = 4.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .then(if (clickable) Modifier.clickable { onClick!!() } else Modifier)
-            .background(textColor.copy(alpha = 0.10f))
-            .height(IntrinsicSize.Min)
-    ) {
-        Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(accent))
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            if (quoted != null) {
-                Text(author, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1)
-                Text(
-                    groupQuotedSummary(quoted),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = textColor.copy(alpha = 0.85f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            } else {
-                Text(
-                    stringResource(R.string.chat_reply_unavailable),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = textColor.copy(alpha = 0.7f),
-                    maxLines = 1
-                )
-            }
+            ChatReactionChips(message.reactions.values.toList(), outgoing)
         }
     }
 }
@@ -952,59 +916,12 @@ private fun GroupEditComposerPreview(message: GroupChatMessage, onCancel: () -> 
     }
 }
 
-/** Čipy reakcí pod bublinou (emoji × počet), zarovnané na stranu bubliny. */
-@Composable
-private fun GroupReactionChips(reactions: Map<String, String>, outgoing: Boolean) {
-    val counts = reactions.values.groupingBy { it }.eachCount()
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            counts.forEach { (emoji, count) ->
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 1.dp) {
-                    Text(
-                        if (count > 1) "$emoji $count" else emoji,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
 /** Textová fajfka jako v 1:1 `StatusGlyph`: SENT „✓", DELIVERED „✓✓", FAILED „!". */
 private fun statusGlyph(status: GroupChatMessage.Status): String = when (status) {
     GroupChatMessage.Status.SENDING -> "…"
     GroupChatMessage.Status.SENT -> "✓"
     GroupChatMessage.Status.DELIVERED -> "✓✓"
     GroupChatMessage.Status.FAILED -> "!"
-}
-
-/** Oddělovač dne — shodný s 1:1 `DayHeaderRow`. */
-@Composable
-private fun GroupDayDivider(epochDay: Long) {
-    val today = remember { java.time.LocalDate.now().toEpochDay() }
-    val label = when (ChatScreenLogic.dayLabel(epochDay, today)) {
-        ChatScreenLogic.DayLabel.TODAY -> stringResource(R.string.chat_day_today)
-        ChatScreenLogic.DayLabel.YESTERDAY -> stringResource(R.string.chat_day_yesterday)
-        ChatScreenLogic.DayLabel.OLDER -> remember(epochDay) {
-            java.time.LocalDate.ofEpochDay(epochDay).format(
-                java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM)
-            )
-        }
-    }
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 1.dp) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-    }
 }
 
 /**

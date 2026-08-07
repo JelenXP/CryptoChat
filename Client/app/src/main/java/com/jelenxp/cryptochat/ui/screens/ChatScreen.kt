@@ -1273,34 +1273,9 @@ private const val SWIPE_REPLY_THRESHOLD_PX = 180f
  */
 internal const val SCROLL_BOTTOM_OFFSET = 1_000_000
 
-/** Hlavička dne v proudu zpráv („Dnes" / „Včera" / datum). Vystředěný štítek. */
+/** Hlavička dne — sdílené [ChatDayDivider] (STEJNÉ v 1:1 i skupině). */
 @Composable
-private fun DayHeaderRow(epochDay: Long) {
-    val today = remember { java.time.LocalDate.now().toEpochDay() }
-    val label = when (ChatScreenLogic.dayLabel(epochDay, today)) {
-        ChatScreenLogic.DayLabel.TODAY -> stringResource(R.string.chat_day_today)
-        ChatScreenLogic.DayLabel.YESTERDAY -> stringResource(R.string.chat_day_yesterday)
-        ChatScreenLogic.DayLabel.OLDER -> remember(epochDay) {
-            java.time.LocalDate.ofEpochDay(epochDay).format(
-                java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM)
-            )
-        }
-    }
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        Surface(
-            shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            tonalElevation = 1.dp
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-        }
-    }
-}
+private fun DayHeaderRow(epochDay: Long) = ChatDayDivider(epochDay)
 
 /** Čára „Nové zprávy" nad první nepřečtenou zprávou (barva značky). */
 @Composable
@@ -1570,36 +1545,10 @@ private fun ReactionPicker(mine: String?, onPick: (String) -> Unit, onMore: () -
 }
 
 /** Reakce přilepené pod bublinou. Stejné emoji od obou se sloučí a přičte počet. */
+/** Čipy reakcí — sdílené [ChatReactionChips] (STEJNÉ v 1:1 i skupině). */
 @Composable
-private fun ReactionChips(reactions: Map<String, ChatMessage.Reaction>, outgoing: Boolean) {
-    if (reactions.isEmpty()) return
-    val grouped = reactions.values.groupBy { it.emoji }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start
-    ) {
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            tonalElevation = 1.dp
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                grouped.forEach { (emoji, list) ->
-                    Text(
-                        if (list.size > 1) "$emoji ${list.size}" else emoji,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-            }
-        }
-    }
-}
+private fun ReactionChips(reactions: Map<String, ChatMessage.Reaction>, outgoing: Boolean) =
+    ChatReactionChips(reactions.values.map { it.emoji }, outgoing)
 
 /** Krátký popis zprávy pro citaci (u fotky/souboru není text). */
 @Composable
@@ -1609,7 +1558,7 @@ private fun quotedSummary(message: ChatMessage): String = when (message.kind) {
     else -> message.text
 }
 
-/** Citace uvnitř bubliny - barevný pruh vlevo, jméno a náhled textu. */
+/** Citace uvnitř bubliny — sdílené [ChatQuotedBlock] (STEJNÉ v 1:1 i skupině). */
 @Composable
 private fun QuotedBlock(
     quoted: ChatMessage?,
@@ -1620,48 +1569,14 @@ private fun QuotedBlock(
     onClick: (() -> Unit)? = null
 ) {
     if (quoted == null && !missing) return
-    // Klik skočí na originál - jen když cíl v historii pořád je (u „nedostupné"
-    // není kam skočit).
-    val clickable = onClick != null && quoted != null
-    Row(
-        modifier = Modifier
-            .padding(bottom = 4.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .then(if (clickable) Modifier.clickable { onClick!!() } else Modifier)
-            .background(textColor.copy(alpha = 0.10f))
-            .height(IntrinsicSize.Min)
-    ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .fillMaxHeight()
-                .background(accent)
-        )
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            if (quoted != null) {
-                Text(
-                    if (quoted.outgoing) stringResource(R.string.chat_reply_you) else peerName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accent,
-                    maxLines = 1
-                )
-                Text(
-                    quotedSummary(quoted),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = textColor.copy(alpha = 0.85f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            } else {
-                Text(
-                    stringResource(R.string.chat_reply_unavailable),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = textColor.copy(alpha = 0.7f),
-                    maxLines = 1
-                )
-            }
-        }
-    }
+    ChatQuotedBlock(
+        author = if (quoted != null && quoted.outgoing) stringResource(R.string.chat_reply_you) else peerName,
+        summary = quoted?.let { quotedSummary(it) } ?: "",
+        missing = quoted == null,
+        accent = accent,
+        textColor = textColor,
+        onClick = onClick
+    )
 }
 
 /** Náhled nad vstupním polem, když se píše odpověď. */
