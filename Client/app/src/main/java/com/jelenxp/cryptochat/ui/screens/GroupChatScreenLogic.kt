@@ -22,7 +22,7 @@ object GroupChatScreenLogic {
      * nepíšeme odpověď na zmizelou zprávu. Analogie 1:1 [ChatScreenLogic.survivingReply].
      */
     fun survivingReply(messages: List<GroupChatMessage>, replyTo: GroupChatMessage?): GroupChatMessage? =
-        replyTo?.takeIf { r -> messages.any { it.msgIdHex == r.msgIdHex } }
+        ChatSelectionLogic.survivingReply(messages, replyTo) { it.msgIdHex }
 
     /** Výsledek dohledání citované zprávy (jako 1:1 [ChatScreenLogic.Quote]). */
     data class Quote(
@@ -64,8 +64,7 @@ object GroupChatScreenLogic {
      * textu) se přeskočí; víc zpráv se spojí novým řádkem. (Jako 1:1 [ChatScreenLogic.copyText].)
      */
     fun copyText(messages: List<GroupChatMessage>, selectedIds: Set<String>): String =
-        messages.filter { it.msgIdHex in selectedIds && it.text.isNotBlank() }
-            .joinToString("\n") { it.text }
+        ChatSelectionLogic.copyText(messages, selectedIds, { it.msgIdHex }, { it.text })
 
     /**
      * Má režim úpravy PŘEŽÍT? True, jen když upravovaná zpráva ([editingId]) v seznamu
@@ -73,18 +72,15 @@ object GroupChatScreenLogic {
      * zprávy. null = neupravuje se → false. (Jako 1:1 [ChatScreenLogic.survivingEdit].)
      */
     fun survivingEdit(messages: List<GroupChatMessage>, editingId: String?): Boolean =
-        editingId != null && messages.any { it.msgIdHex == editingId && !it.deleted }
+        ChatSelectionLogic.survivingEdit(messages, editingId, { it.msgIdHex }, { it.deleted })
 
     /** Vybrané zprávy, které v seznamu pořád jsou (zmizelé se z výběru vypustí). */
-    fun survivingIds(messages: List<GroupChatMessage>, selectedIds: Set<String>): Set<String> {
-        if (selectedIds.isEmpty()) return selectedIds
-        val present = messages.mapTo(HashSet(messages.size)) { it.msgIdHex }
-        return selectedIds.filterTo(HashSet()) { it in present }
-    }
+    fun survivingIds(messages: List<GroupChatMessage>, selectedIds: Set<String>): Set<String> =
+        ChatSelectionLogic.survivingIds(messages, selectedIds) { it.msgIdHex }
 
     /** Přepne členství id ve výběru (klepnutí na vybranou zprávu ji odznačí). */
     fun toggleSelection(selectedIds: Set<String>, id: String): Set<String> =
-        if (id in selectedIds) selectedIds - id else selectedIds + id
+        ChatSelectionLogic.toggleSelection(selectedIds, id)
 
     /**
      * Zprávy odpovídající hledání [query] (prázdný dotaz = všechny). Hledá v textu bez

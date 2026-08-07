@@ -28,7 +28,7 @@ object ChatScreenLogic {
      * Stejný důvod jako [survivingIds] - nechceme odpovídat na zmizelou zprávu.
      */
     fun survivingReply(messages: List<ChatMessage>, replyTo: ChatMessage?): ChatMessage? =
-        replyTo?.takeIf { r -> messages.any { it.id == r.id } }
+        ChatSelectionLogic.survivingReply(messages, replyTo) { it.id }
 
     /**
      * Má režim úpravy PŘEŽÍT? True, jen když upravovaná zpráva ([editingId]) v seznamu
@@ -37,29 +37,25 @@ object ChatScreenLogic {
      * (neupravuje se) → false (nic k přežití).
      */
     fun survivingEdit(messages: List<ChatMessage>, editingId: String?): Boolean =
-        editingId != null && messages.any { it.id == editingId && !it.deleted }
+        ChatSelectionLogic.survivingEdit(messages, editingId, { it.id }, { it.deleted })
 
     /**
      * Vybrané zprávy, které v seznamu pořád jsou. Smazané/zmizelé se z výběru
      * vypustí - jinak by lišta výběru tvrdila víc, než kolik je co vybrat.
      */
-    fun survivingIds(messages: List<ChatMessage>, selectedIds: Set<String>): Set<String> {
-        if (selectedIds.isEmpty()) return selectedIds
-        val present = messages.mapTo(HashSet(messages.size)) { it.id }
-        return selectedIds.filterTo(HashSet()) { it in present }
-    }
+    fun survivingIds(messages: List<ChatMessage>, selectedIds: Set<String>): Set<String> =
+        ChatSelectionLogic.survivingIds(messages, selectedIds) { it.id }
 
     /** Přepne členství id ve výběru (klepnutí na vybranou zprávu ji odznačí). */
     fun toggleSelection(selectedIds: Set<String>, id: String): Set<String> =
-        if (id in selectedIds) selectedIds - id else selectedIds + id
+        ChatSelectionLogic.toggleSelection(selectedIds, id)
 
     /**
      * Text ke zkopírování z vybraných zpráv, v pořadí, ve kterém jsou v [messages].
      * Prázdné (fotka/soubor bez textu) se přeskočí; víc zpráv se spojí novým řádkem.
      */
     fun copyText(messages: List<ChatMessage>, selectedIds: Set<String>): String =
-        messages.filter { it.id in selectedIds && it.text.isNotBlank() }
-            .joinToString("\n") { it.text }
+        ChatSelectionLogic.copyText(messages, selectedIds, { it.id }, { it.text })
 
     /**
      * Index zpráv podle sdíleného odkazu ([ChatMessage.wireRef]) - pro rychlé
