@@ -1072,29 +1072,30 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             // Při hledání se dolní část (náhled odpovědi + psaní) skryje - lišta
             // teď hledá, ne píše, a seznam tak sedí celý nad klávesnicí.
             if (!searchMode) {
-            // Náhled právě upravované zprávy (nad vstupním polem, jako odpověď).
+            // Náhled ÚPRAVY (přednost) nebo ODPOVĚDI nad vstupním polem — sdílené s group.
             editing?.let { target ->
-                EditComposerPreview(
-                    message = target,
-                    onCancel = { cancelEditing() }
-                )
+                EditPreviewBar(summary = target.text, onCancel = { cancelEditing() })
             }
-            // Náhled zprávy, na kterou se odpovídá.
             replyTo?.let { target ->
-                ReplyComposerPreview(
-                    message = target,
-                    peerName = contact?.name.orEmpty(),
+                ReplyPreviewBar(
+                    author = if (target.outgoing) stringResource(R.string.chat_reply_you) else contact?.name.orEmpty(),
+                    summary = quotedSummary(target),
                     onCancel = { replyTo = null }
                 )
             }
 
-            // Vstupní řádek.
-            Surface(tonalElevation = 2.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
+            // Vstupní řádek — sdílený rám; 1:1 dodá menu příloh (foto/galerie/soubor).
+            MessageComposerRow(
+                input = input,
+                onInputChange = {
+                    if (it != input) userTouchedInput = true
+                    input = it
+                },
+                hint = stringResource(R.string.chat_input_hint),
+                inputEnabled = canChat,
+                sendEnabled = canChat && input.isNotBlank() && !sendBlocked,
+                onSend = { sendCurrent() },
+                leading = {
                     Box {
                         IconButton(onClick = { attachMenu = true }, enabled = canChat && !sendBlocked) {
                             Icon(
@@ -1125,27 +1126,8 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
                             )
                         }
                     }
-                    // Incognito vstup: platformní EditText s vypnutým učením
-                    // klávesnice (viz IncognitoTextField) - napsané zprávy se
-                    // neukládají do slovníku ani nesynchronizují do cloudu.
-                    IncognitoTextField(
-                        value = input,
-                        onValueChange = {
-                            if (it != input) userTouchedInput = true
-                            input = it
-                        },
-                        hint = stringResource(R.string.chat_input_hint),
-                        enabled = canChat,
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilledIconButton(
-                        onClick = { sendCurrent() },
-                        enabled = canChat && input.isNotBlank() && !sendBlocked
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.content_desc_send))
-                    }
                 }
-            }
+            )
             } // konec if (!searchMode) - skrytí spodní části při hledání
         }
     }
@@ -1511,90 +1493,6 @@ private fun QuotedBlock(
     )
 }
 
-/** Náhled nad vstupním polem, když se píše odpověď. */
-@Composable
-private fun ReplyComposerPreview(
-    message: ChatMessage,
-    peerName: String,
-    onCancel: () -> Unit
-) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(34.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(
-                    if (message.outgoing) stringResource(R.string.chat_reply_you) else peerName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1
-                )
-                Text(
-                    quotedSummary(message),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = stringResource(R.string.content_desc_cancel_reply)
-                )
-            }
-        }
-    }
-}
-
-/** Pruh nad vstupním polem v režimu úpravy: ikona tužky, „Upravit zprávu" a náhled textu. */
-@Composable
-private fun EditComposerPreview(
-    message: ChatMessage,
-    onCancel: () -> Unit
-) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.Edit,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
-            )
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(
-                    stringResource(R.string.chat_editing_title),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1
-                )
-                Text(
-                    message.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = stringResource(R.string.content_desc_cancel_edit)
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun ChatNotice(text: String) {

@@ -507,21 +507,24 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
             }
 
             if (!searchMode) {
-                // Nad vstupem: náhled ÚPRAVY (přednost) nebo ODPOVĚDI (jako 1:1).
+                // Nad vstupem: náhled ÚPRAVY (přednost) nebo ODPOVĚDI — sdílené s 1:1.
                 if (editing != null) {
-                    GroupEditComposerPreview(editing!!, onCancel = { cancelEditing() })
+                    EditPreviewBar(summary = editing!!.text, onCancel = { cancelEditing() })
                 } else replyTo?.let { r ->
                     val author = if (r.outgoing) stringResource(R.string.chat_reply_you)
                     else r.senderMemberIdHex?.let { names[it] } ?: stringResource(R.string.group_reply_member)
-                    GroupReplyComposerPreview(message = r, author = author, onCancel = { replyTo = null })
+                    ReplyPreviewBar(author = author, summary = groupQuotedSummary(r), onCancel = { replyTo = null })
                 }
-                Surface(tonalElevation = 2.dp) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        verticalAlignment = Alignment.Bottom,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (editing == null) { // fotku nelze přiložit k úpravě
+                // Vstupní řádek — sdílený rám; skupina zatím dodá jen galerii (a jen mimo úpravu).
+                MessageComposerRow(
+                    input = input,
+                    onInputChange = { input = it },
+                    hint = stringResource(R.string.chat_input_hint),
+                    inputEnabled = true,
+                    sendEnabled = input.isNotBlank(),
+                    onSend = { sendCurrent() },
+                    leading = if (editing == null) { // fotku nelze přiložit k úpravě
+                        {
                             Box {
                                 IconButton(onClick = { attachMenu = true }) {
                                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = stringResource(R.string.content_desc_attach))
@@ -538,18 +541,8 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                                 }
                             }
                         }
-                        IncognitoTextField(
-                            value = input,
-                            onValueChange = { input = it },
-                            hint = stringResource(R.string.chat_input_hint),
-                            enabled = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        FilledIconButton(onClick = { sendCurrent() }, enabled = input.isNotBlank()) {
-                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.content_desc_send))
-                        }
-                    }
-                }
+                    } else null
+                )
             }
         }
     }
@@ -738,58 +731,6 @@ private fun groupQuotedSummary(message: GroupChatMessage): String = when {
     message.deleted -> stringResource(R.string.chat_message_deleted)
     message.kind == GroupChatMessage.Kind.IMAGE -> stringResource(R.string.chat_reply_photo)
     else -> message.text
-}
-
-/** Náhled nad vstupním polem, když se píše odpověď (jako 1:1 ReplyComposerPreview). */
-@Composable
-private fun GroupReplyComposerPreview(message: GroupChatMessage, author: String, onCancel: () -> Unit) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(modifier = Modifier.width(3.dp).height(34.dp).background(MaterialTheme.colorScheme.primary))
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(author, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
-                Text(
-                    groupQuotedSummary(message),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_cancel_reply))
-            }
-        }
-    }
-}
-
-/** Pruh nad vstupem v režimu úpravy: tužka, „Upravit" a náhled textu (jako 1:1 EditComposerPreview). */
-@Composable
-private fun GroupEditComposerPreview(message: GroupChatMessage, onCancel: () -> Unit) {
-    Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(stringResource(R.string.chat_action_edit), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
-                Text(
-                    message.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_cancel_reply))
-            }
-        }
-    }
 }
 
 /** Mapování stavu skupinové zprávy na sdílený [BubbleStatus] pro fajfku (jako 1:1). */
