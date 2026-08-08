@@ -575,11 +575,13 @@ fun ChatScreen(id: String, navController: NavController, viewModel: ContactsView
             }
             return
         }
-        // SYNCHRONNÍ vyprázdnění pole (ne async `input = ""`) - jinak opožděné setText
-        // z rekompozice smaže prvních 1-2 písmena další zprávy. clear() přes watcher
-        // srovná i `input`. Fallback `input = ""` pro případ, že pole ještě není připojené.
-        composerController.clear()
+        // Vyprázdnění pole po odeslání. `input = ""` NEJDŘÍV, aby watcher spuštěný uvnitř
+        // clear() viděl `it == input` a nenastavil falešně userTouchedInput (invariant výše).
+        // Pak SYNCHRONNÍ clear() (mimo rekompozici) - bez něj by opožděné setText z
+        // rekompozice smazalo prvních 1-2 písmena další zprávy. `input = ""` je i fallback,
+        // kdyby pole ještě nebylo připojené (clear() by no-opnul).
         input = ""
+        composerController.clear()
         // Vlastní odeslání = chci vidět svou zprávu dole, i když jsem byl v historii.
         stickToBottom = true
         // Odkaz vytáhni TEĎ a náhled zavři - kdyby se to dělalo až v korutině,

@@ -36,11 +36,12 @@ object GroupChatScreenLogic {
      * Dohledá zprávu, na kterou [message] odpovídá. Tři stavy jako 1:1: není to odpověď
      * (`missing=false`, `message=null`), nalezená, a odpověď na zmizelou zprávu
      * (`missing=true` → UI ukáže „není dostupná"). Systémový řádek („X se připojil")
-     * není platný cíl citace, bere se jako nedostupný.
+     * není platný cíl citace, bere se jako nedostupný. Smazaná (náhrobek) taky —
+     * citovat prázdný „Deleted" by vypadalo jako rozbitá odpověď (parita s 1:1).
      */
     fun resolveQuote(message: GroupChatMessage, index: Map<String, GroupChatMessage>): Quote {
         val ref = message.replyToMsgIdHex ?: return Quote(null, missing = false)
-        val found = index[ref]?.takeIf { !it.isSystem }
+        val found = index[ref]?.takeIf { !it.isSystem && !it.deleted }
         return Quote(found, missing = found == null)
     }
 

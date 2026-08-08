@@ -125,10 +125,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Paleta rychlých reakcí (dlouhý stisk bubliny) + výchozí pro dvojklik. */
-private val GROUP_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
-private const val GROUP_DEFAULT_REACTION = "👍"
-
 /** Jak daleko se musí bublina odtáhnout, aby se spustila odpověď (stejné jako 1:1). */
 private const val GROUP_SWIPE_REPLY_THRESHOLD_PX = 180f
 
@@ -278,7 +274,9 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
         if (text.isEmpty()) return
         val ed = editing
         if (ed != null) { // odeslání ÚPRAVY
-            composerController.clear(); input = ""; editing = null; draftBeforeEdit = null
+            // Jako 1:1: obnov rozepsaný koncept (draftBeforeEdit), ne zahoď ho - to dělá
+            // cancelEditing (dřív se koncept po uložení úpravy tiše ztratil, audit).
+            cancelEditing()
             scope.launch {
                 val url = SettingsRepository(ctx).getRelayUrl()
                 withContext(Dispatchers.IO) { GroupSync.sendEdit(ctx, group, ed.msgIdHex, text, url, System.currentTimeMillis()) }
@@ -390,7 +388,9 @@ fun GroupChatScreen(groupId: String, navController: NavController, groupsViewMod
                     canEdit = single != null && GroupChatScreenLogic.canEdit(single),
                     canCopy = GroupChatScreenLogic.copyText(messages, selectedIds).isNotBlank(),
                     onClose = { selectedIds = emptySet() },
-                    onReply = { cancelEditing(); single?.let { replyTo = it }; selectedIds = emptySet() },
+                    // Zavři hledání jako 1:1 - náhled odpovědi i composer jsou za `if (!searchMode)`,
+                    // jinak by po odpovědi z výběru během hledání zůstaly skryté (audit).
+                    onReply = { cancelEditing(); single?.let { replyTo = it }; selectedIds = emptySet(); searchMode = false; searchQuery = "" },
                     onEdit = { single?.let { startEditing(it) } },
                     onCopy = { copySelected() },
                     onDelete = { pendingDelete = selectedMsgs; selectedIds = emptySet() }
@@ -701,8 +701,10 @@ private fun GroupMessageBubble(
                     tapOpensMedia = message.kind == GroupChatMessage.Kind.IMAGE,
                     onLongPress = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onSelect() },
                     onTapInSelection = if (selectionMode) onTapInSelection else null,
+                    // Double-tap přes sdílenou (testovanou) logiku jako 1:1: jakoukoli
+                    // moji reakci sundá, jinak přidá výchozí - NE „přepiš na 👍" (audit).
                     onDoubleTap = if (!selectionMode && !deleted) {
-                        { onReact(if (myReaction == GROUP_DEFAULT_REACTION) "" else GROUP_DEFAULT_REACTION) }
+                        { onReact(ChatScreenLogic.doubleTapReaction(myReaction) ?: "") }
                     } else null,
                     onImageClick = onImageClick,
                     onRetry = onRetry
@@ -717,9 +719,11 @@ private fun GroupMessageBubble(
                         properties = PopupProperties(focusable = false)
                     ) {
                         ReactionPicker(
-                            emojis = GROUP_REACTIONS,
+                            // Stejná paleta jako 1:1 (pod testem isValidEmoji) - dřív měla
+                            // skupina vlastní list, který se lišil v jednom emoji (audit).
+                            emojis = ChatScreenLogic.QUICK_REACTIONS,
                             mine = myReaction,
-                            onPick = { onReact(if (myReaction == it) "" else it) },
+                            onPick = { onReact(ChatScreenLogic.toggledReaction(myReaction, it) ?: "") },
                             onMore = onMore
                         )
                     }
